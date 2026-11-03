@@ -36,6 +36,15 @@ export function parseHourly(text: string, zone: string): HBar[] {
   return dedup;
 }
 
+/** Bars from a broker (t = bar open, ms UTC) into Keel's hourly bars. */
+export function fromHistory(bars: { t: number; o: number; h: number; l: number; c: number; v: number }[]): HBar[] {
+  return bars.map(b => { const wall = wallOf(b.t); return { utc: b.t, wall, hour: hourOf(wall), sess: sessionKey(wall), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0 }; });
+}
+/** Daily bars from a broker into daily closes keyed by their Globex trade date. */
+export function dailyFromHistory(bars: { t: number; c: number }[]): DailyClose[] {
+  return bars.map(b => ({ date: sessionKey(wallOf(b.t)), close: b.c }));
+}
+
 /** Volume profile of bars: 40 equal bins between their low and high, typical price weighted by volume, 70% value area. */
 export function profile(rb: { h: number; l: number; c: number; v: number }[]): { poc: number; val: number; vah: number } | null {
   if (rb.length < 3) return null;   // as in the research backtest: a day needs at least 3 RTH bars for a profile

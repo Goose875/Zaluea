@@ -115,8 +115,8 @@ export class Engine {
       if (!why) continue;
       this.open.delete(id);
       try {
-        // Targets are sent with their price (a backtest fills them there); stops go at market.
-        await this.broker.placeOrder({ symbol, side: t.side === 'buy' ? 'sell' : 'buy', qty: t.qty, ...(why === 'take profit' && t.tpPx !== null ? { type: 'limit' as const, price: t.tpPx } : { type: 'market' as const }) });
+        // Exits after the price touched the level go at market: brokers now honour limit orders, and a resting limit after a touch might never fill.
+        await this.broker.placeOrder({ symbol, side: t.side === 'buy' ? 'sell' : 'buy', qty: t.qty, type: 'market' });
         this.note(`${why === 'take profit' ? 'Took profit' : 'Stopped out'} on ${t.qty} ${symbol} (${t.name}), ${move >= 0 ? '+' : ''}${move.toFixed(2)} points.`);
       } catch { this.note(`Could not close ${symbol} for ${t.name} at its ${why}. Check your trading platform now.`); }
       this.running.get(id)?.s.reset?.();

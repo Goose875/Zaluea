@@ -1,4 +1,4 @@
-import { AccountInfo, BrokerAdapter, Order, Position, Quote } from '../core/types';
+import { AccountInfo, BrokerAdapter, HistBar, Order, Position, Quote, WorkingOrder } from '../core/types';
 import type { AccountRecord } from '../core/accounts';
 import { assertSafeUrl } from '../core/net';
 import { SignalRClient } from './signalr';
@@ -79,7 +79,10 @@ export class ProjectXBroker implements BrokerAdapter {
   private async contractFor(symbol: string): Promise<Contract> {
     const hit = this.bySymbol.get(symbol); if (hit) return hit;
     const j = await this.call('/api/Contract/search', { searchText: symbol, live: false });
-    const list: any[] = j.contracts || [];
+    const all: any[] = j.contracts || [];
+    // Exact root match on the contract name (e.g. NQZ5 / NQZ25 for NQ, never MNQZ5), front month = activeContract.
+    const exact = all.filter(x => new RegExp(`^${symbol}[FGHJKMNQUVXZ]\\d{1,2}$`).test(String(x.name || '')));
+    const list = exact.length ? exact : all;
     const c = list.find(x => x.activeContract) ?? list[0];
     if (!c || typeof c.id !== 'string') throw new Error(`ProjectX has no contract for ${symbol}.`);
     return this.remember(symbol, c);
@@ -110,9 +113,13 @@ export class ProjectXBroker implements BrokerAdapter {
 
   async placeOrder(o: Order) {
     if (!Number.isInteger(o.qty) || o.qty < 1) throw new Error('Order size must be a whole number.');
-    const contractId = (await this.contractFor(o.symbol)).id;
-    // type 2 = market, side 0 = buy, side 1 = sell
-    const j = await this.call('/api/Order/place', { accountId: this.accountId, contractId, type: 2, side: o.side === 'buy' ? 0 : 1, size: o.qty });
+    const c = await this.contractFor(o.symbol);
+    // ProjectX order types: 1 = limit, 2 = market, 4 = stop. Side 0 = buy (bid), 1 = sell (ask).
+    const type = o.type === 'limit' ? 1 : o.type === 'stop' ? 4 : 2;
+    if (type !== 2 && !(Number.isFinite(o.price) && (o.price as number) > 0)) throw new Error(`A ${o.type} order needs a price.`);
+    const px = type === 2 ? undefined : Math.round((o.price as number) / c.tickSize) * c.tickSize;
+    const j = await this.call('/api/Order/place', { accountId: this.accountId, contractId: c.id, type, side: o.side === 'buy' ? 0 : 1, size: o.qty,
+      ...(type === 1 ? { limitPrice: px } : type === 4 ? { stopPrice: px } : {}) });
     return String(j.orderId);
   }
 
@@ -147,6 +154,36 @@ export class ProjectXBroker implements BrokerAdapter {
   }
 
   async getDailyPnL() { const b = await this.getPnLBreakdown(); return b.realized + b.unrealized; }
+
+  lastPrice(symbol: string) { const c = this.bySymbol.get(symbol); return c ? this.last.get(c.id) : undefined; }
+
+  /** Completed bars for the front-month contract (History/retrieveBars: unit 3 = hour, 4 = day; at most 20,000 bars). */
+  async getHistory(symbol: string, unit: 'hour' | 'day', count: number): Promise<HistBar[]> {
+    const c = await this.contractFor(symbol), end = new Date(), days = unit === 'hour' ? Math.ceil(count / 22) + 14 : Math.ceil(count * 1.5) + 14;
+    const j = await this.call('/api/History/retrieveBars', { contractId: c.id, live: false, startTime: new Date(end.getTime() - days * 86_400_000).toISOString(),
+      endTime: end.toISOString(), unit: unit === 'hour' ? 3 : 4, unitNumber: 1, limit: Math.min(20_000, count), includePartialBar: false });
+    const bars: HistBar[] = (j.bars || []).map((b: any) => ({ t: Date.parse(b.t), o: +b.o, h: +b.h, l: +b.l, c: +b.c, v: +b.v || 0 }))
+      .filter((b: HistBar) => Number.isFinite(b.t) && [b.o, b.h, b.l, b.c].every(Number.isFinite));
+    return bars.sort((a, b) => a.t - b.t).slice(-count);
+  }
+
+  async getOpenOrders(): Promise<WorkingOrder[]> {
+    const j = await this.call('/api/Order/searchOpen', { accountId: this.accountId });
+    const out: WorkingOrder[] = [];
+    for (const o of j.orders || []) {
+      const c = await this.contractById(String(o.contractId));
+      out.push({ id: String(o.id), symbol: c.symbol, side: o.side === 0 ? 'buy' : 'sell', qty: Number(o.size),
+        type: o.type === 1 ? 'limit' : o.type === 4 ? 'stop' : o.type === 2 ? 'market' : 'other', price: o.type === 1 ? Number(o.limitPrice) : o.type === 4 ? Number(o.stopPrice) : null });
+    }
+    return out;
+  }
+  async modifyOrder(id: string, change: { price: number }) {
+    const o = (await this.getOpenOrders()).find(x => x.id === id);
+    if (!o) throw new Error('That order is no longer working.');
+    const c = await this.contractFor(o.symbol), px = Math.round(change.price / c.tickSize) * c.tickSize;
+    await this.call('/api/Order/modify', { accountId: this.accountId, orderId: Number(id), ...(o.type === 'stop' ? { stopPrice: px } : { limitPrice: px }) });
+  }
+  async cancelOrder(id: string) { await this.call('/api/Order/cancel', { accountId: this.accountId, orderId: Number(id) }); }
 
   /** Balance from the account list (the `balance` field is from third-party clients, not yet checked). Rules come from your account in Keel. */
   async getAccount(): Promise<AccountInfo | null> {

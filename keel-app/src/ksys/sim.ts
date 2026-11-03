@@ -17,8 +17,8 @@ export interface Trade {
   id: string; sym: string; dir: Dir; signalUtc: number; entryUtc: number; exitUtc: number; entry: number; exit: number;
   stop0: number; target: number | null; qty: number; riskPts: number; points: number; pnl: number; r: number; why: string; bars: number;
 }
-export interface OpenPos { id: string; sym: string; dir: Dir; entryUtc: number; entry: number; stop: number; target: number | null; qty: number; riskPts: number; held: number }
-export interface Pending { id: string; sym: string; dir: Dir; kind: 'confirm' | 'entry'; signalUtc: number }
+export interface OpenPos { id: string; sym: string; dir: Dir; entryUtc: number; signalUtc: number; entry: number; stop: number; stop0: number; target: number | null; qty: number; riskPts: number; held: number }
+export interface Pending { id: string; sym: string; dir: Dir; kind: 'confirm' | 'entry'; signalUtc: number; due: number }
 
 export interface SimOptions {
   sizing: 'mini1' | 'fixed' | 'cushion';      // mini1 = 1 mini contract (validation, matches spec section 8)
@@ -27,6 +27,9 @@ export interface SimOptions {
   feePerSide: number;                          // per contract per side
   pause: { on: boolean; window: number; below: number; countFrom: number; resumed: Record<string, number> };
   enabled: Record<string, boolean>;
+  /** Prop-firm daily cut-off (New York hour, e.g. 16 = flat by 4:00 PM ET). Every position, swing ones included, exits at the
+   *  close of the bar that ends at this hour, and no entry happens from then until the 18:00 reopen. null = spec behaviour. */
+  flatByHour?: number | null;
 }
 export const VALIDATION: SimOptions = { sizing: 'mini1', riskUsd: 300, divisor: 12, startEquity: 50000, maxLoss: 2000, netting: 'independent', capMult: null, feePerSide: 2.5,
   pause: { on: false, window: 30, below: -0.2, countFrom: 0, resumed: {} }, enabled: {} };
@@ -73,6 +76,24 @@ export function signal(S: KStrategy, X: Series, i: number): Dir | null {
   return null;
 }
 
+/** Spec section 5 entry maths, shared by the simulator and live trading: stop, target, risk in points, and size.
+ *  Returns a reason string instead when the trade must be skipped. */
+export function planEntry(S: KStrategy, X: Series, sig: number, dir: Dir, E: number, riskUsd: number, usdPerPoint: number, fixedQty?: number):
+  { stop: number; target: number | null; R: number; qty: number } | { skip: string } {
+  const d = dir === 'long' ? 1 : -1, T = X.tick, sb = X.bars[sig];
+  let stop = S.stop === 'atr_1x' ? E - d * X.atr[sig]
+    : S.stop === 'signal_bar' ? (d > 0 ? sb.l - T : sb.h + T)
+    : d > 0 ? Math.min(...X.bars.slice(Math.max(0, sig - 4), sig + 1).map(x => x.l)) - T : Math.max(...X.bars.slice(Math.max(0, sig - 4), sig + 1).map(x => x.h)) + T;
+  if (!Number.isFinite(stop)) return { skip: 'no stop level' };
+  if ((E - stop) * d <= 0) return { skip: 'price opened beyond the stop' };
+  if (Math.abs(E - stop) < 4 * T) stop = E - d * 4 * T;   // 4-tick minimum risk
+  const R = Math.abs(E - stop);
+  const target = S.target_R === null ? null : Math.round((E + d * S.target_R * R) / T) * T;
+  const qty = fixedQty ?? Math.floor(riskUsd / (R * usdPerPoint));
+  if (qty < 1) return { skip: 'stop too wide for the risk' };
+  return { stop, target, R, qty };
+}
+
 // ---------- simulation (spec section 5 and 6) ----------
 interface SState { S: KStrategy; X: Series; mode: 'flat' | 'confirm' | 'entry' | 'open'; dir: Dir; sig: number; due: number; lastExit: number; pos: any | null; trades: Trade[]; paused: boolean; pausedUtc: number | null }
 export interface SimResult {
@@ -117,16 +138,11 @@ export function simulate(series: Record<string, Series>, opt: SimOptions, only?:
       if (s.mode !== 'entry' || s.due !== i) continue;
       s.mode = 'flat';
       if (s.paused) { skipped.push({ id: s.S.id, utc: b.utc, why: 'paused' }); continue; }
-      const d = s.dir === 'long' ? 1 : -1, E = b.o + d * T, sb = X.bars[s.sig];
-      let stop = s.S.stop === 'atr_1x' ? E - d * X.atr[s.sig]
-        : s.S.stop === 'signal_bar' ? (d > 0 ? sb.l - T : sb.h + T)
-        : d > 0 ? Math.min(...X.bars.slice(Math.max(0, s.sig - 4), s.sig + 1).map(x => x.l)) - T : Math.max(...X.bars.slice(Math.max(0, s.sig - 4), s.sig + 1).map(x => x.h)) + T;
-      if ((E - stop) * d <= 0) { skipped.push({ id: s.S.id, utc: b.utc, why: 'price opened beyond the stop' }); continue; }
-      if (Math.abs(E - stop) < 4 * T) stop = E - d * 4 * T;   // 4-tick minimum risk
-      const R = Math.abs(E - stop);
-      const target = s.S.target_R === null ? null : Math.round((E + d * s.S.target_R * R) / T) * T;
-      const risk = riskUsd(), qty = opt.sizing === 'mini1' ? 1 : Math.floor(risk / (R * ppt(s.S.symbol)));
-      if (qty < 1) { skipped.push({ id: s.S.id, utc: b.utc, why: 'stop too wide for the risk' }); continue; }
+      if (opt.flatByHour != null && b.hour >= opt.flatByHour && b.hour < 18) { skipped.push({ id: s.S.id, utc: b.utc, why: 'after the flat-by time' }); continue; }
+      const d = s.dir === 'long' ? 1 : -1, E = b.o + d * T, risk = riskUsd();
+      const plan = planEntry(s.S, X, s.sig, s.dir, E, risk, ppt(s.S.symbol), opt.sizing === 'mini1' ? 1 : undefined);
+      if ('skip' in plan) { skipped.push({ id: s.S.id, utc: b.utc, why: plan.skip }); continue; }
+      const { stop, target, R, qty } = plan;
       if (opt.netting === 'priority' && here.some(o => o !== s && o.mode === 'open')) { skipped.push({ id: s.S.id, utc: b.utc, why: 'another strategy holds this market' }); continue; }
       if (opt.capMult !== null && openRisk() + R * ppt(s.S.symbol) * qty > opt.capMult * risk) { skipped.push({ id: s.S.id, utc: b.utc, why: 'total open risk cap' }); continue; }
       s.mode = 'open';
@@ -146,6 +162,7 @@ export function simulate(series: Record<string, Series>, opt: SimOptions, only?:
       p.held++;
       if (s.S.time_stop_bars && p.held >= s.S.time_stop_bars) { closeTrade(s, i, long ? b.c - T : b.c + T, 'time'); continue; }
       if (s.S.flat_at_session_end && X.lastOfSession[i]) { closeTrade(s, i, long ? b.c - T : b.c + T, 'session end'); continue; }
+      if (opt.flatByHour != null && b.hour === opt.flatByHour - 1) { closeTrade(s, i, long ? b.c - T : b.c + T, 'flat-by time'); continue; }
       p.best = long ? Math.max(p.best, b.h) : Math.min(p.best, b.l);
       const gain = long ? p.best - p.entry : p.entry - p.best;
       if (s.S.breakeven_at_R !== null && gain >= s.S.breakeven_at_R * p.R) p.stop = long ? Math.max(p.stop, p.entry + T) : Math.min(p.stop, p.entry - T);
@@ -172,8 +189,8 @@ export function simulate(series: Record<string, Series>, opt: SimOptions, only?:
 
   const open: OpenPos[] = [], pending: Pending[] = [];
   for (const s of st.values()) {
-    if (s.mode === 'open') open.push({ id: s.S.id, sym: s.S.symbol, dir: s.pos.dir, entryUtc: s.pos.entryUtc, entry: s.pos.entry, stop: s.pos.stop, target: s.pos.target, qty: s.pos.qty, riskPts: s.pos.riskPts, held: s.pos.held });
-    if (s.mode === 'confirm' || s.mode === 'entry') pending.push({ id: s.S.id, sym: s.S.symbol, dir: s.dir, kind: s.mode, signalUtc: s.X.bars[s.sig].utc });
+    if (s.mode === 'open') open.push({ id: s.S.id, sym: s.S.symbol, dir: s.pos.dir, entryUtc: s.pos.entryUtc, signalUtc: s.pos.signalUtc, entry: s.pos.entry, stop: s.pos.stop, stop0: s.pos.stop0, target: s.pos.target, qty: s.pos.qty, riskPts: s.pos.riskPts, held: s.pos.held });
+    if (s.mode === 'confirm' || s.mode === 'entry') pending.push({ id: s.S.id, sym: s.S.symbol, dir: s.dir, kind: s.mode, signalUtc: s.X.bars[s.sig].utc, due: s.due });
   }
   return { trades: [...st.values()].flatMap(s => s.trades).sort((a, b) => a.entryUtc - b.entryUtc), open, pending, skipped,
     paused: Object.fromEntries([...st.values()].map(s => [s.S.id, s.pausedUtc])), equity: opt.startEquity + realized, floor: floor(), riskNow: riskUsd() };

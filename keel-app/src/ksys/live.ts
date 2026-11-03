@@ -1,0 +1,282 @@
+import { BrokerAdapter, Order, Position, WorkingOrder } from '../core/types';
+import { RiskGuard } from '../core/risk';
+import { buildSeries, fromHistory, dailyFromHistory, Series } from './series';
+import { simulate, planEntry, STRATEGIES, INSTRUMENTS, PRIORITY, SimOptions, SimResult, Dir, KStrategy } from './sim';
+import { wallOf } from './time';
+
+/** K system settings, saved by the app. */
+export interface KConfig {
+  mode: 'off' | 'paper' | 'live';
+  enabled: Record<string, boolean>;
+  sizing: 'fixed' | 'cushion';      // fixed = riskUsd per trade; cushion = (equity - drawdown floor) / divisor, $150-$750
+  riskUsd: number; divisor: number;
+  capMult: number;                  // total open risk <= capMult x per-trade risk
+  pauseOn: boolean;                 // pause a strategy when its rolling 30-trade average R < -0.2
+  countFrom: number;                // pause rule counts trades entered from this time (ms UTC), e.g. go-live day
+  /** Prop-firm daily cut-off, New York hour (Topstep: flat by 3:10 PM CT = 4:10 PM ET, so 16). Every K trade, swing ones
+   *  included, is closed 3 minutes before it and nothing opens until the 18:00 reopen. null = no cut-off: session-end
+   *  strategies are still closed at 16:57 because the market halts at 17:00. */
+  flatByHour: number | null;
+}
+export const DEFAULT_KCONFIG: KConfig = {
+  mode: 'off', enabled: Object.fromEntries(STRATEGIES.map(s => [s.id, s.id !== 'K2'])), sizing: 'fixed', riskUsd: 300, divisor: 12, capMult: 3, pauseOn: true, countFrom: 0,
+  flatByHour: 16   // K2's edge needs overnight holds; with a 4 PM flat-by its test year was ~breakeven, so it starts switched off
+};
+export function parseKConfig(x: any): KConfig {
+  const c = { ...DEFAULT_KCONFIG, enabled: { ...DEFAULT_KCONFIG.enabled } };
+  if (!x || typeof x !== 'object') return c;
+  if (['off', 'paper', 'live'].includes(x.mode)) c.mode = x.mode;
+  for (const s of STRATEGIES) if (typeof x.enabled?.[s.id] === 'boolean') c.enabled[s.id] = x.enabled[s.id];
+  if (x.sizing === 'fixed' || x.sizing === 'cushion') c.sizing = x.sizing;
+  const num = (v: unknown, lo: number, hi: number, d: number) => (typeof v === 'number' && v >= lo && v <= hi ? v : d);
+  c.riskUsd = num(x.riskUsd, 50, 5000, c.riskUsd); c.divisor = num(x.divisor, 4, 40, c.divisor); c.capMult = num(x.capMult, 1, 10, c.capMult);
+  c.pauseOn = x.pauseOn !== false; c.countFrom = num(x.countFrom, 0, 1e15, 0);
+  c.flatByHour = x.flatByHour === null ? null : num(x.flatByHour, 12, 17, DEFAULT_KCONFIG.flatByHour as number);
+  return c;
+}
+
+/** One K trade Keel is running at the broker (or on paper). Saved to disk so a restart picks it up. */
+export interface LiveTrade {
+  id: string; sym: string; orderSym: string; dir: Dir; qty: number; entry: number; entryUtc: number; signalUtc: number;
+  stop: number; target: number | null; stopOrder: string | null; targetOrder: string | null; opened: number;
+}
+/** Where orders go: the real broker (live) or PaperOrders (paper). */
+export interface OrderDesk {
+  placeOrder(o: Order): Promise<string>;
+  getOpenOrders(): Promise<WorkingOrder[]>;
+  modifyOrder(id: string, change: { price: number }): Promise<void>;
+  cancelOrder(id: string): Promise<void>;
+  getPositions(): Promise<Position[]>;
+}
+export interface KDeps {
+  data: BrokerAdapter;                                         // prices and history
+  desk: OrderDesk;                                             // orders
+  risk: RiskGuard;                                             // every entry passes Keel's risk limits
+  dailyPnL: () => Promise<number>;                             // today's P&L (throws if unknown: then no new trades)
+  account: () => { equity: number; floor: number } | null;    // for cushion sizing
+  store: { load(): LiveTrade[]; save(t: LiveTrade[]): void };
+  note: (msg: string, kind?: 'trade' | 'warn' | 'info') => void;
+  now?: () => number;                                          // for tests
+}
+
+const H = 3_600_000;
+const HOURLY_BARS = 1500, DAILY_BARS = 150, ENTRY_WINDOW = 10 * 60_000;
+
+/**
+ * Runs K1-K7 live. Every hour, right after a bar closes, it rebuilds the indicators from broker history and re-runs the same
+ * simulator that was validated against the research backtest. The simulator is the source of truth:
+ *  - an entry due at this bar's open becomes a market order, with a stop order (and target limit) resting at the broker at once;
+ *  - a stop moved by breakeven or the trail is modified at the broker;
+ *  - an exit by time stop, session end, or any reason the simulator no longer holds the trade is closed at market.
+ * Between bar closes it watches positions every few seconds, and cancels the leftover order when a stop or target fills.
+ * It never re-enters to chase the simulator: if live and simulated trades disagree, it only closes.
+ * One K trade per instrument at a time (spec "priority" netting), so resting orders can never flip a netted position.
+ */
+export class KLive {
+  trades: LiveTrade[];
+  sim: SimResult | null = null;
+  series: Record<string, Series> = {};
+  lastBarUtc = 0; lastRun = 0; nextCheck = 0; lastError = '';
+  private busy = false; private timer?: ReturnType<typeof setInterval>;
+  private staleWarned = 0;
+
+  constructor(private cfg: KConfig, private d: KDeps) { this.trades = d.store.load(); }
+
+  private now() { return this.d.now ? this.d.now() : Date.now(); }
+  setConfig(cfg: KConfig) { this.cfg = cfg; }
+  start(everyMs = 15_000) { this.timer = setInterval(() => void this.tick(), everyMs); (this.timer as any).unref?.(); void this.tick(); }
+  stop() { clearInterval(this.timer); }
+
+  /** Called by the kill switch after the broker flattened everything. */
+  forgetAll() { this.trades = []; this.d.store.save(this.trades); }
+
+  async tick() {
+    if (this.busy || this.d.risk.halted) return;
+    this.busy = true;
+    try {
+      await this.syncFills();
+      await this.flatByGuard();
+      if (this.now() >= this.nextCheck) await this.hourly();
+      this.lastError = '';
+    } catch (e) {
+      const m = (e as Error).message;
+      if (m !== this.lastError) this.d.note(`K system: ${m}`, 'warn');
+      this.lastError = m;
+    } finally { this.busy = false; }
+  }
+
+  // ---------- hourly: rebuild, simulate, reconcile ----------
+  async hourly() {
+    const now = this.now(), hourStart = Math.floor(now / H) * H;
+    if (!this.d.data.getHistory) throw new Error('this connection has no price history, so the K system cannot run on it.');
+    const syms = [...new Set(STRATEGIES.map(s => s.symbol))];
+    const fresh: Record<string, Series> = {};
+    for (const sym of syms) {
+      const [hb, db] = await Promise.all([this.d.data.getHistory(sym, 'hour', HOURLY_BARS), this.d.data.getHistory(sym, 'day', DAILY_BARS).catch(() => [])]);
+      const bars = fromHistory(hb.filter(b => b.t + H <= now));            // completed bars only
+      if (bars.length < 300) throw new Error(`only ${bars.length} hourly bars of ${sym} history came back (need 300+).`);
+      fresh[sym] = buildSeries(sym, INSTRUMENTS[sym].tick, bars, db.length ? dailyFromHistory(db.filter(b => b.t < hourStart)) : undefined);
+    }
+    const lastT = Math.max(...Object.values(fresh).map(X => X.bars[X.bars.length - 1].utc));
+    if (lastT <= this.lastBarUtc) {                       // the new bar is not in yet: try again shortly, give up 10 min into the hour
+      this.nextCheck = now - hourStart > ENTRY_WINDOW ? hourStart + H + 15_000 : now + 20_000;
+      return;
+    }
+    this.series = fresh; this.lastBarUtc = lastT; this.lastRun = now; this.nextCheck = hourStart + H + 15_000;
+    const risk = this.riskNow();
+    const opt: SimOptions = { sizing: 'fixed', riskUsd: risk, divisor: this.cfg.divisor, startEquity: 50000, maxLoss: 2000, netting: 'priority',
+      capMult: this.cfg.capMult, feePerSide: 0.75, enabled: this.cfg.enabled, flatByHour: this.cfg.flatByHour,
+      pause: { on: this.cfg.pauseOn, window: 30, below: -0.2, countFrom: this.cfg.countFrom, resumed: {} } };
+    this.sim = simulate(fresh, opt);
+    await this.reconcile(this.sim, now, risk);
+  }
+
+  /** Closes K trades 3 minutes before the prop-firm cut-off (or before the 17:00 halt for session-end strategies). */
+  private async flatByGuard() {
+    if (!this.trades.length) return;
+    const w = wallOf(this.now()), mins = new Date(w).getUTCHours() * 60 + new Date(w).getUTCMinutes();
+    for (const t of [...this.trades]) {
+      const S = STRATEGIES.find(s => s.id === t.id)!;
+      const cut = this.cfg.flatByHour !== null ? this.cfg.flatByHour : S.flat_at_session_end ? 17 : null;
+      if (cut !== null && mins >= cut * 60 - 3 && mins < 18 * 60) await this.exit(t, this.cfg.flatByHour !== null ? 'flat-by time' : 'session end');
+    }
+  }
+
+  riskNow(): number {
+    if (this.cfg.sizing === 'cushion') {
+      const a = this.d.account();
+      if (a) return Math.max(150, Math.min(750, (a.equity - a.floor) / this.cfg.divisor));
+    }
+    return this.cfg.riskUsd;
+  }
+
+  private async reconcile(sim: SimResult, now: number, risk: number) {
+    // 1. trades the simulator no longer holds are closed; stops it moved are moved at the broker
+    for (const t of [...this.trades]) {
+      const sp = sim.open.find(o => o.id === t.id && o.entryUtc === t.entryUtc);
+      if (!sp) {
+        const done = sim.trades.find(x => x.id === t.id && x.entryUtc === t.entryUtc);
+        await this.exit(t, done ? `${done.why}` : 'the strategy is not in this trade');
+        continue;
+      }
+      if (sp.stop !== sp.stop0) {
+        const T = INSTRUMENTS[t.sym].tick, long = t.dir === 'long';
+        const want = Math.round((sp.stop + (t.entry - sp.entry)) / T) * T;   // same move, measured from the real fill
+        if (long ? want > t.stop + T / 2 : want < t.stop - T / 2) await this.moveStop(t, want);
+      }
+    }
+    // 2. entries due at the open of the bar that has just started
+    // Same priority order as the simulator (spec section 6): when two strategies want the same instrument, the higher one wins.
+    const rank = (id: string) => Object.values(PRIORITY).map(l => l.indexOf(id)).find(i => i >= 0) ?? 99;
+    const due = sim.pending.filter(p => p.kind === 'entry').sort((a, b) => rank(a.id) - rank(b.id));
+    if (!due.length) return;
+    const nextOpen = this.lastBarUtc + H, openHour = new Date(wallOf(nextOpen)).getUTCHours();
+    // Same rule as the simulator: nothing opens from the flat-by hour until the 18:00 reopen.
+    if (this.cfg.flatByHour !== null && openHour >= this.cfg.flatByHour && openHour < 18) return;
+    if (now - nextOpen > ENTRY_WINDOW) {
+      if (this.staleWarned !== nextOpen) this.d.note(`K system: ${due.map(p => p.id).join(', ')} had an entry at ${new Date(nextOpen).toISOString().slice(11, 16)} UTC but Keel got there more than 10 minutes late, so it was skipped.`, 'warn');
+      this.staleWarned = nextOpen; return;
+    }
+    for (const p of due) {
+      const S = STRATEGIES.find(s => s.id === p.id)!;
+      if (!this.cfg.enabled[S.id] || this.trades.some(t => t.id === S.id && t.signalUtc === p.signalUtc)) continue;
+      if (this.trades.some(t => t.sym === S.symbol)) { this.d.note(`K system: skipped ${S.id}, another K trade already holds ${S.symbol}.`, 'info'); continue; }
+      await this.enter(S, p.dir, p.signalUtc, risk);
+    }
+  }
+
+  private async enter(S: KStrategy, dir: Dir, signalUtc: number, risk: number) {
+    const X = this.series[S.symbol], sig = X.bars.findIndex(b => b.utc === signalUtc), I = INSTRUMENTS[S.symbol], orderSym = I.micro;
+    const d = dir === 'long' ? 1 : -1, side = dir === 'long' ? 'buy' as const : 'sell' as const, exitSide = dir === 'long' ? 'sell' as const : 'buy' as const;
+    const px = this.d.data.lastPrice?.(orderSym) ?? this.d.data.lastPrice?.(S.symbol);
+    if (sig < 0 || px === undefined) { this.d.note(`K system: skipped ${S.id}, no live price for ${orderSym}.`, 'warn'); return; }
+    const plan = planEntry(S, X, sig, dir, px + d * I.tick, risk, I.usd_per_point_micro);
+    if ('skip' in plan) { this.d.note(`K system: skipped ${S.id} ${dir}: ${plan.skip}.`, 'info'); return; }
+    const openRisk = this.trades.reduce((a, t) => a + Math.abs(t.entry - t.stop) * INSTRUMENTS[t.sym].usd_per_point_micro * t.qty, 0);
+    if (openRisk + plan.R * I.usd_per_point_micro * plan.qty > this.cfg.capMult * risk) { this.d.note(`K system: skipped ${S.id}, total open risk cap.`, 'info'); return; }
+    // Keel's own risk limits (daily loss, contract caps, allowed symbols) have the last word.
+    let pnl: number;
+    try { pnl = await this.d.dailyPnL(); } catch { this.d.note(`K system: blocked ${S.id}, today's P&L can't be read.`, 'warn'); return; }
+    const positions = await this.d.desk.getPositions();
+    const verdict = this.d.risk.check({ symbol: orderSym, side, qty: plan.qty, source: 'strategy', strategyId: S.id, from: S.id }, { dailyPnL: pnl, openPositions: positions.filter(p => p.qty !== 0).length, positions });
+    if (!verdict.ok) { this.d.note(`K system: blocked ${S.id}: ${verdict.reason}`, 'warn'); return; }
+
+    await this.d.desk.placeOrder({ symbol: orderSym, side, qty: plan.qty, type: 'market' });
+    // Re-anchor stop and target on the real fill (average price), with the same rules.
+    const pos = (await this.d.desk.getPositions()).find(p => p.symbol === orderSym && Math.sign(p.qty) === d);
+    const fill = pos && Number.isFinite(pos.avgPrice) ? pos.avgPrice : px + d * I.tick;
+    const fin = planEntry(S, X, sig, dir, fill, risk, I.usd_per_point_micro, plan.qty);
+    const stop = 'skip' in fin ? plan.stop : fin.stop, target = 'skip' in fin ? plan.target : fin.target;
+    const t: LiveTrade = { id: S.id, sym: S.symbol, orderSym, dir, qty: plan.qty, entry: fill, entryUtc: this.lastBarUtc + H, signalUtc, stop, target, stopOrder: null, targetOrder: null, opened: this.now() };
+    try {
+      t.stopOrder = await this.d.desk.placeOrder({ symbol: orderSym, side: exitSide, qty: t.qty, type: 'stop', price: stop });
+    } catch (e) {   // never leave a position without its stop
+      await this.d.desk.placeOrder({ symbol: orderSym, side: exitSide, qty: t.qty, type: 'market' }).catch(() => {});
+      this.d.note(`K system: ${S.id} was closed right away because its stop could not be placed (${(e as Error).message}). Check your platform.`, 'warn');
+      return;
+    }
+    if (target !== null) { try { t.targetOrder = await this.d.desk.placeOrder({ symbol: orderSym, side: exitSide, qty: t.qty, type: 'limit', price: target }); } catch { this.d.note(`K system: ${S.id} target order failed; the stop is in place.`, 'warn'); } }
+    this.trades.push(t); this.d.store.save(this.trades);
+    this.d.note(`Sent ${side} ${t.qty} ${orderSym} (${S.id} ${S.name}): stop ${stop.toFixed(2)}${target !== null ? `, target ${target.toFixed(2)}` : ''}.`, 'trade');
+  }
+
+  private async moveStop(t: LiveTrade, price: number) {
+    try {
+      if (t.stopOrder) await this.d.desk.modifyOrder(t.stopOrder, { price });
+      else t.stopOrder = await this.d.desk.placeOrder({ symbol: t.orderSym, side: t.dir === 'long' ? 'sell' : 'buy', qty: t.qty, type: 'stop', price });
+      this.d.note(`K system: ${t.id} stop moved to ${price.toFixed(2)}.`, 'info');
+      t.stop = price; this.d.store.save(this.trades);
+    } catch (e) { this.d.note(`K system: could not move the ${t.id} stop (${(e as Error).message}). The old stop is still working.`, 'warn'); }
+  }
+
+  private async exit(t: LiveTrade, why: string) {
+    for (const id of [t.stopOrder, t.targetOrder]) if (id) await this.d.desk.cancelOrder(id).catch(() => {});
+    const pos = (await this.d.desk.getPositions()).find(p => p.symbol === t.orderSym);
+    const d = t.dir === 'long' ? 1 : -1, open = pos ? Math.max(0, Math.min(t.qty, pos.qty * d)) : 0;
+    try {
+      if (open > 0) await this.d.desk.placeOrder({ symbol: t.orderSym, side: t.dir === 'long' ? 'sell' : 'buy', qty: open, type: 'market' });
+      this.d.note(`K system: closed ${t.id} ${t.dir} ${t.qty} ${t.orderSym} (${why}).`, 'trade');
+    } catch { this.d.note(`K system: could not close ${t.id} on ${t.orderSym}. Check your platform now.`, 'warn'); return; }
+    this.trades = this.trades.filter(x => x !== t); this.d.store.save(this.trades);
+  }
+
+  /** Between bars: a stop or target that filled at the broker closes the trade, and the other order is cancelled. */
+  async syncFills() {
+    if (!this.trades.length) return;
+    const [positions, working] = await Promise.all([this.d.desk.getPositions(), this.d.desk.getOpenOrders()]);
+    const ids = new Set(working.map(o => o.id));
+    for (const t of [...this.trades]) {
+      const pos = positions.find(p => p.symbol === t.orderSym), d = t.dir === 'long' ? 1 : -1;
+      const open = pos ? pos.qty * d : 0;
+      if (open > 0) {
+        if (!t.stopOrder || !ids.has(t.stopOrder)) {
+          // The stop is gone while the position is still open (rejected, expired or cancelled by hand): put it back.
+          this.d.note(`K system: ${t.id} had no working stop, placing it again.`, 'warn');
+          t.stopOrder = null; await this.moveStop(t, t.stop);
+        }
+        continue;
+      }
+      for (const id of [t.stopOrder, t.targetOrder]) if (id && ids.has(id)) await this.d.desk.cancelOrder(id).catch(() => {});
+      const hitTarget = t.targetOrder !== null && !ids.has(t.targetOrder) && (t.stopOrder === null || ids.has(t.stopOrder));
+      this.d.note(`K system: ${t.id} ${t.dir} ${t.qty} ${t.orderSym} closed at its ${hitTarget ? 'target' : 'stop'}.`, 'trade');
+      this.trades = this.trades.filter(x => x !== t); this.d.store.save(this.trades);
+    }
+  }
+
+  /** For the screen. */
+  status() {
+    const sim = this.sim, since = this.cfg.countFrom;
+    return {
+      mode: this.cfg.mode, lastBarUtc: this.lastBarUtc, lastRun: this.lastRun, nextCheck: this.nextCheck, error: this.lastError, riskNow: this.riskNow(),
+      strategies: STRATEGIES.map(S => {
+        const rec = (sim?.trades ?? []).filter(t => t.id === S.id && t.entryUtc >= since).slice(-30);
+        return {
+          id: S.id, name: S.name, symbol: S.symbol, orderSymbol: INSTRUMENTS[S.symbol].micro, enabled: !!this.cfg.enabled[S.id],
+          paused: sim?.paused[S.id] ?? null, live: this.trades.find(t => t.id === S.id) ?? null,
+          pending: sim?.pending.find(p => p.id === S.id) ?? null, rollingR: rec.length ? rec.reduce((a, t) => a + t.r, 0) / rec.length : null, rollingN: rec.length,
+          lastSignal: (sim?.trades ?? []).filter(t => t.id === S.id).slice(-1)[0]?.signalUtc ?? null
+        };
+      })
+    };
+  }
+}

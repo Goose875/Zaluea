@@ -2,9 +2,13 @@ export type Side = 'buy' | 'sell';
 
 export interface Order {
   symbol: string; side: Side; qty: number;
-  type: 'market' | 'limit'; price?: number;
+  /** 'stop' = stop-market order that triggers at `price`; 'limit' rests at `price`. */
+  type: 'market' | 'limit' | 'stop'; price?: number;
   stopLoss?: number; takeProfit?: number;
 }
+/** A working (unfilled) order at the broker. */
+export interface WorkingOrder { id: string; symbol: string; side: Side; qty: number; type: 'market' | 'limit' | 'stop' | 'other'; price: number | null }
+export interface HistBar { t: number; o: number; h: number; l: number; c: number; v: number }
 export interface Position { symbol: string; qty: number; avgPrice: number; pnl?: number }
 export interface DayResult { date: string; pnl: number }
 /** What a broker can tell us about the account itself. */
@@ -33,6 +37,14 @@ export interface BrokerAdapter {
   getBars?(symbol: string, seconds: number, count: number): Promise<{ t: number; o: number; h: number; l: number; c: number }[]>;
   /** Start live prices for these symbols (if the broker has a price feed). */
   subscribe?(symbols: string[]): Promise<void>;
+  /** Optional: completed history bars (t = bar open time, ms UTC) for the front-month contract, oldest first. */
+  getHistory?(symbol: string, unit: 'hour' | 'day', count: number): Promise<HistBar[]>;
+  /** Optional: working orders, and changing / cancelling one. Needed for broker-side stops (K system live mode). */
+  getOpenOrders?(): Promise<WorkingOrder[]>;
+  modifyOrder?(id: string, change: { price: number }): Promise<void>;
+  cancelOrder?(id: string): Promise<void>;
+  /** Optional: last traded price Keel has seen for a symbol. */
+  lastPrice?(symbol: string): number | undefined;
 }
 
 export interface Strategy {

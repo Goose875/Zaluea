@@ -15,7 +15,8 @@ function dailyFor(f) {
 }
 const series = {};
 for (const [sym, f] of [['NQ', nqFile], ['GC', gcFile]]) if (f) series[sym] = buildSeries(sym, INSTRUMENTS[sym].tick, parseHourly(fs.readFileSync(f, 'utf8'), 'America/New_York'), dailyFor(f));
-const res = simulate(series, VALIDATION);
+const flatBy = process.env.FLAT_BY ? Number(process.env.FLAT_BY) : null;
+const res = simulate(series, { ...VALIDATION, flatByHour: flatBy });
 const all = Object.values(series).flatMap(s => s.bars), from = Math.min(...all.map(b => b.utc)), to = Math.max(...all.map(b => b.utc));
 const rows = compare(res.trades, from, to, wallOf);
 const f2 = x => (x === null ? '  -  ' : x.toFixed(2).padStart(5));
