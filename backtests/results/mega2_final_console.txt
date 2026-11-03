@@ -1,0 +1,137 @@
+TOTAL STRATEGIES SIMULATED: 551,103,704
+
+=== LUCK TEST: pass rate and TEST hold-up of passers by category ===
+            TE_med_passers                      TE_pos_passers                      pass_rate                     
+category             LEVEL RANDOM  SETUP   ZONE          LEVEL RANDOM  SETUP   ZONE     LEVEL RANDOM  SETUP   ZONE
+run  symbol                                                                                                       
+flat ES             -0.030 -0.086  0.008 -0.122          0.422  0.267  0.520  0.204     0.003  0.001  0.004  0.002
+     GC             -0.041 -0.171 -0.046 -0.038          0.409  0.150  0.380  0.404     0.009  0.006  0.009  0.007
+     NQ              0.012 -0.047  0.052 -0.015          0.532  0.375  0.659  0.464     0.007  0.009  0.017  0.006
+hold ES             -0.069 -0.100 -0.022 -0.126          0.343  0.258  0.448  0.231     0.005  0.006  0.009  0.004
+     GC             -0.001 -0.065  0.013 -0.005          0.498  0.412  0.529  0.490     0.018  0.005  0.020  0.013
+     NQ              0.019 -0.036  0.051 -0.040          0.539  0.411  0.639  0.418     0.011  0.008  0.036  0.010
+
+(A) families above random ceiling: 269  -> TEST median -0.040R, positive 40%
+(B) ...and qualifying in BOTH exit styles: 52 families -> TEST median -0.089R, positive 34%
+(C) ...qualifying in >= 2 markets: 4 families -> TEST median -0.051R, positive 36%
+
+--- (B) families robust to exit style ---
+ run symbol                         trigger   dir  regime trend  vol       window   pd dow  eligible  plateau  ceiling  pass_TR_med  pass_VA_med  pass_TE_med  pass_TE_pos
+flat     NQ           LEVEL prior POC break  both against  with  any          any none any       188    0.755    0.153        0.290        0.332        0.083        0.937
+hold     GC           LEVEL prior POC break  both    with  with  low          any none any       367    0.728    0.207        0.290        0.447       -0.249        0.000
+hold     GC           LEVEL prior POC break  both    none  with  low   Asia 18-02 none any       193    0.689    0.207        0.293        0.239       -0.112        0.256
+hold     GC           LEVEL prior VAL break  both against  none high          any with any       162    0.654    0.207        0.259        0.358        0.051        0.755
+hold     NQ           LEVEL prior POC break  both against  with  any          any none any       170    0.635    0.236        0.338        0.358        0.173        1.000
+hold     NQ LEVEL round number below reject  long    with  none  low          any none any       253    0.593    0.236        0.423        0.247       -0.149        0.013
+flat     GC           LEVEL prior POC break  both    with  with  low          any none any       228    0.583    0.265        0.251        0.353       -0.232        0.000
+hold     ES            LEVEL VWAP -2σ break  long    with  none  any London 02-08 none any       347    0.568    0.146        0.254        0.273        0.010        0.609
+flat     ES            LEVEL VWAP -2σ break  long    with  none  any London 02-08 none any       216    0.542    0.051        0.247        0.233        0.024        0.675
+hold     GC           LEVEL prior POC break  long    with  with  low          any none any       231    0.528    0.207        0.214        0.393       -0.350        0.000
+hold     GC                  ZONE LIQ break  long    with  with  low          any none any       344    0.523    0.207        0.348        0.581       -0.208        0.133
+hold     NQ           LEVEL VWAP +1σ retest  both against  none  low  NY AM 08-12 none any       338    0.515    0.236        0.306        0.320        0.050        0.598
+flat     NQ LEVEL round number below reject  long    with  none  low          any none any       187    0.508    0.153        0.464        0.219       -0.109        0.011
+hold     GC            LEVEL VWAP +2σ break  long    none  none  low   Asia 18-02 none any       682    0.503    0.207        0.302        0.391       -0.168        0.236
+hold     NQ       LEVEL prior-day mid break  both    none  none  any  NY AM 08-12 none any       337    0.501    0.236        0.371        0.212       -0.053        0.284
+flat     GC                  ZONE LIQ break  long    with  with  low          any none any       277    0.498    0.265        0.306        0.506       -0.219        0.014
+hold     NQ      LEVEL prior-day mid retest  long    none  none high          any none any       152    0.493    0.236        0.271        0.271        0.064        0.907
+hold     GC       LEVEL session VWAP reject  long    with  with  low   Asia 18-02 none any       440    0.457    0.207        0.328        0.398       -0.195        0.214
+hold     NQ          SETUP Keltner breakout  both    none  with  any  NY AM 08-12 none any       316    0.456    0.236        0.435        0.246       -0.191        0.000
+hold     GC       SETUP NR7 + volume dry-up  long    none  none  low   Asia 18-02 none any       352    0.455    0.207        0.424        0.415        0.041        0.562
+hold     GC              SETUP NR7 breakout  long    none  none  low   Asia 18-02 none any       352    0.446    0.207        0.423        0.410        0.065        0.631
+flat     NQ           LEVEL VWAP +1σ retest  both against  none  low  NY AM 08-12 none any       216    0.444    0.153        0.258        0.320        0.023        0.562
+flat     GC                ZONE 4H-SR break  long    none  with  low London 02-08 none any       288    0.424    0.265        0.389        0.291       -0.314        0.000
+hold     GC     LEVEL prior-week high break  both    none  with  any          any none any       278    0.417    0.207        0.205        0.328       -0.151        0.009
+hold     GC           LEVEL VWAP -1σ retest  both    none  none  low  NY AM 08-12 none any       211    0.412    0.207        0.238        0.365       -0.195        0.069
+flat     GC            LEVEL VWAP +2σ break  long    none  none  low   Asia 18-02 none any       432    0.412    0.265        0.277        0.416       -0.145        0.213
+hold     GC                ZONE 4H-SR break  both    with  with  low   Asia 18-02 none any       433    0.406    0.207        0.330        0.370       -0.020        0.432
+hold     ES       SETUP NR7 + volume dry-up  both    none  none  any          any none Mon       222    0.405    0.146        0.380        0.307        0.180        0.889
+flat     NQ       LEVEL prior-day mid break  both    none  none  any  NY AM 08-12 none any       216    0.394    0.153        0.345        0.188       -0.106        0.176
+hold     ES                SETUP Inside bar  both    none  none  any          any none Mon       287    0.390    0.146        0.299        0.222        0.115        0.893
+flat     GC           LEVEL prior POC break  long    with  with  low          any none any       188    0.388    0.265        0.222        0.297       -0.195        0.000
+flat     GC          LEVEL prior VAL retest short against  none  any          any with any       212    0.387    0.265        0.235        0.262       -0.048        0.354
+flat     NQ           LEVEL prior VAL break  both    none  none  any  NY AM 08-12 none any       216    0.384    0.153        0.289        0.255       -0.033        0.253
+flat     NQ                ZONE OPENS sweep  both against  with  low          any none any       226    0.381    0.153        0.307        0.359        0.014        0.581
+flat     GC           LEVEL prior VAL break  both    with  with  low          any none any       216    0.380    0.265        0.355        0.241       -0.304        0.000
+hold     GC                  ZONE LIQ break  both    with  with  low          any none any       819    0.376    0.207        0.302        0.555       -0.192        0.036
+hold     GC               ZONE 4H-SR retest  both    none  with  low London 02-08 none any       464    0.375    0.207        0.341        0.314       -0.132        0.075
+hold     GC                ZONE 4H-SR break  long    none  with  low London 02-08 none any       451    0.370    0.207        0.386        0.259       -0.348        0.000
+hold     NQ           LEVEL VWAP +1σ retest short    none  none  low  NY AM 08-12 none any       346    0.370    0.236        0.315        0.275        0.118        0.828
+flat     NQ      SETUP Donchian 20 breakout  both    none  none  any          any none Mon       176    0.369    0.153        0.349        0.350       -0.099        0.138
+hold     GC                ZONE 4H-SR break  long    none  with  low   Asia 18-02 none any       344    0.369    0.207        0.270        0.454        0.226        1.000
+flat     GC           LEVEL prior POC break  both    none  with  low   Asia 18-02 none any       168    0.369    0.265        0.298        0.240       -0.125        0.226
+hold     GC                ZONE 4H-SR break  long    with  with  low          any none any      1398    0.368    0.207        0.333        0.413       -0.157        0.126
+hold     ES            LEVEL VWAP -2σ break  both    with  with  any London 02-08 none any       344    0.366    0.146        0.215        0.332        0.062        0.802
+hold     NQ           LEVEL prior VAL break  both against  with  any          any none any       194    0.366    0.236        0.273        0.449       -0.012        0.352
+flat     GC       LEVEL session VWAP reject  long    with  with  low   Asia 18-02 none any       344    0.360    0.265        0.274        0.338       -0.202        0.113
+hold     NQ                       SETUP NR4  both    none  with  low          any none any      1071    0.354    0.236        0.375        0.301        0.161        0.992
+hold     NQ                ZONE GAPS reject  both    none  with  low   Asia 18-02 none any       584    0.349    0.236        0.338        0.258        0.009        0.534
+flat     GC           LEVEL VWAP -1σ retest  both    none  none  low  NY AM 08-12 none any       135    0.348    0.265        0.237        0.425       -0.167        0.000
+hold     NQ                ZONE 4H-SR break  long    none  none  any          any none Wed      1215    0.347    0.236        0.333        0.263       -0.096        0.199
+hold     NQ                ZONE 4H-SR break  both against  none  low   Asia 18-02 none any       404    0.344    0.236        0.456        0.250       -0.073        0.281
+hold     GC          LEVEL prior VAL retest short against  none  any          any with any       288    0.344    0.207        0.247        0.260       -0.203        0.212
+flat     ES       SETUP NR7 + volume dry-up  both    none  none  any          any none Mon       216    0.343    0.051        0.256        0.253        0.270        0.986
+flat     NQ          SETUP Keltner breakout  both    none  with  any  NY AM 08-12 none any       216    0.343    0.153        0.463        0.205       -0.209        0.000
+flat     GC                ZONE 4H-SR break  both    with  with  low London 02-08 none any       288    0.340    0.265        0.331        0.243       -0.150        0.020
+flat     GC               ZONE 4H-SR retest  long    with  with  low          any none any       282    0.337    0.265        0.250        0.315       -0.189        0.000
+flat     GC                ZONE 4H-SR break  long    with  with  low          any none any       864    0.323    0.265        0.280        0.320       -0.173        0.004
+hold     GC            LEVEL VWAP +1σ break  long    with  none  low   Asia 18-02 none any       348    0.322    0.207        0.251        0.361       -0.235        0.071
+hold     NQ                ZONE OPENS sweep  both against  with  low          any none any       153    0.314    0.236        0.226        0.264        0.012        0.812
+hold     GC            LEVEL VWAP +2σ break  both    with  none  low   Asia 18-02 none any       469    0.313    0.207        0.541        0.270       -0.161        0.116
+hold     GC                ZONE 4H-SR break  both    with  with  low London 02-08 none any       441    0.311    0.207        0.318        0.239       -0.161        0.066
+flat     ES            LEVEL VWAP -2σ break  both    with  with  any London 02-08 none any       216    0.310    0.051        0.201        0.299        0.078        0.851
+hold     NQ      SETUP Donchian 20 breakout  both    none  none  any          any none Mon       246    0.305    0.236        0.321        0.308       -0.049        0.293
+flat     GC            LEVEL VWAP +2σ break  both    with  none  low   Asia 18-02 none any       312    0.304    0.265        0.469        0.245       -0.178        0.116
+flat     NQ                ZONE 4H-SR break  both against  none  low   Asia 18-02 none any       276    0.301    0.153        0.392        0.240       -0.072        0.217
+flat     GC                ZONE 4H-SR break  long    with  with  any London 02-08 none any       360    0.297    0.265        0.292        0.255       -0.326        0.000
+flat     NQ           LEVEL VWAP +1σ retest short    none  none  low  NY AM 08-12 none any       216    0.296    0.153        0.286        0.306        0.118        0.953
+flat     GC       SETUP NR7 + volume dry-up  long    none  none  low   Asia 18-02 none any       216    0.296    0.265        0.393        0.368        0.034        0.594
+flat     NQ                ZONE 4H-SR break  long    none  with  any   Asia 18-02 none any       491    0.295    0.153        0.370        0.327       -0.023        0.386
+flat     GC                ZONE 4H-SR break  long    none  with  low   Asia 18-02 none any       255    0.294    0.265        0.253        0.427        0.224        1.000
+flat     GC            LEVEL VWAP +1σ break  long    with  none  low   Asia 18-02 none any       216    0.292    0.265        0.212        0.306       -0.166        0.016
+hold     GC               ZONE 4H-SR retest  long    with  with  low          any none any       413    0.288    0.207        0.273        0.350       -0.158        0.017
+flat     GC  LEVEL round number above break  long    none  none  low London 02-08 none any       216    0.287    0.265        0.325        0.395       -0.090        0.161
+flat     GC           LEVEL prior VAL break  both against  none high          any with any       192    0.286    0.265        0.271        0.350        0.002        0.509
+flat     GC                ZONE 4H-SR break  both    with  with  low   Asia 18-02 none any       284    0.285    0.265        0.327        0.353       -0.050        0.284
+hold     NQ           LEVEL prior VAL break  both    none  none  any  NY AM 08-12 none any       323    0.285    0.236        0.324        0.260       -0.001        0.500
+flat     GC              SETUP NR7 breakout  long    none  none  low   Asia 18-02 none any       216    0.282    0.265        0.393        0.361        0.046        0.689
+hold     ES           LEVEL VWAP +1σ reject short against  none  low  NY AM 08-12 none any       345    0.281    0.146        0.395        0.304       -0.108        0.021
+flat     GC               ZONE 4H-SR retest  both    none  with  low London 02-08 none any       288    0.274    0.265        0.340        0.277       -0.137        0.013
+flat     NQ                ZONE 4H-SR break  long    none  none  any          any none Wed       806    0.274    0.153        0.322        0.255       -0.066        0.317
+flat     GC                  ZONE LIQ break  both    with  with  low          any none any       561    0.273    0.265        0.286        0.496       -0.241        0.000
+flat     ES                SETUP Inside bar  both    none  none  any          any none Mon       192    0.271    0.051        0.201        0.219        0.047        0.750
+flat     ES                 ZONE 4H-SR fade  both    none  with  low  NY AM 08-12 none any       576    0.269    0.051        0.258        0.403       -0.230        0.000
+flat     ES               ZONE 4H-SR reject  both    none  with  low  NY AM 08-12 none any       576    0.269    0.051        0.258        0.403       -0.230        0.000
+flat     ES           LEVEL VWAP +1σ reject short against  none  low  NY AM 08-12 none any       216    0.269    0.051        0.319        0.290       -0.088        0.138
+flat     GC     LEVEL prior-week high break  both    none  with  any          any none any       216    0.269    0.265        0.195        0.327        0.036        0.586
+flat     NQ           LEVEL prior VAL break  both against  with  any          any none any       190    0.268    0.153        0.257        0.430       -0.023        0.275
+hold     GC           LEVEL prior VAL break  both    with  with  low          any none any       315    0.260    0.207        0.338        0.249       -0.298        0.000
+hold     ES               ZONE 4H-SR reject  both    none  with  low  NY AM 08-12 none any       805    0.256    0.146        0.250        0.413       -0.252        0.000
+hold     ES                 ZONE 4H-SR fade  both    none  with  low  NY AM 08-12 none any       805    0.256    0.146        0.250        0.413       -0.252        0.000
+hold     NQ                      SETUP NR10  both    with  with  low          any none any       374    0.254    0.236        0.218        0.288        0.067        0.832
+flat     ES  LEVEL round number below break  both    none  none  any  NY AM 08-12 none any       432    0.252    0.051        0.215        0.422       -0.078        0.073
+flat     NQ                ZONE GAPS reject  both    none  with  low   Asia 18-02 none any       384    0.250    0.153        0.293        0.242       -0.008        0.479
+hold     NQ                ZONE 4H-SR break  long    none  with  any   Asia 18-02 none any       715    0.245    0.236        0.393        0.346        0.003        0.531
+flat     NQ      LEVEL prior-day mid retest  long    none  none high          any none any       187    0.241    0.153        0.232        0.213        0.007        0.556
+hold     GC  LEVEL round number above break  long    none  none  low London 02-08 none any       341    0.238    0.207        0.346        0.405       -0.103        0.160
+flat     ES                ZONE 4H-SR break  long    with  none  any          any with any       830    0.237    0.051        0.240        0.250       -0.139        0.020
+hold     ES                ZONE 4H-SR break  both against  none  low  NY AM 08-12 none any       456    0.230    0.146        0.398        0.247        0.076        0.943
+flat     NQ                      SETUP NR10  both    with  with  low          any none any       304    0.224    0.153        0.216        0.251        0.055        0.868
+hold     GC                ZONE 4H-SR break  long    with  with  any London 02-08 none any       555    0.222    0.207        0.296        0.250       -0.320        0.033
+hold     ES  LEVEL round number below break  both    none  none  any  NY AM 08-12 none any       719    0.221    0.146        0.232        0.431       -0.072        0.126
+flat     ES                ZONE 4H-SR break  both against  none  low  NY AM 08-12 none any       288    0.219    0.051        0.447        0.212        0.084        1.000
+flat     NQ                       SETUP NR4  both    none  with  low          any none any       648    0.202    0.153        0.315        0.263        0.105        0.977
+hold     ES                ZONE 4H-SR break  long    with  none  any          any with any      1117    0.201    0.146        0.281        0.257       -0.166        0.031
+
+--- (C) families robust across markets ---
+ run symbol                   trigger  dir regime trend vol       window   pd dow  eligible  plateau  ceiling  pass_TR_med  pass_VA_med  pass_TE_med  pass_TE_pos
+hold     ES      LEVEL VWAP -2σ break long   with  none any London 02-08 none any       347    0.568    0.146        0.254        0.273        0.010        0.609
+flat     ES      LEVEL VWAP -2σ break long   with  none any London 02-08 none any       216    0.542    0.051        0.247        0.233        0.024        0.675
+hold     NQ LEVEL prior-day mid break both   none  none any  NY AM 08-12 none any       337    0.501    0.236        0.371        0.212       -0.053        0.284
+flat     NQ LEVEL prior-day mid break both   none  none any  NY AM 08-12 none any       216    0.394    0.153        0.345        0.188       -0.106        0.176
+hold     ES          SETUP Inside bar both   none  none any          any none Mon       287    0.390    0.146        0.299        0.222        0.115        0.893
+hold     GC     LEVEL VWAP +2σ retest both   with  none any  NY AM 08-12 none any       681    0.377    0.207        0.264        0.308       -0.051        0.307
+hold     NQ      LEVEL VWAP -2σ break long   with  none any London 02-08 none any       331    0.372    0.236        0.345        0.288       -0.153        0.106
+flat     ES          SETUP Inside bar both   none  none any          any none Mon       192    0.271    0.051        0.201        0.219        0.047        0.750
+hold     NQ          SETUP Inside bar both   none  none any          any none Mon       496    0.252    0.236        0.265        0.304       -0.014        0.480
+flat     ES     LEVEL VWAP +2σ retest both   with  none any  NY AM 08-12 none any       432    0.238    0.051        0.239        0.224       -0.128        0.000
+hold     GC LEVEL prior-day mid break both   none  none any  NY AM 08-12 none any       267    0.217    0.207        0.247        0.274       -0.235        0.000
