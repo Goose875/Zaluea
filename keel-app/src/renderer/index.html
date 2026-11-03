@@ -14,6 +14,8 @@
         <button data-go="chart">Chart</button>
         <button data-go="acct">Progress</button>
         <button data-go="accts">Accounts</button>
+        <button data-go="k">K system</button>
+        <button data-go="kval">Validate K</button>
         <button data-go="strat">Strategies</button>
         <button data-go="test">Backtest</button>
         <button data-go="conn">Logins</button>
@@ -104,24 +106,72 @@
           <div id="acctGroups"></div>
         </section>
 
+        <section id="v-k" class="view" hidden>
+          <div class="panel">
+            <h2>K system</h2>
+            <p class="hint">Seven hourly strategies from the research (K1&ndash;K7). Signals come from NQ and GC prices; orders go in MNQ and MGC micros. Keel checks a few seconds after every hour, places each entry with its stop resting at the broker, and moves or closes it by the rules.</p>
+            <div id="kMode" class="seg" role="group" aria-label="K system mode">
+              <button type="button" data-mode="off" aria-pressed="false">Off</button>
+              <button type="button" data-mode="paper" aria-pressed="false">Paper</button>
+              <button type="button" data-mode="live" aria-pressed="false">Live</button>
+            </div>
+            <p id="kModeHint" class="hint"></p>
+            <div class="fgrid4">
+              <div><label for="kSizing">Size each trade by</label><select id="kSizing"><option value="fixed">A fixed $ risk</option><option value="cushion">Room above the drawdown floor</option></select></div>
+              <div id="kRiskWrap"><label for="kRisk">Risk per trade ($)</label><input id="kRisk" type="number" min="50" max="5000" step="25"></div>
+              <div id="kDivWrap" hidden><label for="kDiv">Risk = room &divide;</label><input id="kDiv" type="number" min="4" max="40" step="1"></div>
+              <div><label for="kCap">Max open risk (&times; one trade)</label><input id="kCap" type="number" min="1" max="10" step="0.5"></div>
+              <div><label for="kFlat">Be flat by (New York time)</label><select id="kFlat"><option value="16">4:00 PM (Topstep)</option><option value="15">3:00 PM</option><option value="17">5:00 PM (closes 4:57 PM)</option><option value="none">No cut-off: allow overnight holds</option></select></div>
+              <div class="full"><label class="check"><input id="kPause" type="checkbox"> Pause a strategy when its last 30 trades average below &minus;0.2R</label></div>
+              <div class="full"><button id="kSave" type="button">Save settings</button><p id="kMsg" class="saved" role="status" aria-live="polite"></p></div>
+            </div>
+          </div>
+          <div class="panel">
+            <h2>Strategies</h2>
+            <p id="kStatus" class="hint"></p>
+            <div class="tscroll plainscroll"><table id="kTable"></table></div>
+            <p class="hint">Backtest column: the untouched test year (Dec 2025 &ndash; Nov 2026), one mini contract, from the research. Past results don't promise future ones.</p>
+          </div>
+          <div id="kPaperBox" class="panel" hidden>
+            <h2>Paper account</h2>
+            <p id="kPaperText" class="big2"></p>
+            <div id="kFills" class="tscroll plainscroll"></div>
+          </div>
+        </section>
+
+        <section id="v-kval" class="view" hidden>
+          <div class="panel">
+            <h2>Check the K system against the research</h2>
+            <p class="hint">Runs Keel's own K engine on your price files and compares every strategy with the research numbers. In TradingView open NQ1! and GC1! at 1 hour, scroll back to June 2024, then chart menu &rarr; Export chart data (keep volume). Daily files (same export at 1 day, going back to early 2024) make the daily trend exact from the first day.</p>
+            <div class="fgrid4">
+              <div><label for="kvNq">NQ1! hourly (CSV)</label><input id="kvNq" type="file" accept=".csv,text/csv"></div>
+              <div><label for="kvGc">GC1! hourly (CSV)</label><input id="kvGc" type="file" accept=".csv,text/csv"></div>
+              <div><label for="kvNqD">NQ1! daily (optional)</label><input id="kvNqD" type="file" accept=".csv,text/csv"></div>
+              <div><label for="kvGcD">GC1! daily (optional)</label><input id="kvGcD" type="file" accept=".csv,text/csv"></div>
+              <div><label for="kvFlat">Flat-by rule</label><select id="kvFlat"><option value="none">None (as researched)</option><option value="16">Flat by 4:00 PM ET</option></select></div>
+              <div class="full"><button id="kvRun" type="button">Run check</button><p id="kvMsg" class="hint" role="status" aria-live="polite"></p></div>
+            </div>
+          </div>
+          <div id="kvOut" class="panel" hidden>
+            <h2>Results</h2>
+            <p id="kvSummary" class="hint"></p>
+            <div class="tscroll plainscroll"><table id="kvTable"></table></div>
+          </div>
+        </section>
+
         <section id="v-strat" class="view" hidden>
           <div class="panel">
             <h2>Your strategies</h2>
-            <p class="hint">Switch a strategy on and it runs whenever the bot is running. Changes save on their own.</p>
+            <p class="hint">Your own Pine Script and TradingView strategies. The K1&ndash;K7 system has its own page. Switch a strategy on and it runs whenever the bot is running. Changes save on their own.</p>
             <div id="myStrats" class="slist"></div>
           </div>
           <div class="panel">
             <h2>Add a strategy</h2>
             <div class="tabs2" role="tablist" aria-label="Ways to add a strategy">
-              <button role="tab" id="tabLib" data-pane="paneLib" aria-selected="true">Keel library</button>
-              <button role="tab" id="tabPine" data-pane="panePine" aria-selected="false">Pine Script</button>
+              <button role="tab" id="tabPine" data-pane="panePine" aria-selected="true">Pine Script</button>
               <button role="tab" id="tabTv" data-pane="paneTv" aria-selected="false">TradingView alerts</button>
             </div>
-            <div id="paneLib" role="tabpanel" aria-labelledby="tabLib">
-              <p class="hint">Simple starter strategies for testing. They are examples, not proven to make money.</p>
-              <div id="libGrid" class="grid"></div>
-            </div>
-            <div id="panePine" role="tabpanel" aria-labelledby="tabPine" hidden>
+            <div id="panePine" role="tabpanel" aria-labelledby="tabPine">
               <p class="hint">Paste a strategy straight from TradingView's Pine editor. Keel runs it on live prices. Most common features work; anything that doesn't is named when you check it.</p>
               <textarea id="pineText" rows="12" spellcheck="false" aria-label="Pine Script" placeholder="//@version=5&#10;strategy(&quot;My strategy&quot;, overlay=true)&#10;..."></textarea>
               <div class="btns0 gap"><button id="pineCheck" class="ghost" type="button">Check script</button><button id="pineExample" class="link" type="button">Paste an example</button></div>

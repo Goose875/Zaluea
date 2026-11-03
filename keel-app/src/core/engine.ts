@@ -14,6 +14,8 @@ export class Engine {
   private open = new Map<string, { symbol: string; side: 'buy' | 'sell'; qty: number; entry: number | null; tpPx: number | null; slPx: number | null; name: string; opened: number }>();
   /** Called with every price, for the chart. */
   onTick?: (q: { symbol: string; price: number; ts: number }) => void;
+  /** Called first when the kill switch or a daily-loss stop fires (the K system stops and forgets its trades). */
+  onHalt?: () => void;
   log: string[] = [];
   events: { t: number; msg: string; kind: 'trade' | 'warn' | 'info' }[] = [];
   private stats = { realized: 0, unrealized: 0, total: 0, positions: [] as Position[], updated: 0 };
@@ -168,6 +170,7 @@ export class Engine {
   /** Kill switch: stop everything and flatten. */
   async halt() {
     this.risk.halt();
+    try { this.onHalt?.(); } catch { /* keep going: closing positions matters more */ }
     this.open.clear();
     for (const r of this.running.values()) r.s.reset?.();
     try {
@@ -191,9 +194,12 @@ export class Engine {
       events: this.events.slice(-80), history: h.filter((_, i) => i % step === 0 || i === h.length - 1) };
   }
 
+  /** Lets other parts of Keel (the K system) post to the activity feed. */
+  say(m: string) { this.note(m); }
+
   private note(m: string) {
     this.log.push(`${new Date().toISOString()} ${m}`); this.log = this.log.slice(-200);
-    const kind = /^Sent/.test(m) ? 'trade' : /Blocked|Ignored|stopped:|limit|can't|Can't|failed|not available|Check your/i.test(m) ? 'warn' : 'info';
+    const kind = /^Sent|closed .* at its|K system: closed/.test(m) ? 'trade' : /Blocked|Ignored|stopped:|limit|can't|Can't|failed|not available|Check your|could not|skipped .* late/i.test(m) ? 'warn' : 'info';
     this.events.push({ t: Date.now(), msg: m, kind }); this.events = this.events.slice(-200);
   }
 }

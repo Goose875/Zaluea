@@ -22,5 +22,8 @@ contextBridge.exposeInMainWorld('keel', {
   chart: (symbol: string, tf: number) => ipcRenderer.invoke('chart:get', symbol, tf),
   backtest: (id: string, csv: string, opts: unknown) => ipcRenderer.invoke('backtest:run', id, csv, opts),
   installUpdate: () => ipcRenderer.invoke('update:install'),
-  kill: () => ipcRenderer.invoke('engine:kill')
+  kill: () => ipcRenderer.invoke('engine:kill'),
+  kGet: () => ipcRenderer.invoke('k:get'),
+  kSet: (cfg: unknown) => ipcRenderer.invoke('k:set', cfg),
+  kValidate: (files: unknown, flatBy: number | null) => ipcRenderer.invoke('k:validate', files, flatBy)
 });

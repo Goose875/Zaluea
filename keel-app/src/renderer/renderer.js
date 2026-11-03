@@ -5,7 +5,7 @@ const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls)
 const NAMES = { projectx: 'TopstepX', rithmic: 'Rithmic', cqg: 'CQG', tradovate: 'Tradovate', ninjatrader: 'NinjaTrader' };
 const nm = v => NAMES[v] || v;
 const STATUS = { ready: '', beta: ' (beta)', 'needs-approval': ' (needs approval)' };
-const TITLES = { dash: 'Today', chart: 'Chart', acct: 'Progress', accts: 'Accounts', strat: 'Strategies', test: 'Backtest', conn: 'Logins', risk: 'Risk limits', alerts: 'TradingView alerts' };
+const TITLES = { dash: 'Today', chart: 'Chart', acct: 'Progress', accts: 'Accounts', k: 'K system', kval: 'Validate the K system', strat: 'Strategies', test: 'Backtest', conn: 'Logins', risk: 'Risk limits', alerts: 'TradingView alerts' };
 const STAGE = { evaluation: ['Evaluation', 'Profit target'], funded: ['Funded', 'Payout target'], live: ['Live', 'Payout target'], practice: ['Practice', 'Practice goal'] };
 const DD = { eod: 'EOD trailing', intraday: 'Intraday trailing', static: 'Static' };
 const MULT = { ES: 50, NQ: 20, MES: 5, MNQ: 2, YM: 5, MYM: 0.5, RTY: 50, M2K: 5, CL: 1000, MCL: 100, GC: 100, MGC: 10 };
@@ -32,7 +32,7 @@ const selAcct = () => store.accounts.find(a => a.id === store.selected) || null;
 // ---------- navigation ----------
 let view = 'dash';
 function go(v) {
-  view = v; if (v === 'chart') drawLive(); if (v === 'test') fillBtStrats();
+  view = v; if (v === 'chart') drawLive(); if (v === 'test') fillBtStrats(); if (v === 'k') kLoad();
   for (const k of Object.keys(TITLES)) $('v-' + k).hidden = k !== v;
   document.querySelectorAll('#nav button').forEach(b => { if (b.dataset.go === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   $('title').textContent = v === 'dash' ? greeting() : TITLES[v];
@@ -428,14 +428,6 @@ function updateStratStates(s) {
   });
 }
 
-function renderLibrary() {
-  const g = $('libGrid'); g.replaceChildren();
-  for (const item of cat.library) {
-    const c = el('div', 'libcard'), b = el('button', '', 'Add');
-    b.onclick = async () => { const r = await window.keel.addStrategy(item.cfg, 'library'); if (r.ok) { strats = r.list; renderStrats(); flash(b, 'Added'); setTimeout(() => { b.textContent = 'Add'; }, 1500); } else notice(r.error); };
-    c.append(el('h3', '', item.title), el('p', '', item.blurb), el('p', 'hint2', describe(item.cfg)), b); g.append(c);
-  }
-}
 document.querySelectorAll('.tabs2 button').forEach(t => {
   t.onclick = () => document.querySelectorAll('.tabs2 button').forEach(b => { const on = b === t; b.setAttribute('aria-selected', String(on)); $(b.dataset.pane).hidden = !on; });
 });
@@ -656,13 +648,123 @@ function renderLogins() {
   }
 }
 
+
+// ---------- K system ----------
+let kData = null, kDraft = null, kBusy = false;
+const usd0 = n => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
+const nyTime = t => new Date(t).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET';
+const MODE_HINT = {
+  off: 'Off. K1-K7 do not run.',
+  paper: 'Paper: real prices from your login, pretend orders. Nothing reaches your account. Start the bot to run it.',
+  live: 'LIVE: real orders on the selected account, with stops resting at the broker. Every entry still passes your risk limits.'
+};
+async function kLoad() {
+  if (kBusy) return; kBusy = true;
+  try { kData = await window.keel.kGet(); } finally { kBusy = false; }
+  if (!kData) return;
+  if (!kDraft) kDraft = JSON.parse(JSON.stringify(kData.cfg));
+  kRender();
+}
+function kFillForm(c) {
+  document.querySelectorAll('#kMode button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === c.mode)));
+  $('kModeHint').textContent = MODE_HINT[c.mode]; $('kModeHint').classList.toggle('neg', c.mode === 'live');
+  $('kSizing').value = c.sizing; $('kRisk').value = c.riskUsd; $('kDiv').value = c.divisor; $('kCap').value = c.capMult;
+  $('kFlat').value = c.flatByHour === null ? 'none' : String(c.flatByHour); $('kPause').checked = c.pauseOn;
+  $('kRiskWrap').hidden = c.sizing !== 'fixed'; $('kDivWrap').hidden = c.sizing !== 'cushion';
+}
+function kRender() {
+  const d = kData, c = kDraft, st = d.status;
+  if (document.activeElement === document.body || !document.activeElement || !$('v-k').contains(document.activeElement)) kFillForm(c);
+  $('kStatus').textContent = !d.running ? 'The bot is stopped. K1-K7 run while the bot runs.'
+    : !st ? (d.cfg.mode === 'off' ? 'The K system is off.' : 'Starting…')
+    : `Last hourly check ${st.lastRun ? nyTime(st.lastRun) : '—'} (bar ${st.lastBarUtc ? nyTime(st.lastBarUtc) : '—'}). Risk per trade now ${usd0(st.riskNow)}.${st.error ? ' Problem: ' + st.error : ''}`;
+  const t = $('kTable'); t.replaceChildren();
+  const head = el('tr'); for (const h of ['On', 'Strategy', 'Market', 'Backtest test year', 'Now', 'Last 30 trades']) head.append(el('th', '', h)); t.append(head);
+  for (const m of d.meta) {
+    const row = el('tr'), s = st ? st.strategies.find(x => x.id === m.id) : null;
+    const cb = el('input'); cb.type = 'checkbox'; cb.checked = !!c.enabled[m.id]; cb.setAttribute('aria-label', `Run ${m.id}`);
+    cb.onchange = () => { kDraft.enabled[m.id] = cb.checked; kSave(true); };
+    const tcell = el('td'); tcell.append(cb);
+    const e = m.expected.test;
+    let now = !c.enabled[m.id] ? 'Off' : !s ? '—' : s.paused ? `Paused ${nyTime(s.paused)} (rolling average below -0.2R)` : '';
+    if (s && s.live) now = `${s.live.dir === 'long' ? 'Long' : 'Short'} ${s.live.qty} ${s.live.orderSym} @ ${s.live.entry.toFixed(2)}, stop ${s.live.stop.toFixed(2)}${s.live.target !== null ? `, target ${s.live.target.toFixed(2)}` : ''}`;
+    else if (s && s.pending && !s.paused) now = s.pending.kind === 'confirm' ? `Signal ${s.pending.dir}, waiting for a confirming close` : `Entry ${s.pending.dir} at the next open`;
+    else if (s && !now) now = 'Waiting for a signal';
+    row.append(tcell, el('td', '', `${m.id} · ${m.name}`), el('td', '', `${m.symbol} → ${m.orderSymbol}`),
+      el('td', '', `${e[0]} trades, ${e[2] >= 0 ? '+' : ''}${e[2].toFixed(2)}R, PF ${e[3].toFixed(2)}`), el('td', '', now),
+      el('td', '', s && s.rollingN ? `${s.rollingR >= 0 ? '+' : ''}${s.rollingR.toFixed(2)}R (${s.rollingN})` : '—'));
+    t.append(row);
+  }
+  $('kPaperBox').hidden = !d.paper;
+  if (d.paper) {
+    $('kPaperText').textContent = `Paper P&L ${usd0(d.paper.realized + d.paper.unrealized)} (closed ${usd0(d.paper.realized)}, open ${usd0(d.paper.unrealized)})`;
+    const f = $('kFills'); f.replaceChildren();
+    if (d.paper.fills.length) {
+      const ft = el('table'), hr = el('tr'); for (const h of ['Time', 'Fill', 'Price', 'How']) hr.append(el('th', '', h)); ft.append(hr);
+      for (const x of d.paper.fills.slice().reverse()) { const r = el('tr'); r.append(el('td', '', nyTime(x.t)), el('td', '', `${x.side} ${x.qty} ${x.symbol}`), el('td', '', x.price.toFixed(2)), el('td', '', x.why)); ft.append(r); }
+      f.append(ft);
+    }
+  }
+}
+function kReadForm() {
+  const f = $('kFlat').value;
+  return { ...kDraft, sizing: $('kSizing').value, riskUsd: Number($('kRisk').value), divisor: Number($('kDiv').value), capMult: Number($('kCap').value),
+    flatByHour: f === 'none' ? null : Number(f), pauseOn: $('kPause').checked };
+}
+async function kSave(quiet) {
+  const next = quiet ? kDraft : kReadForm();
+  const r = await window.keel.kSet(next);
+  if (!r.ok) { flash($('kMsg'), r.error, true); kDraft = JSON.parse(JSON.stringify(kData.cfg)); kRender(); return; }
+  kDraft = JSON.parse(JSON.stringify(r.cfg)); if (!quiet) flash($('kMsg'), 'Saved.'); await kLoad();
+}
+$('kSizing').onchange = () => { $('kRiskWrap').hidden = $('kSizing').value !== 'fixed'; $('kDivWrap').hidden = $('kSizing').value !== 'cushion'; };
+$('kSave').onclick = () => kSave(false);
+document.querySelectorAll('#kMode button').forEach(b => {
+  b.onclick = async () => {
+    const mode = b.dataset.mode;
+    if (mode === 'live' && !confirm('Turn on LIVE trading for K1-K7?\n\nKeel will place real orders on the account selected at the top whenever the bot runs. Run paper mode first, and check the Validate page.')) return;
+    kDraft = { ...kReadForm(), mode }; await kSave(true);
+  };
+});
+
+// ---------- K system: validation ----------
+$('kvRun').onclick = async () => {
+  const read = async id => { const f = $(id).files[0]; if (!f) return ''; if (f.size > 60e6) throw new Error('A file is too big (60 MB max).'); return f.text(); };
+  let files;
+  try { files = { NQ: await read('kvNq'), GC: await read('kvGc'), NQdaily: await read('kvNqD'), GCdaily: await read('kvGcD') }; }
+  catch (e) { flash($('kvMsg'), e.message, true); return; }
+  if (!files.NQ && !files.GC) { flash($('kvMsg'), 'Choose the NQ1! or GC1! hourly file first.', true); return; }
+  $('kvMsg').textContent = 'Running…'; $('kvRun').disabled = true;
+  const r = await window.keel.kValidate(files, $('kvFlat').value === 'none' ? null : Number($('kvFlat').value));
+  $('kvRun').disabled = false;
+  if (!r.ok) { flash($('kvMsg'), r.error, true); return; }
+  $('kvMsg').textContent = ''; $('kvOut').hidden = false;
+  const flagged = r.rows.filter(x => x.flags.length).length, covered = r.rows.filter(x => x.covered).length;
+  const noDaily = Object.entries(r.daily).filter(([k, v]) => !v && r.bars[k]).map(([k]) => k);
+  $('kvSummary').textContent = `${Object.entries(r.bars).map(([k, v]) => `${k}: ${v.toLocaleString()} hourly bars`).join(', ')}, ${new Date(r.from).toISOString().slice(0, 10)} to ${new Date(r.to).toISOString().slice(0, 10)}. `
+    + `${covered} of ${r.rows.length} strategy periods are fully covered by your data; ${flagged ? `${flagged} are more than 10% off the research (marked).` : 'all of them are within 10% of the research.'}`
+    + (noDaily.length ? ` No daily file for ${noDaily.join(' and ')}: the daily trend needs 50 sessions to start, so K1 and K7 trade less in the first months.` : '')
+    + (r.flatBy !== null ? ' Flat-by 4 PM is on, so differences from the research are expected (K2 most).' : '');
+  const t = $('kvTable'); t.replaceChildren();
+  const hr = el('tr'); for (const h of ['Strategy', 'Period', 'Keel: trades / win / avg R / PF', 'Research', 'Check']) hr.append(el('th', '', h)); t.append(hr);
+  const P = { train: 'Jun 2024 – Mar 2025', valid: 'Apr – Nov 2025', test: 'Dec 2025 – Nov 2026' };
+  for (const x of r.rows) {
+    const row = el('tr'), g = x.got, w = x.want;
+    row.append(el('td', '', x.id), el('td', '', P[x.period]),
+      el('td', '', `${g.trades} / ${Math.round(g.win)}% / ${g.avgR >= 0 ? '+' : ''}${g.avgR.toFixed(2)} / ${g.pf === null ? '—' : g.pf.toFixed(2)}`),
+      el('td', '', `${w[0]} / ${w[1]}% / ${w[2] >= 0 ? '+' : ''}${w[2].toFixed(2)} / ${w[3].toFixed(2)}`),
+      el('td', !x.covered ? '' : x.flags.length ? 'neg' : 'pos', !x.covered ? 'Not enough data' : x.flags.length ? x.flags.join('; ') : 'Matches'));
+    t.append(row);
+  }
+};
+
 // ---------- catalog and session ----------
 async function loadCatalog() {
   cat = await window.keel.catalog(); if (!cat) return;
   store = cat.accounts; strats = cat.strategies;
   $('sampleAccts').hidden = !cat.dev;
   $('version').textContent = `Keel ${cat.version}`;
-  fillRisk(cat.risk); renderLogins(); renderAccounts(); renderPicker(); renderStrats(); renderLibrary();
+  fillRisk(cat.risk); renderLogins(); renderAccounts(); renderPicker(); renderStrats();
 }
 $('toggle').onclick = async () => {
   $('toggle').disabled = true;
@@ -686,6 +788,7 @@ function render(s) {
   if (!cat) { loadCatalog().then(() => renderToday(last)); go('dash'); return; }
   renderToday(s);
   if (view === 'chart') drawLive();
+  if (view === 'k') kLoad();
   if (wasRunning !== s.running) { renderPicker(); renderAccounts(); }
 }
 const refresh = async () => render(await window.keel.status());

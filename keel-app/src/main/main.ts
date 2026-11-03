@@ -18,10 +18,22 @@ import { checkPine } from '../pine/run';
 import { BarStore } from '../core/bars';
 import { parseCsv, runBacktest, samplePrices } from '../core/backtest';
 import { parseStrategy } from '../strategies/rules';
-import { LIBRARY } from '../core/library';
 import { loadStrategies, saveStrategies } from './strategies';
+import { KLive, parseKConfig, OrderDesk } from '../ksys/live';
+import { PaperOrders } from '../ksys/paperOrders';
+import { loadKConfig, saveKConfig, kTradeStore } from './kstore';
+import { parseHourly, buildSeries, DailyClose } from '../ksys/series';
+import { simulate, VALIDATION, STRATEGIES, INSTRUMENTS } from '../ksys/sim';
+import { compare, EXPECTED, stats as kStats } from '../ksys/validate';
+import { wallOf } from '../ksys/time';
 
 let engine: Engine | null = null;
+let kLive: KLive | null = null;
+let kPaper: PaperOrders | null = null;
+let kAcct: { equity: number; floor: number } | null = null;
+let kAcctTimer: ReturnType<typeof setInterval> | undefined;
+/** Data symbols the K system reads (NQ, GC) and trades (MNQ, MGC). */
+const K_SYMBOLS = [...new Set(STRATEGIES.flatMap(s => [s.symbol, INSTRUMENTS[s.symbol].micro]))];
 let hook: http.Server | null = null;
 let activeBroker = '';
 let activeAccount = '';
@@ -84,7 +96,9 @@ function webhookSecret(): string {
   return secret;
 }
 
+function stopK() { kLive?.stop(); kLive = null; kPaper = null; clearInterval(kAcctTimer); kAcct = null; }
 async function stopTrading() {
+  stopK();
   await engine?.shutdown();
   engine = null;
   hook?.close();
@@ -142,7 +156,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('catalog', e => {
     if (!allowed(e)) return null;
-    return { dev: !app.isPackaged, accounts: loadAccounts(conns()), blank: BLANK, strategies: loadStrategies(), library: LIBRARY, brokers: BROKERS.filter(b => !b.dev || !app.isPackaged), presets: PRESETS, version: app.getVersion(), saved: BROKERS.filter(b => vault.has(`broker:${b.id}`)).map(b => b.id), risk: loadRisk() };
+    return { dev: !app.isPackaged, accounts: loadAccounts(conns()), blank: BLANK, strategies: loadStrategies(), brokers: BROKERS.filter(b => !b.dev || !app.isPackaged), presets: PRESETS, version: app.getVersion(), saved: BROKERS.filter(b => vault.has(`broker:${b.id}`)).map(b => b.id), risk: loadRisk() };
   });
 
   // Keys can be saved or removed from the window, but there is no call that returns them.
@@ -212,12 +226,42 @@ app.whenReady().then(async () => {
     // The account's own rules tighten the global limits, never loosen them.
     const limits = { ...global, maxDailyLoss: acct && acct.dailyLoss > 0 ? Math.min(global.maxDailyLoss, acct.dailyLoss) : global.maxDailyLoss,
       maxMini: acct?.maxMini || 0, maxMicro: acct?.maxMicro || 0 };
-    engine = new Engine(broker, new RiskGuard(limits));
+    const guard = new RiskGuard(limits);
+    engine = new Engine(broker, guard);
     engine.setGoals(goalsFor(acct));
     engine.syncStrategies(loadStrategies());
-    engine.onTick = q => bars.add(q);
+    // K system (K1-K7): paper = real prices, pretend orders; live = real orders with stops resting at the broker.
+    const kc = loadKConfig();
+    let kErr = '';
+    if (kc.mode !== 'off') {
+      if (!broker.getHistory) kErr = `${def.name} has no price history, so the K system can't run on it.`;
+      else if (kc.mode === 'live' && !(broker.getOpenOrders && broker.modifyOrder && broker.cancelOrder)) kErr = `${def.name} can't hold stop orders yet, so the K system can't trade live on it. Use paper mode.`;
+    }
+    if (kc.mode !== 'off' && !kErr) {
+      kPaper = kc.mode === 'paper' ? new PaperOrders(broker) : null;
+      const desk: OrderDesk = kPaper ?? (broker as unknown as OrderDesk);
+      const e = engine;
+      kLive = new KLive(kc, {
+        data: broker, desk, risk: guard, store: kTradeStore(kc.mode),
+        dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
+        account: () => kAcct, note: m => e.say(m)
+      });
+      const pollAcct = async () => {
+        try { const i = broker.getAccount ? await broker.getAccount() : null; if (i) kAcct = { equity: i.balance, floor: i.floor ?? ((acct?.size || i.size) - (acct?.maxLoss || i.maxLoss)) }; } catch { /* keep the last value */ }
+      };
+      void pollAcct(); kAcctTimer = setInterval(() => void pollAcct(), 60_000); (kAcctTimer as any).unref?.();
+      engine.onHalt = () => { kLive?.stop(); kLive?.forgetAll(); void kPaper?.closeAll(); };
+    }
+    engine.onTick = q => { bars.add(q); kPaper?.onQuote(q); };
     await seedBars(broker);
-    await engine.start(limits.allowedSymbols);
+    await engine.start(kLive ? [...new Set([...limits.allowedSymbols, ...K_SYMBOLS])] : limits.allowedSymbols);
+    if (kErr) engine.say(`K system is off: ${kErr}`);
+    if (kLive) {
+      const miss = K_SYMBOLS.filter(x => x.startsWith('M') && !limits.allowedSymbols.includes(x));
+      if (miss.length) engine.say(`K system: add ${miss.join(' and ')} to your allowed symbols under Risk limits, or its trades there will be blocked.`);
+      engine.say(`K system started in ${kc.mode} mode. It checks for signals a few seconds after every hour.`);
+      kLive.start();
+    }
     activeBroker = brokerId; activeAccount = acct?.id ?? '';
     hook = startWebhook(8787, webhookSecret(), s => void engine?.handleSignal(s));
     return { ok: true };
@@ -269,6 +313,51 @@ app.whenReady().then(async () => {
     } catch (err) { return { ok: false, error: (err as Error).message }; }
   });
   ipcMain.handle('engine:kill', async e => { if (allowed(e)) await engine?.halt(); });
+
+  // ---------- K system ----------
+  ipcMain.handle('k:get', e => {
+    if (!allowed(e)) return null;
+    return { cfg: loadKConfig(), status: kLive ? kLive.status() : null, running: !!engine,
+      paper: kPaper ? { realized: kPaper.realized, unrealized: kPaper.unrealized(), fills: kPaper.fills.slice(-50) } : null,
+      meta: STRATEGIES.map(S => ({ id: S.id, name: S.name, symbol: S.symbol, orderSymbol: INSTRUMENTS[S.symbol].micro, direction: S.direction,
+        flat: S.flat_at_session_end, expected: (EXPECTED as any)[S.id] })) };
+  });
+  ipcMain.handle('k:set', (e, x: unknown) => {
+    if (!allowed(e)) return { ok: false, error: 'Not allowed.' };
+    const next = parseKConfig(x), cur = loadKConfig();
+    if (engine && next.mode !== cur.mode) return { ok: false, error: 'Stop the bot before switching the K system between off, paper and live.' };
+    if (next.mode === 'live' && cur.mode !== 'live' && !next.countFrom) next.countFrom = Date.now();
+    saveKConfig(next); kLive?.setConfig(next);
+    return { ok: true, cfg: next };
+  });
+  /** Validation: runs Keel's K engine on hourly CSVs (and optional daily CSVs) and compares with spec section 8. */
+  ipcMain.handle('k:validate', (e, files: any, flatBy: unknown) => {
+    if (!allowed(e) || !files || typeof files !== 'object') return { ok: false, error: 'Not allowed.' };
+    try {
+      const dailyOf = (txt: unknown): DailyClose[] | undefined => {
+        if (typeof txt !== 'string' || !txt.trim()) return undefined;
+        const L = txt.replace(/\r/g, '').trim().split('\n'), head = L[0].toLowerCase().split(/[,;\t]/).map(h => h.trim().replace(/"/g, ''));
+        const iT = head.findIndex(h => ['time', 'date', 'datetime', 'timestamp'].includes(h)), iC = head.indexOf('close');
+        if (iT < 0 || iC < 0) throw new Error('The daily file needs date and close columns.');
+        return L.slice(1).map(l => { const v = l.split(/[,;\t]/).map(x => x.trim().replace(/"/g, '')); const t = v[iT];
+          const date = /^\d+(\.\d+)?$/.test(t) ? new Date(Number(t) < 1e11 ? Number(t) * 1000 : Number(t)).toISOString().slice(0, 10) : t.slice(0, 10); return { date, close: Number(v[iC]) }; })
+          .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d.date) && Number.isFinite(d.close));
+      };
+      const series: Record<string, ReturnType<typeof buildSeries>> = {};
+      for (const sym of ['NQ', 'GC']) {
+        const f = files[sym]; if (typeof f !== 'string' || !f.trim()) continue;
+        series[sym] = buildSeries(sym, INSTRUMENTS[sym].tick, parseHourly(f, 'America/New_York'), dailyOf(files[sym + 'daily']));
+      }
+      if (!Object.keys(series).length) return { ok: false, error: 'Choose at least one hourly price file (NQ or GC).' };
+      const fb = typeof flatBy === 'number' && flatBy >= 12 && flatBy <= 17 ? flatBy : null;
+      const res = simulate(series, { ...VALIDATION, flatByHour: fb });
+      const all = Object.values(series).flatMap(x => x.bars), from = Math.min(...all.map(b => b.utc)), to = Math.max(...all.map(b => b.utc));
+      const rows = compare(res.trades, from, to, wallOf).filter(r => series[STRATEGIES.find(S => S.id === r.id)!.symbol]);
+      const totals = STRATEGIES.filter(S => series[S.symbol]).map(S => ({ id: S.id, ...kStats(res.trades.filter(t => t.id === S.id)) }));
+      return { ok: true, rows, totals, from, to, flatBy: fb, daily: Object.fromEntries(['NQ', 'GC'].map(x => [x, !!files[x + 'daily']])),
+        bars: Object.fromEntries(Object.entries(series).map(([k, v]) => [k, v.bars.length])) };
+    } catch (err) { return { ok: false, error: (err as Error).message }; }
+  });
 
   // A small menu with no developer tools in it.
   Menu.setApplicationMenu(Menu.buildFromTemplate([

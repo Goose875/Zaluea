@@ -10,11 +10,11 @@ export const EXPECTED: Record<string, { train: number[]; valid: number[]; test: 
   K6: { train: [50, 28, 0.54, 1.42], valid: [42, 24, 0.36, 1.66], test: [45, 31, 0.47, 1.76], testUsd: 69365 },
   K7: { train: [52, 42, 0.26, 1.56], valid: [44, 41, 0.28, 1.99], test: [64, 38, 0.12, 1.28], testUsd: 20793 }
 };
-// Periods by the New York date of the entry bar.
+// Periods by the New York date of the entry bar. The research data ran Jun 12 2024 - Nov 2 2026.
 export const PERIODS = [
-  { key: 'train', label: 'TRAIN Jun 2024 \u2013 Mar 2025', from: '2024-06-01', to: '2025-03-31' },
+  { key: 'train', label: 'TRAIN Jun 2024 \u2013 Mar 2025', from: '2024-06-12', to: '2025-03-31' },
   { key: 'valid', label: 'VALID Apr \u2013 Nov 2025', from: '2025-04-01', to: '2025-11-30' },
-  { key: 'test', label: 'TEST Dec 2025 \u2013 Nov 2026', from: '2025-12-01', to: '2026-11-30' }
+  { key: 'test', label: 'TEST Dec 2025 \u2013 Nov 2026', from: '2025-12-01', to: '2026-11-02' }
 ] as const;
 
 export interface Stats { trades: number; win: number; avgR: number; pf: number | null; usd: number }
