@@ -1,0 +1,6 @@
+step,added,TUNE_pass%,TUNE_fail%,TUNE_days,TEST_pass%,TEST_fail%,TEST_days
+1,"GC NR10 (long) | 1xATR | risk $750 | TP $4,000 | BE at +1R | trail off",0.22686567164179106,0.11940298507462686,23.0,0.0,0.24537037037037038,
+2,"NQ ICT FVG trend (no P/D filter) (both) | 1xATR | risk $1,000 | TP none | BE off | trail 2R act, 1R trail",0.34626865671641793,0.10746268656716418,22.0,0.0,0.3611111111111111,
+3,"GC Opening drive + daily regime (both) | 5-bar swing | risk $750 | TP none | BE off | trail 2R act, 1R trail",0.3522388059701492,0.1044776119402985,23.0,0.0,0.375,
+4,"ES ICT turtle soup PDH/PDL (both) | ICT stop | risk $1,000 | TP $4,000 | BE at +1R | trail off",0.42686567164179107,0.15522388059701492,21.0,0.06018518518518518,0.5277777777777778,17.0
+5,"ES ICT turtle soup PDH/PDL (both) | ICT stop | risk $500 | TP $1,500 | BE off | trail 2R act, 1R trail",0.408955223880597,0.11940298507462686,21.0,0.032407407407407406,0.4675925925925926,19.0
