@@ -38,7 +38,7 @@ export function parseHourly(text: string, zone: string): HBar[] {
 
 /** Volume profile of bars: 40 equal bins between their low and high, typical price weighted by volume, 70% value area. */
 export function profile(rb: { h: number; l: number; c: number; v: number }[]): { poc: number; val: number; vah: number } | null {
-  if (!rb.length) return null;
+  if (rb.length < 3) return null;   // as in the research backtest: a day needs at least 3 RTH bars for a profile
   const lo = Math.min(...rb.map(b => b.l)), hi = Math.max(...rb.map(b => b.h)), total = rb.reduce((a, b) => a + b.v, 0);
   if (!(total > 0)) return null;
   const N = 40, w = (hi - lo) / N, vol = new Array(N).fill(0);
@@ -52,8 +52,14 @@ export function profile(rb: { h: number; l: number; c: number; v: number }[]): {
   return { poc: lo + (p + 0.5) * w, val: lo + a * w, vah: lo + (z + 1) * w };
 }
 
-/** Every indicator and level from spec section 2, per bar. NaN comparisons behave like pandas (false). */
-export function buildSeries(sym: string, tick: number, bars: HBar[]): Series {
+/** A daily close (exchange daily bar), keyed by its trade date (YYYY-MM-DD). */
+export interface DailyClose { date: string; close: number }
+
+/** Every indicator and level from spec section 2, per bar. NaN comparisons behave like pandas (false).
+ *  `daily`: exchange daily closes for the daily regime (spec: yesterday's daily close > SMA50 of daily closes). Pass at least
+ *  ~60 days before the first hourly bar so the regime is known from the start. Without it, Keel falls back to session closes
+ *  from the hourly bars, and the regime stays unknown for the first 50 sessions (regime-filtered strategies then don't trade). */
+export function buildSeries(sym: string, tick: number, bars: HBar[], daily?: DailyClose[]): Series {
   const n = bars.length, NaNs = () => new Array(n).fill(NaN);
   const atr = NaNs(), ema20 = NaNs(), ema50 = NaNs(), atrSma = NaNs(), vwap = NaNs(), band1 = NaNs(), weekMid = NaNs(), poc = NaNs(), val = NaNs();
   const regimeUp = new Array(n).fill(false), regimeKnown = new Array(n).fill(false), nr4 = new Array(n).fill(false), nr7 = new Array(n).fill(false), last = new Array(n).fill(false);
@@ -79,13 +85,24 @@ export function buildSeries(sym: string, tick: number, bars: HBar[]): Series {
   }
   for (let i = 0; i < n; i++) last[i] = bars[i].hour === 16 || (i + 1 < n && bars[i + 1].sess !== bars[i].sess);
   // daily regime: yesterday's daily close > SMA50 of daily closes
-  const dClose = sessions.map(s => bars[s.to].c), sma50 = dClose.map((_, k) => (k >= 49 ? dClose.slice(k - 49, k + 1).reduce((x, y) => x + y, 0) / 50 : NaN));
+  // With exchange daily closes: regime for session D = (close of the last daily bar before D) > SMA50 of the 50 daily closes ending there.
+  let dReg: Map<string, { up: boolean }> | null = null;
+  if (daily && daily.length >= 51) {
+    const d = [...daily].filter(x => Number.isFinite(x.close)).sort((a, b) => (a.date < b.date ? -1 : 1));
+    dReg = new Map(); let j = -1, sum = 0;
+    const sums: number[] = d.map((x, k) => (sum += x.close, k >= 50 ? (sum -= d[k - 50].close) : 0, sum));
+    for (const s of sessions) {
+      while (j + 1 < d.length && d[j + 1].date < s.key) j++;
+      if (j >= 49) dReg.set(s.key, { up: d[j].close > sums[j] / 50 });
+    }
+  }
+  const dClose = sessions.map(s => bars[s.to].c), sma50 =dClose.map((_, k) => (k >= 49 ? dClose.slice(k - 49, k + 1).reduce((x, y) => x + y, 0) / 50 : NaN));
   // session VWAP and expanding sample sigma of (close - vwap)
   for (const s of sessions) {
     let pv = 0, vv = 0, cnt = 0, mean = 0, m2 = 0;
     for (let i = s.from; i <= s.to; i++) {
       const b = bars[i]; pv += ((b.h + b.l + b.c) / 3) * b.v; vv += b.v;
-      vwap[i] = vv > 0 ? pv / vv : NaN;
+      vwap[i] = vv > 0 ? pv / vv : b.c;   // no volume yet this session: VWAP = close (as in the research backtest)
       const d = b.c - vwap[i];
       if (Number.isFinite(d)) { cnt++; const dl = d - mean; mean += dl / cnt; m2 += dl * (d - mean); }
       const sig = cnt >= 3 ? Math.sqrt(m2 / (cnt - 1)) : NaN;
@@ -101,7 +118,8 @@ export function buildSeries(sym: string, tick: number, bars: HBar[]): Series {
   const prof: ({ poc: number; val: number } | null)[] = sessions.map(s => profile(bars.slice(s.from, s.to + 1).filter(b => b.hour >= 10 && b.hour <= 15)));
   for (let i = 0; i < n; i++) {
     const k = sessIdx[i];
-    if (k >= 1) { regimeKnown[i] = Number.isFinite(sma50[k - 1]); regimeUp[i] = dClose[k - 1] > sma50[k - 1]; }
+    if (dReg) { const r = dReg.get(bars[i].sess); if (r) { regimeKnown[i] = true; regimeUp[i] = r.up; } }
+    else if (k >= 1) { regimeKnown[i] = Number.isFinite(sma50[k - 1]); regimeUp[i] = dClose[k - 1] > sma50[k - 1]; }
     weekMid[i] = prevWeek.get(weekKey(bars[i].sess)) ?? NaN;
     for (let j = k - 1; j >= 0; j--) if (prof[j]) { poc[i] = prof[j]!.poc; val[i] = prof[j]!.val; break; }
   }

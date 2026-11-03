@@ -56,6 +56,7 @@ function trigger(S: KStrategy, X: Series, i: number, dir: Dir): boolean {
 }
 function filters(S: KStrategy, X: Series, i: number, dir: Dir): boolean {
   const f = S.filters, b = X.bars[i], up = X.regimeUp[i];
+  if (f.daily_regime !== 'none' && !X.regimeKnown[i]) return false;   // never guess the daily regime
   if (f.daily_regime === 'with' && (dir === 'long' ? !up : up)) return false;
   if (f.daily_regime === 'against' && (dir === 'long' ? up : !up)) return false;
   if (f.hourly_trend === 'with' && !(dir === 'long' ? X.ema20[i] > X.ema50[i] : X.ema20[i] < X.ema50[i])) return false;
@@ -120,6 +121,7 @@ export function simulate(series: Record<string, Series>, opt: SimOptions, only?:
       let stop = s.S.stop === 'atr_1x' ? E - d * X.atr[s.sig]
         : s.S.stop === 'signal_bar' ? (d > 0 ? sb.l - T : sb.h + T)
         : d > 0 ? Math.min(...X.bars.slice(Math.max(0, s.sig - 4), s.sig + 1).map(x => x.l)) - T : Math.max(...X.bars.slice(Math.max(0, s.sig - 4), s.sig + 1).map(x => x.h)) + T;
+      if ((E - stop) * d <= 0) { skipped.push({ id: s.S.id, utc: b.utc, why: 'price opened beyond the stop' }); continue; }
       if (Math.abs(E - stop) < 4 * T) stop = E - d * 4 * T;   // 4-tick minimum risk
       const R = Math.abs(E - stop);
       const target = s.S.target_R === null ? null : Math.round((E + d * s.S.target_R * R) / T) * T;
@@ -136,7 +138,8 @@ export function simulate(series: Record<string, Series>, opt: SimOptions, only?:
       const p = s.pos, long = p.dir === 'long';
       if (p.fill < i) {
         if (long ? b.o <= p.stop : b.o >= p.stop) { closeTrade(s, i, long ? b.o - T : b.o + T, 'stop'); continue; }
-        if (p.target !== null && (long ? b.o >= p.target + T : b.o <= p.target - T)) { closeTrade(s, i, b.o, 'target'); continue; }
+        // Gap through the target: counted at the target price (conservative, as in the research backtest).
+        if (p.target !== null && (long ? b.o >= p.target + T : b.o <= p.target - T)) { closeTrade(s, i, p.target, 'target'); continue; }
       }
       if (long ? b.l <= p.stop : b.h >= p.stop) { closeTrade(s, i, long ? p.stop - T : p.stop + T, 'stop'); continue; }
       if (p.target !== null && (long ? b.h >= p.target + T : b.l <= p.target - T)) { closeTrade(s, i, p.target, 'target'); continue; }
@@ -152,8 +155,9 @@ export function simulate(series: Record<string, Series>, opt: SimOptions, only?:
     for (const s of here) {
       if (s.mode === 'confirm' && s.due === i) {
         const sb = X.bars[s.sig], ok = s.dir === 'long' ? b.c > sb.h : b.c < sb.l, nx = X.bars[i + 1];
-        if (ok && (!nx || nx.sess === sb.sess)) { s.mode = 'entry'; s.due = i + 1; } else { s.mode = 'flat'; s.lastExit = i; }
-        continue;
+        if (ok && (!nx || nx.sess === sb.sess)) { s.mode = 'entry'; s.due = i + 1; continue; }
+        // Not confirmed: this bar can start a new signal itself (as in the research backtest).
+        s.mode = 'flat'; s.lastExit = i - 1;
       }
       if (s.mode !== 'flat' || i <= s.lastExit || s.paused) continue;
       const d = signal(s.S, X, i); if (!d) continue;
