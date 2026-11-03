@@ -1,0 +1,28 @@
+symbol,setup,params,IS_trades,IS_win,IS_pnl,IS_pf,IS_exp,IS_maxdd,OOS_trades,OOS_win,OOS_pnl,OOS_pf,OOS_exp,OOS_maxdd,PASS
+NQ,VWAP 2σ snap-back,no IS combo with >60% win & profit,,,,,,,,,,,,,
+NQ,VWAP 2.5σ snap-back,no IS combo with >60% win & profit,,,,,,,,,,,,,
+NQ,VWAP 1.5σ snap-back w/ trend,no IS combo with >60% win & profit,,,,,,,,,,,,,
+NQ,Trend pullback RSI(2)<10,tgt 40t / stop 81t / 5m,148.0,0.6216216216216216,1350.0,1.0881201044386424,9.121621621621621,-1875.0,92.0,0.6086956521739131,-1705.0,0.8649504950495049,-18.532608695652176,-3695.0,False
+NQ,Trend pullback RSI(2)<5,no IS combo with >60% win & profit,,,,,,,,,,,,,
+NQ,Sweep & reclaim 15-bar,no IS combo with >60% win & profit,,,,,,,,,,,,,
+NQ,Sweep & reclaim 30-bar,tgt 81t / stop 108t / 10m,164.0,0.6097560975609756,4430.0,1.152233676975945,27.01219512195122,-3600.0,105.0,0.4857142857142857,-7360.0,0.7282127031019202,-70.0952380952381,-7610.0,False
+NQ,With-trend sweep & reclaim 10-bar,no IS combo with >60% win & profit,,,,,,,,,,,,,
+NQ,Exhaustion fade (4 bars + spike),no IS combo with >60% win & profit,,,,,,,,,,,,,
+ES,VWAP 2σ snap-back,no IS combo with >60% win & profit,,,,,,,,,,,,,
+ES,VWAP 2.5σ snap-back,no IS combo with >60% win & profit,,,,,,,,,,,,,
+ES,VWAP 1.5σ snap-back w/ trend,no IS combo with >60% win & profit,,,,,,,,,,,,,
+ES,Trend pullback RSI(2)<10,no IS combo with >60% win & profit,,,,,,,,,,,,,
+ES,Trend pullback RSI(2)<5,tgt 14t / stop 27t / 20m,61.0,0.6229508196721312,95.0,1.0162323793250747,1.5573770491803278,-1820.0,38.0,0.5,-2440.0,0.5579710144927537,-64.21052631578948,-2580.0,False
+ES,Sweep & reclaim 15-bar,no IS combo with >60% win & profit,,,,,,,,,,,,,
+ES,Sweep & reclaim 30-bar,tgt 18t / stop 27t / 20m,127.0,0.6220472440944882,2552.5,1.206220965461523,20.098425196850393,-2905.0,98.0,0.5306122448979592,-4027.5,0.7281930150160284,-41.0969387755102,-6015.0,False
+ES,With-trend sweep & reclaim 10-bar,no IS combo with >60% win & profit,,,,,,,,,,,,,
+ES,Exhaustion fade (4 bars + spike),no IS combo with >60% win & profit,,,,,,,,,,,,,
+GC,VWAP 2σ snap-back,no IS combo with >60% win & profit,,,,,,,,,,,,,
+GC,VWAP 2.5σ snap-back,no IS combo with >60% win & profit,,,,,,,,,,,,,
+GC,VWAP 1.5σ snap-back w/ trend,no IS combo with >60% win & profit,,,,,,,,,,,,,
+GC,Trend pullback RSI(2)<10,no IS combo with >60% win & profit,,,,,,,,,,,,,
+GC,Trend pullback RSI(2)<5,no IS combo with >60% win & profit,,,,,,,,,,,,,
+GC,Sweep & reclaim 15-bar,no IS combo with >60% win & profit,,,,,,,,,,,,,
+GC,Sweep & reclaim 30-bar,tgt 36t / stop 54t / 20m,103.0,0.6116504854368932,885.0195312500637,1.0480206185676275,8.592422633495763,-4099.921875000182,65.0,0.5076923076923077,-3374.980468749982,0.7592736094853415,-51.92277644230741,-5219.995117187427,False
+GC,With-trend sweep & reclaim 10-bar,no IS combo with >60% win & profit,,,,,,,,,,,,,
+GC,Exhaustion fade (4 bars + spike),tgt 36t / stop 54t / 20m,30.0,0.6333333333333333,1019.9902343751091,1.2025803798806558,33.9996744791703,-1110.0,14.0,0.6428571428571429,9.999999999972715,1.0036036036035938,0.7142857142837654,-755.0000000000091,True

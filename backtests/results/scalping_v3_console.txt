@@ -1,0 +1,20 @@
+In-sample candidates (pooled, all 6 market/timeframe combos):
+Empty DataFrame
+Columns: [rsi_lo, htf, tgt_atr, stp_atr, IS_trades, IS_win, IS_ret, IS_markets_profitable]
+Index: []
+Traceback (most recent call last):
+  File "/home/user/Zaluea/backtests/scalping_v3.py", line 77, in <module>
+    main()
+    ~~~~^^
+  File "/home/user/Zaluea/backtests/scalping_v3.py", line 61, in main
+    best = cand.iloc[0]; print("\nCHOSEN:", best.to_dict())
+           ~~~~~~~~~^^^
+  File "/usr/local/lib/python3.13/site-packages/pandas/core/indexing.py", line 1207, in __getitem__
+    return self._getitem_axis(maybe_callable, axis=axis)
+           ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/pandas/core/indexing.py", line 1773, in _getitem_axis
+    self._validate_integer(key, axis)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/pandas/core/indexing.py", line 1706, in _validate_integer
+    raise IndexError("single positional indexer is out-of-bounds")
+IndexError: single positional indexer is out-of-bounds
