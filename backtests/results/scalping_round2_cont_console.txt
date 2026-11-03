@@ -1,0 +1,37 @@
+    tf symbol                             setup                      params  IS_trades  IS_win   IS_pnl  OOS_trades  OOS_win  OOS_pnl  OOS_pf   PASS
+3   1m     NQ          Trend pullback RSI(2)<10     tgt 40t / stop 81t / 5m      148.0    0.62  1350.00        92.0     0.61 -1705.00    0.86  False
+6   1m     NQ            Sweep & reclaim 30-bar   tgt 81t / stop 108t / 10m      164.0    0.61  4430.00       105.0     0.49 -7360.00    0.73  False
+12  1m     NQ         Inside-bar break in trend    tgt 40t / stop 81t / 20m       80.0    0.66    50.00        59.0     0.64 -1305.00    0.85  False
+14  1m     NQ  MORNING Trend pullback RSI(2)<10  tgt 108t / stop 108t / 10m       31.0    0.61  3300.00        20.0     0.45 -1595.00    0.74  False
+15  1m     NQ    MORNING Sweep & reclaim 15-bar  tgt 108t / stop 162t / 20m       66.0    0.62  1090.00        51.0     0.53 -3735.00    0.79  False
+16  1m     NQ         MORNING VWAP 2σ snap-back  tgt 108t / stop 108t / 20m       46.0    0.61  5475.00        33.0     0.48  -585.00    0.94  False
+22  1m     ES           Trend pullback RSI(2)<5    tgt 14t / stop 27t / 20m       61.0    0.62    95.00        38.0     0.50 -2440.00    0.56  False
+24  1m     ES            Sweep & reclaim 30-bar    tgt 18t / stop 27t / 20m      127.0    0.62  2552.50        98.0     0.53 -4027.50    0.73  False
+30  1m     ES         Inside-bar break in trend    tgt 18t / stop 27t / 20m       43.0    0.67  1685.00        41.0     0.46 -2730.00    0.60  False
+42  1m     GC            Sweep & reclaim 30-bar    tgt 36t / stop 54t / 20m      103.0    0.61   885.02        65.0     0.51 -3374.98    0.76  False
+44  1m     GC  Exhaustion fade (4 bars + spike)    tgt 36t / stop 54t / 20m       30.0    0.63  1019.99        14.0     0.64    10.00    1.00   True
+50  1m     GC  MORNING Trend pullback RSI(2)<10    tgt 18t / stop 27t / 10m       40.0    0.68  1020.00        26.0     0.62   -50.00    0.98  False
+52  1m     GC         MORNING VWAP 2σ snap-back    tgt 14t / stop 36t / 10m       54.0    0.74   150.00        65.0     0.63 -3465.00    0.62  False
+    tf symbol                              setup                     params  IS_trades  IS_win   IS_pnl  OOS_trades  OOS_win   OOS_pnl  OOS_pf   PASS
+2   5m     NQ       VWAP 1.5σ snap-back w/ trend   tgt 54t / stop 107t / 2m       28.0    0.61    30.00        16.0     0.44  -2715.00    0.41  False
+3   5m     NQ           Trend pullback RSI(2)<10  tgt 107t / stop 321t / 8m       57.0    0.63  4035.00        36.0     0.69   2730.00    1.28   True
+4   5m     NQ            Trend pullback RSI(2)<5  tgt 107t / stop 160t / 8m       28.0    0.64  2055.00        19.0     0.68   2910.00    1.84   True
+5   5m     NQ             Sweep & reclaim 15-bar  tgt 107t / stop 214t / 8m      127.0    0.63  5480.00        77.0     0.48 -17785.00    0.52  False
+6   5m     NQ             Sweep & reclaim 30-bar  tgt 160t / stop 321t / 4m       75.0    0.63  5955.00        58.0     0.53  -7350.00    0.72  False
+7   5m     NQ  With-trend sweep & reclaim 10-bar  tgt 107t / stop 321t / 8m       45.0    0.62  1165.00        15.0     0.40  -4090.00    0.44  False
+9   5m     NQ        Momentum burst continuation  tgt 214t / stop 321t / 2m       44.0    0.61  2780.00        21.0     0.33  -6470.00    0.50  False
+12  5m     NQ          Inside-bar break in trend   tgt 80t / stop 321t / 8m       44.0    0.70  1630.00        25.0     0.80 -23875.00    0.24  False
+15  5m     NQ     MORNING Sweep & reclaim 15-bar  tgt 160t / stop 214t / 8m       46.0    0.67  8260.00        23.0     0.43  -6655.00    0.53  False
+17  5m     NQ             MORNING Momentum burst   tgt 80t / stop 321t / 8m       25.0    0.88  3845.00        13.0     0.69  -2905.00    0.55  False
+20  5m     ES       VWAP 1.5σ snap-back w/ trend    tgt 10t / stop 60t / 4m       20.0    0.70   100.00        10.0     0.70    -12.50    0.99  False
+22  5m     ES            Trend pullback RSI(2)<5    tgt 15t / stop 60t / 2m       29.0    0.66   255.00        15.0     0.47  -1025.00    0.53  False
+23  5m     ES             Sweep & reclaim 15-bar    tgt 20t / stop 60t / 8m      119.0    0.65   742.50        56.0     0.64  -2330.00    0.78  False
+24  5m     ES             Sweep & reclaim 30-bar    tgt 30t / stop 60t / 8m       81.0    0.62  3282.50        39.0     0.56  -2020.00    0.77  False
+27  5m     ES        Momentum burst continuation    tgt 20t / stop 40t / 8m       37.0    0.62   165.00        12.0     0.50  -1560.00    0.48  False
+28  5m     ES               ORB-15 pullback hold    tgt 15t / stop 60t / 4m      138.0    0.64   172.50        62.0     0.53  -8660.00    0.40  False
+33  5m     ES     MORNING Sweep & reclaim 15-bar    tgt 40t / stop 60t / 8m       41.0    0.63  3495.00        19.0     0.53  -1195.00    0.80  False
+35  5m     ES             MORNING Momentum burst    tgt 30t / stop 60t / 8m       20.0    0.65   325.00         5.0     0.40  -1400.00    0.35  False
+36  5m     GC                  VWAP 2σ snap-back   tgt 44t / stop 116t / 8m       48.0    0.69  3519.95        33.0     0.45  -6584.98    0.45  False
+39  5m     GC           Trend pullback RSI(2)<10   tgt 29t / stop 174t / 8m       41.0    0.76  4884.92        18.0     0.83   2109.98    2.08   True
+41  5m     GC             Sweep & reclaim 15-bar   tgt 87t / stop 174t / 8m       97.0    0.61  2295.35        47.0     0.55  -4424.97    0.77  False
+46  5m     GC               ORB-15 pullback hold   tgt 44t / stop 174t / 4m      124.0    0.66  4280.02        43.0     0.56  -1824.98    0.85  False

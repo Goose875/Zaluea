@@ -25,6 +25,6 @@ for sym, (T, Sx, tm) in PARAMS.items():
                          net_pnl=s["pnl"], pf=s["pf"], avg_win=t.pnl[t.pnl > 0].mean(), avg_loss=t.pnl[t.pnl < 0].mean(),
                          max_dd=s["maxdd"], pct_target=(t.exit == "target").mean(), pct_stop=(t.exit == "stop").mean(),
                          pct_time=(t.exit == "time/EOD").mean(), longs=(t.side == 1).sum(), shorts=(t.side == -1).sum()))
-        if lab == "ALL": t.to_csv(f"results/final_trades_{sym}.csv", index=False)
-r = pd.DataFrame(rows); r.to_csv("results/scalping_final.csv", index=False)
+        if lab == "ALL": t.to_csv(f"results/final_trades_{sym}{scalping.SUFFIX}.csv", index=False)
+r = pd.DataFrame(rows); r.to_csv(f"results/scalping_final{scalping.SUFFIX}.csv", index=False)
 pd.set_option("display.width", 300); print(r.round(2).to_string())

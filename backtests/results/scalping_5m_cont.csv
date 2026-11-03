@@ -1,0 +1,55 @@
+tf,symbol,setup,params,IS_trades,IS_win,IS_pnl,IS_pf,IS_exp,IS_maxdd,OOS_trades,OOS_win,OOS_pnl,OOS_pf,OOS_exp,OOS_maxdd,PASS
+5m,NQ,VWAP 2σ snap-back,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,NQ,VWAP 2.5σ snap-back,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,NQ,VWAP 1.5σ snap-back w/ trend,tgt 54t / stop 107t / 2m,28.0,0.6071428571428571,30.0,1.0069444444444444,1.0714285714285714,-1430.0,16.0,0.4375,-2715.0,0.4059080962800875,-169.6875,-3230.0,False
+5m,NQ,Trend pullback RSI(2)<10,tgt 107t / stop 321t / 8m,57.0,0.631578947368421,4035.0,1.31973058637084,70.78947368421052,-2830.0,36.0,0.6944444444444444,2730.0,1.2808641975308641,75.83333333333333,-3395.0,True
+5m,NQ,Trend pullback RSI(2)<5,tgt 107t / stop 160t / 8m,28.0,0.6428571428571429,2055.0,1.2995626822157433,73.39285714285714,-3240.0,19.0,0.6842105263157895,2910.0,1.8422575976845152,153.1578947368421,-810.0,True
+5m,NQ,Sweep & reclaim 15-bar,tgt 107t / stop 214t / 8m,127.0,0.6299212598425197,5480.0,1.157042556240149,43.1496062992126,-5805.0,77.0,0.4805194805194805,-17785.0,0.5176949152542373,-230.97402597402598,-20910.0,False
+5m,NQ,Sweep & reclaim 30-bar,tgt 160t / stop 321t / 4m,75.0,0.6266666666666667,5955.0,1.2858171346292298,79.4,-3485.0,58.0,0.5344827586206896,-7350.0,0.715281812899477,-126.72413793103448,-11335.0,False
+5m,NQ,With-trend sweep & reclaim 10-bar,tgt 107t / stop 321t / 8m,45.0,0.6222222222222222,1165.0,1.0978991596638656,25.88888888888889,-4565.0,15.0,0.4,-4090.0,0.437414030261348,-272.6666666666667,-4260.0,False
+5m,NQ,Exhaustion fade (4 bars + spike),no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,NQ,Momentum burst continuation,tgt 214t / stop 321t / 2m,44.0,0.6136363636363636,2780.0,1.1899555859241544,63.18181818181818,-4720.0,21.0,0.3333333333333333,-6470.0,0.49630206305955626,-308.0952380952381,-7580.0,False
+5m,NQ,ORB-15 pullback hold,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,NQ,VWAP first touch on trend day,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,NQ,Inside-bar break in trend,tgt 80t / stop 321t / 8m,44.0,0.7045454545454546,1630.0,1.157716497339139,37.04545454545455,-4150.0,25.0,0.8,-23875.0,0.2429047090534327,-955.0,-27805.0,False
+5m,NQ,Double-stretch fade (VWAP+RSI+stall),no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,NQ,MORNING Trend pullback RSI(2)<10,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,NQ,MORNING Sweep & reclaim 15-bar,tgt 160t / stop 214t / 8m,46.0,0.6739130434782609,8260.0,1.5428853105488005,179.56521739130434,-3810.0,23.0,0.43478260869565216,-6655.0,0.5259971509971509,-289.3478260869565,-8475.0,False
+5m,NQ,MORNING VWAP 2σ snap-back,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,NQ,MORNING Momentum burst,tgt 80t / stop 321t / 8m,25.0,0.88,3845.0,1.7936016511867905,153.8,-1650.0,13.0,0.6923076923076923,-2905.0,0.5503095975232198,-223.46153846153845,-2835.0,False
+5m,ES,VWAP 2σ snap-back,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,ES,VWAP 2.5σ snap-back,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,ES,VWAP 1.5σ snap-back w/ trend,tgt 10t / stop 60t / 4m,20.0,0.7,100.0,1.0632911392405062,5.0,-885.0,10.0,0.7,-12.5,0.9853372434017595,-1.25,-767.5,False
+5m,ES,Trend pullback RSI(2)<10,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,ES,Trend pullback RSI(2)<5,tgt 15t / stop 60t / 2m,29.0,0.6551724137931034,255.0,1.1236363636363635,8.793103448275861,-1080.0,15.0,0.4666666666666667,-1025.0,0.529276693455798,-68.33333333333333,-1692.5,False
+5m,ES,Sweep & reclaim 15-bar,tgt 20t / stop 60t / 8m,119.0,0.6470588235294118,742.5,1.0454197889585564,6.239495798319328,-3872.5,56.0,0.6428571428571429,-2330.0,0.7759615384615385,-41.607142857142854,-3267.5,False
+5m,ES,Sweep & reclaim 30-bar,tgt 30t / stop 60t / 8m,81.0,0.6172839506172839,3282.5,1.2774725274725274,40.52469135802469,-2620.0,39.0,0.5641025641025641,-2020.0,0.7723302338686954,-51.794871794871796,-2757.5,False
+5m,ES,With-trend sweep & reclaim 10-bar,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,ES,Exhaustion fade (4 bars + spike),no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,ES,Momentum burst continuation,tgt 20t / stop 40t / 8m,37.0,0.6216216216216216,165.0,1.030164533820841,4.45945945945946,-1650.0,12.0,0.5,-1560.0,0.47869674185463656,-130.0,-1042.5,False
+5m,ES,ORB-15 pullback hold,tgt 15t / stop 60t / 4m,138.0,0.6376811594202898,172.5,1.011192214111922,1.25,-4530.0,62.0,0.532258064516129,-8660.0,0.39787936728663303,-139.67741935483872,-9105.0,False
+5m,ES,VWAP first touch on trend day,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,ES,Inside-bar break in trend,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,ES,Double-stretch fade (VWAP+RSI+stall),no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,ES,MORNING Trend pullback RSI(2)<10,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,ES,MORNING Sweep & reclaim 15-bar,tgt 40t / stop 60t / 8m,41.0,0.6341463414634146,3495.0,1.4249240121580546,85.2439024390244,-2710.0,19.0,0.5263157894736842,-1195.0,0.7951135876553793,-62.89473684210526,-2352.5,False
+5m,ES,MORNING VWAP 2σ snap-back,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,ES,MORNING Momentum burst,tgt 30t / stop 60t / 8m,20.0,0.65,325.0,1.0747556066705002,16.25,-1975.0,5.0,0.4,-1400.0,0.34579439252336447,-280.0,-1535.0,False
+5m,GC,VWAP 2σ snap-back,tgt 44t / stop 116t / 8m,48.0,0.6875,3519.9511718726717,1.3303543278217222,73.33231608068066,-2370.068359375291,33.0,0.45454545454545453,-6584.980468750373,0.4526214104515264,-199.54486268940525,-7550.0439453122635,False
+5m,GC,VWAP 2.5σ snap-back,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,GC,VWAP 1.5σ snap-back w/ trend,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,GC,Trend pullback RSI(2)<10,tgt 29t / stop 174t / 8m,41.0,0.7560975609756098,4884.921874998072,2.349400450504328,119.14443597556273,-905.0292968750728,18.0,0.8333333333333334,2109.975585937318,2.0792579216710516,117.22086588540657,-1755.0,True
+5m,GC,Trend pullback RSI(2)<5,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,GC,Sweep & reclaim 15-bar,tgt 87t / stop 174t / 8m,97.0,0.6082474226804123,2295.351562495707,1.0657133583107914,23.663418170058836,-8404.882812502074,47.0,0.5531914893617021,-4424.970703125891,0.7733692047762811,-94.14831283246578,-8304.9560546883,False
+5m,GC,Sweep & reclaim 30-bar,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,GC,With-trend sweep & reclaim 10-bar,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,GC,Exhaustion fade (4 bars + spike),no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,GC,Momentum burst continuation,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,GC,ORB-15 pullback hold,tgt 44t / stop 174t / 4m,124.0,0.6612903225806451,4280.01953124397,1.1465762074272827,34.51628654229008,-5354.882812501783,43.0,0.5581395348837209,-1824.9804687509732,0.8464465529601218,-42.44140625002263,-4874.9560546876455,False
+5m,GC,VWAP first touch on trend day,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,GC,Inside-bar break in trend,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,GC,Double-stretch fade (VWAP+RSI+stall),no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,GC,MORNING Trend pullback RSI(2)<10,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,GC,MORNING Sweep & reclaim 15-bar,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,GC,MORNING VWAP 2σ snap-back,no IS combo >60% win & profitable,,,,,,,,,,,,,
+5m,GC,MORNING Momentum burst,no IS combo >60% win & profitable,,,,,,,,,,,,,

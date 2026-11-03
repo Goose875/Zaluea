@@ -13,13 +13,16 @@ from common import SPECS, load, ema, rsi, atr
 
 SESS = {"NQ": (570, 960), "ES": (570, 960), "GC": (500, 810)}   # minutes after midnight ET
 END = "2026-11-03"
+import os
+SRC = os.environ.get("SRC", "z26")      # "z26" = Dec-2026 contract files, "cont" = continuous front month (NQ1!/ES1!/GC1!)
+SUFFIX = "" if SRC == "z26" else "_cont"
 SPLITS = {"1m": ("2026-10-06", "2026-10-21", "2026-10-22"),   # start, IS end, OOS start
-          "5m": ("2026-09-14", "2026-10-14", "2026-10-15")}
-GC_START = {"5m": "2026-08-27"}
+          "5m": ("2026-09-14", "2026-10-14", "2026-10-15") if SRC == "z26" else ("2026-08-25", "2026-10-09", "2026-10-10")}
+GC_START = {"5m": "2026-08-27"} if SRC == "z26" else {}
 IS_END = SPLITS["1m"][1]; OOS_START = SPLITS["1m"][2]
 
 def prep(sym, tf="1m"):
-    d = load(f"{sym}Z26_{tf}.csv", tz=True)
+    d = load(f"{sym}Z26_{tf}.csv" if SRC == "z26" else f"{sym}_cont_{tf}.csv", tz=True)
     start = GC_START.get(tf, SPLITS[tf][0]) if sym == "GC" else SPLITS[tf][0]
     d = d[(d.index >= start) & (d.index < END)]
     m = d.index.hour * 60 + d.index.minute
@@ -199,7 +202,7 @@ def run(setups=SETUPS, syms=("NQ", "ES", "GC"), tf="1m", verbose=True, min_trade
 
 if __name__ == "__main__":
     tf = sys.argv[1] if len(sys.argv) > 1 else "1m"
-    df = run(tf=tf, min_trades=25 if tf == "1m" else 20); df.to_csv(f"results/scalping_{tf}.csv", index=False)
+    df = run(tf=tf, min_trades=25 if tf == "1m" else 20); df.to_csv(f"results/scalping_{tf}{SUFFIX}.csv", index=False)
     pd.set_option("display.width", 250); pd.set_option("display.max_rows", 200)
     df = df[df.IS_trades.notna()] if "IS_trades" in df else df
     print(df[["tf", "symbol", "setup", "params", "IS_trades", "IS_win", "IS_pnl", "OOS_trades", "OOS_win", "OOS_pnl", "OOS_pf", "PASS"]].round(2).to_string())

@@ -82,13 +82,18 @@ def engine(o, h, l, c, a, sess, sigL, sigS, emodel, smodel, k, tick, mult, comm)
     return res[:m]
 
 # ----------------------------- data prep -----------------------------
+import os
+SRC = os.environ.get("SRC", "z26"); SUFFIX = "" if SRC == "z26" else "_cont"
+
 def prep_5m(sym):
-    d = load(f"{sym}Z26_5m.csv", tz=True)
-    start = "2026-08-27" if sym == "GC" else "2026-09-14"
+    if SRC != "z26":
+        d = load(f"{sym}_cont_5m.csv", tz=True); start = "2026-08-25"
+    else:
+        d = load(f"{sym}Z26_5m.csv", tz=True); start = "2026-08-27" if sym == "GC" else "2026-09-14"
     d = d[(d.index >= start) & (d.index < "2026-11-03")]
     m = d.index.hour * 60 + d.index.minute; o0, c0 = (500, 810) if sym == "GC" else (570, 960)
     d = d[(m >= o0) & (m < c0)].copy(); d["sess"] = d.index.date
-    return finish(d, or_bars=3), "2026-10-14", "2026-10-15"
+    return finish(d, or_bars=3), *(("2026-10-14", "2026-10-15") if SRC == "z26" else ("2026-10-09", "2026-10-10"))
 
 def prep_1h(sym):
     d = load(f"{sym}_cont_1h.csv", tz=True); d = d[d.index < "2026-11-03"].copy()
@@ -168,5 +173,5 @@ def full_grid(tf):
 if __name__ == "__main__":
     import os
     os.makedirs("results", exist_ok=True)
-    for tf in ("5m", "1h"):
-        df = full_grid(tf); df.to_csv(f"results/rmultiple_{tf}.csv", index=False); print(tf, len(df), "combos")
+    for tf in (("5m", "1h") if SRC == "z26" else ("5m",)):
+        df = full_grid(tf); df.to_csv(f"results/rmultiple_{tf}{SUFFIX}.csv", index=False); print(tf, len(df), "combos")
