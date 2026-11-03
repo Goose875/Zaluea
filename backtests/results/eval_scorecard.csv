@@ -1,0 +1,19 @@
+range,mkt,strategy,sizing,settings,qty,TUNE_pass,TUNE_fail,evals,passed,failed,timeout,pass_pct,fail_pct,days,unl_pass,unl_fail,verdict
+tuned (risk $250-750),GC,NR7 breakout (both),micros,"market, 1xATR, risk $250, TP $2000, BE +$500",2.0,0.3313432835820895,0.1791044776119403,172,87,9,76,0.5058139534883721,0.0523255813953488,58.0,141,13,PASS
+tuned (risk $250-750),NQ,NR7 + EMA20/50 trend (both),micros,"confirm-close, 5-bar swing, risk $625, TP $1500, BE off",4.5,0.7850746268656716,0.1283582089552238,173,57,76,40,0.3294797687861271,0.4393063583815029,44.0,76,121,FAIL
+tuned (risk $250-750),NQ,NR7 + EMA20/50 trend (long),micros,"confirm-close, 5-bar swing, risk $750, TP $2000, BE +$500",3.6,0.382089552238806,0.1283582089552238,173,57,34,82,0.3294797687861271,0.1965317919075144,41.0,111,44,MARGINAL
+tuned (risk $250-750),ES,ICT turtle soup PDH/PDL (both),1 std contract,"confirm-close, $625 fixed, risk $625, TP $2500, BE +$750",1.0,0.6328358208955224,0.1313432835820895,173,36,137,0,0.2080924855491329,0.791907514450867,35.5,36,149,FAIL
+tuned (risk $250-750),NQ,NR10 (long),1 std contract,"confirm-close, $750 fixed, risk $750, TP $2000, BE off",1.0,0.6507462686567164,0.3492537313432836,173,28,136,9,0.1618497109826589,0.7861271676300579,39.5,32,143,FAIL
+tuned (risk $250-750),NQ,ICT FVG trend (no P/D filter) (both),1 std contract,"confirm-close, $750 fixed, risk $750, TP $1000, BE +$500",1.0,0.4029850746268656,0.1970149253731343,173,15,145,13,0.0867052023121387,0.838150289017341,54.0,15,145,FAIL
+tuned (risk $250-750),GC,ICT FVG trend (no P/D filter) (both),micros,"ICT limit, ICT stop, risk $625, TP $1000, BE +$750",3.5,0.1044776119402985,0.0597014925373134,172,3,30,139,0.0174418604651162,0.1744186046511628,64.0,41,91,FAIL
+tuned (risk $250-750),GC,Donchian 20 breakout (long),micros,"market, 5-bar swing, risk $500, TP $2000, BE +$500",2.2,0.7432835820895523,0.0059701492537313,172,0,0,172,0.0,0.0,,0,0,FAIL
+tuned (risk $250-750),ES,ICT FVG trend (no P/D filter) (long),micros,"confirm-close, ICT stop, risk $500, TP $3000, BE +$500",1.9,0.0,0.0,173,0,0,173,0.0,0.0,,0,0,FAIL
+your range,NQ,NR7 + EMA20/50 trend (both),micros,"confirm-close, 5-bar swing, risk $625, TP $1500, BE off",4.5,0.7850746268656716,0.1283582089552238,173,57,76,40,0.3294797687861271,0.4393063583815029,44.0,76,121,FAIL
+your range,NQ,NR7 + EMA20/50 trend (long),micros,"confirm-close, 5-bar swing, risk $750, TP $2000, BE +$500",3.6,0.382089552238806,0.1283582089552238,173,57,34,82,0.3294797687861271,0.1965317919075144,41.0,111,44,MARGINAL
+your range,GC,NR7 breakout (both),micros,"confirm-close, 1xATR, risk $500, TP $2500, BE +$500",4.0,0.4119402985074626,0.417910447761194,172,43,84,45,0.25,0.4883720930232558,63.0,93,96,FAIL
+your range,ES,ICT turtle soup PDH/PDL (both),1 std contract,"confirm-close, $625 fixed, risk $625, TP $2500, BE +$750",1.0,0.6328358208955224,0.1313432835820895,173,36,137,0,0.2080924855491329,0.791907514450867,35.5,36,149,FAIL
+your range,NQ,NR10 (long),1 std contract,"confirm-close, $750 fixed, risk $750, TP $2000, BE off",1.0,0.6507462686567164,0.3492537313432836,173,28,136,9,0.1618497109826589,0.7861271676300579,39.5,32,143,FAIL
+your range,NQ,ICT FVG trend (no P/D filter) (both),1 std contract,"confirm-close, $750 fixed, risk $750, TP $1500, BE +$500",1.0,0.4776119402985074,0.3223880597014925,173,28,145,0,0.1618497109826589,0.838150289017341,39.5,28,145,FAIL
+your range,GC,Donchian 20 breakout (long),micros,"market, 5-bar swing, risk $500, TP $2000, BE +$500",2.2,0.7432835820895523,0.0059701492537313,172,0,0,172,0.0,0.0,,0,0,FAIL
+your range,ES,ICT FVG trend (no P/D filter) (long),micros,"confirm-close, ICT stop, risk $625, TP $1500, BE +$750",2.3,0.0,0.0,173,0,0,173,0.0,0.0,,0,0,FAIL
+your range,GC,ICT FVG trend (no P/D filter) (both),micros,"confirm-close, ICT stop, risk $625, TP $1500, BE +$750",1.8,0.0,0.0,172,0,0,172,0.0,0.0,,0,0,FAIL
