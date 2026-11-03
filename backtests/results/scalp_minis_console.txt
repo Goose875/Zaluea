@@ -1,0 +1,35 @@
+configs: 26496
+
+=== 1m: median over all configs -> TUNE avg day -422, TEST avg day -384; % configs with positive TEST avg day: 11% ===
+top 12 by TUNE avg day (TEST shown after):
+tf symbol                   setup   entry size    TP    SL  time_stop  daily_stop  trades_day  win  TUNE_avg_day  TUNE_goal%  TUNE_red%  TEST_days  TEST_avg_day  TEST_goal%  TEST_red%  TEST_worst
+1m     NQ           EMA9 pullback confirm 1 NQ 300.0 450.0          5      1000.0       14.10 0.57        445.00        0.25       0.33          8       -284.38        0.25       0.75    -1380.00
+1m     NQ           EMA9 pullback confirm 1 NQ 300.0 450.0         20      1000.0       13.00 0.60        338.33        0.25       0.33          8       -301.88        0.12       0.75    -1380.00
+1m     GC VWAP bounce + HTF trend  market 1 GC 300.0 450.0          5       500.0        6.60 0.45        259.57        0.25       0.42          8       -598.12        0.00       0.88     -934.98
+1m     GC              RSI(2) dip confirm 1 GC 200.0 400.0         20      1000.0        2.79 0.74        256.66        0.00       0.17          8       -100.63        0.00       0.62     -855.00
+1m     GC              RSI(2) dip confirm 1 GC 200.0 400.0         20       500.0        2.79 0.74        256.66        0.00       0.17          8       -100.63        0.00       0.62     -855.00
+1m     GC VWAP bounce + HTF trend  market 1 GC 300.0 600.0          5       500.0        6.50 0.45        251.24        0.25       0.42          8       -642.50        0.00       0.88    -1044.98
+1m     NQ           EMA9 pullback confirm 1 NQ 300.0 450.0         10      1000.0       13.60 0.58        230.00        0.08       0.42          8       -275.62        0.25       0.75    -1380.00
+1m     NQ           EMA9 pullback confirm 1 NQ 300.0 450.0          5       500.0       14.10 0.57        225.83        0.25       0.50          8       -168.75        0.25       0.75     -935.00
+1m     GC  RSI(2) dip + HTF trend confirm 1 GC 200.0 400.0         20      1000.0        2.44 0.75        223.75        0.00       0.17          8        -73.13        0.00       0.62    -1050.00
+1m     GC  RSI(2) dip + HTF trend confirm 1 GC 200.0 400.0         20       500.0        2.44 0.75        223.75        0.00       0.17          8        -21.25        0.00       0.62     -635.00
+1m     GC VWAP bounce + HTF trend  market 1 GC 300.0 450.0         20       500.0        5.15 0.52        221.25        0.17       0.42          8       -483.75        0.00       0.88     -930.00
+1m     NQ           EMA9 pullback confirm 1 NQ 300.0 600.0          5      1000.0       13.90 0.59        216.67        0.25       0.42          8         41.25        0.38       0.62    -1220.00
+  top-200 by TUNE -> TEST avg day median -157, positive 12%, days hitting $1,500 in TEST: 0%
+
+=== 5m: median over all configs -> TUNE avg day -247, TEST avg day -242; % configs with positive TEST avg day: 4% ===
+top 12 by TUNE avg day (TEST shown after):
+tf symbol                             setup   entry size    TP    SL  time_stop  daily_stop  trades_day  win  TUNE_avg_day  TUNE_goal%  TUNE_red%  TEST_days  TEST_avg_day  TEST_goal%  TEST_red%  TEST_worst
+5m     ES 10-bar micro breakout + HTF trend  market 1 ES 300.0 450.0          8      1000.0        4.43 0.58         79.77        0.03       0.39         16       -149.84         0.0       0.69     -1155.0
+5m     ES             10-bar micro breakout  market 1 ES 300.0 450.0          8      1000.0        4.53 0.57         71.14        0.03       0.39         16       -131.72         0.0       0.62     -1155.0
+5m     ES 10-bar micro breakout + HTF trend confirm 1 ES 300.0 300.0          8       500.0        1.96 0.53         66.29        0.00       0.42         16        -14.69         0.0       0.69      -360.0
+5m     ES             10-bar micro breakout confirm 1 ES 300.0 300.0          8       500.0        1.96 0.54         66.29        0.00       0.42         16         23.59         0.0       0.62      -360.0
+5m     ES             10-bar micro breakout confirm 1 ES 300.0 300.0          2       500.0        2.00 0.55         63.86        0.00       0.33         16         13.12         0.0       0.62      -340.0
+5m     ES 10-bar micro breakout + HTF trend  market 1 ES 300.0 450.0          8       500.0        4.43 0.58         63.41        0.03       0.42         16        -95.47         0.0       0.69      -935.0
+5m     ES             10-bar micro breakout confirm 1 ES 300.0 600.0          2      1000.0        2.00 0.58         60.76        0.00       0.36         16        -50.94         0.0       0.69      -677.5
+5m     ES 10-bar micro breakout + HTF trend confirm 1 ES 300.0 300.0          2       500.0        2.00 0.54         58.18        0.00       0.33         16        -25.16         0.0       0.69      -340.0
+5m     ES             10-bar micro breakout confirm 1 ES 300.0 300.0          4       500.0        2.00 0.54         56.29        0.00       0.42         16         -8.75         0.0       0.62      -345.0
+5m     ES 10-bar micro breakout + HTF trend confirm 1 ES 300.0 300.0          4       500.0        2.00 0.53         56.29        0.00       0.42         16        -47.03         0.0       0.69      -345.0
+5m     ES             10-bar micro breakout confirm 1 ES 300.0 300.0          8      1000.0        1.96 0.54         55.98        0.00       0.42         16         23.59         0.0       0.62      -360.0
+5m     ES 10-bar micro breakout + HTF trend confirm 1 ES 300.0 300.0          8      1000.0        1.96 0.53         55.98        0.00       0.42         16        -14.69         0.0       0.69      -360.0
+  top-200 by TUNE -> TEST avg day median -43, positive 8%, days hitting $1,500 in TEST: 0%

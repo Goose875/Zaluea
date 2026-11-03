@@ -1,19 +1,21 @@
-"""Trend-following micro-scalping with a daily profit goal.
+"""Trend-following scalping on MINIS (standard contracts) with a daily profit goal.
 Data: continuous front month, regular hours (NQ/ES 09:30-16:00, GC 08:20-13:30).
   1m: Oct 6 - Nov 2 2026 (20 sessions)  -> TUNE first 12 sessions, TEST last 8
   5m: Aug 25 - Nov 2 2026 (49 sessions) -> TUNE to Oct 9, TEST Oct 10 - Nov 2
-Trade: fixed $ bracket (target $100-300, stop 0.5-2x target) on 1 standard or N micro contracts, time stop, flat at session end.
+Trade: fixed $ bracket (target $100-300, stop 0.5-2x target) on 1-3 standard (mini) contracts, time stop, flat at session end.
 Daily rules: stop trading for the day once day P&L >= +$1,500 (goal) or <= -daily_stop.
-Fills: market entry next bar open +1 tick; target needs 1-tick trade-through; stop -1 tick; stop wins ties; $2.50/std or $0.75/micro per side."""
+Fills: market entry next bar open +1 tick; target needs 1-tick trade-through; stop -1 tick; stop wins ties; $2.50 per contract per side; slippage 1 tick per contract."""
 import os; os.environ["SRC"] = "cont"
 import numpy as np, pandas as pd, itertools, sys
+from numba import njit
 from engine8 import engine8
 from rmultiple import finish
 from common import load, ema, SPECS
 SESS = {"NQ": (570, 960), "ES": (570, 960), "GC": (500, 810)}
-SIZES = {"NQ": [("1 NQ", 20.0, 2.5), ("2 MNQ", 4.0, 1.5), ("5 MNQ", 10.0, 3.75), ("10 MNQ", 20.0, 7.5)],
-         "ES": [("1 ES", 50.0, 2.5), ("4 MES", 20.0, 3.0), ("10 MES", 50.0, 7.5)],
-         "GC": [("1 GC", 100.0, 2.5), ("5 MGC", 50.0, 3.75), ("10 MGC", 100.0, 7.5)]}
+# MINIS (standard contracts) only: (label, $ per point for the position, commission per side for the position)
+SIZES = {"NQ": [("1 NQ", 20.0, 2.5), ("2 NQ", 40.0, 5.0)],
+         "ES": [("1 ES", 50.0, 2.5), ("2 ES", 100.0, 5.0), ("3 ES", 150.0, 7.5)],
+         "GC": [("1 GC", 100.0, 2.5), ("2 GC", 200.0, 5.0)]}
 SPLIT = {"1m": "2026-10-21", "5m": "2026-10-09"}
 
 def prep(sym, tf):
@@ -41,22 +43,28 @@ def setups(d):
         out[k + " + HTF trend"] = ((L & hup).fillna(False).values, (Sh & hdn).fillna(False).values)
     return out
 
-def daily(t, goal, dstop):
-    """apply daily goal / daily stop: trades taken in order; stop for the day once day P&L >= goal or <= -dstop"""
-    rows = []
-    for day, g in t.groupby("day", sort=True):
-        cum = 0.0; n = 0
-        for p in g.pnl.values:
-            cum += p; n += 1
-            if cum >= goal or cum <= -dstop: break
-        rows.append((day, cum, n))
-    return pd.DataFrame(rows, columns=["day", "pnl", "trades"])
+@njit(cache=True)
+def _daily(dayid, pnl, ndays, goal, dstop):
+    out = np.zeros(ndays); done = np.zeros(ndays, np.bool_); traded = np.zeros(ndays, np.bool_)
+    for i in range(len(pnl)):
+        d = dayid[i]
+        if done[d]: continue
+        out[d] += pnl[i]; traded[d] = True
+        if out[d] >= goal or out[d] <= -dstop: done[d] = True
+    return out, traded
+
+def daily(t, goal, dstop, all_days):
+    """apply the daily goal / daily stop: trades in order; stop for the day once day P&L >= goal or <= -dstop.
+    Days with no trade count as $0 days."""
+    idx = {d: i for i, d in enumerate(all_days)}
+    out, traded = _daily(np.array([idx[x] for x in t.day.values], np.int64), t.pnl.values.astype(float), len(all_days), goal, dstop)
+    return pd.DataFrame(dict(day=all_days, pnl=out, traded=traded))
 
 def run(tf):
     rows = []
     for sym in ("NQ", "ES", "GC"):
         d = prep(sym, tf); sp = SPECS[sym]; nan = np.full(len(d), np.nan); days = np.array(d.sess)
-        cut = pd.Timestamp(SPLIT[tf]).date()
+        cut = pd.Timestamp(SPLIT[tf]).date(); all_days = np.array(sorted(set(days)))
         arrs = (d.Open.values, d.High.values, d.Low.values, d.Close.values, d.atr.values.astype(float), d.sess_id.values.astype(np.int64))
         for name, (L, S) in setups(d).items():
             for (sz, mult, comm), tp, sl_x, tmax, em in itertools.product(SIZES[sym], (100.0, 150.0, 200.0, 300.0), (0.5, 1.0, 1.5, 2.0),
@@ -65,7 +73,7 @@ def run(tf):
                 if len(r) < 20: continue
                 t = pd.DataFrame(dict(day=days[r[:, 0].astype(int)], pnl=r[:, 2]))
                 for dstop in (500.0, 1000.0):
-                    D = daily(t, 1500.0, dstop)
+                    D = daily(t, 1500.0, dstop, all_days)
                     a, b = D[D.day <= cut], D[D.day > cut]
                     row = dict(tf=tf, symbol=sym, setup=name, entry=("market" if em == 0 else "confirm"), size=sz, TP=tp, SL=tp * sl_x, time_stop=tmax,
                                daily_stop=dstop, trades_day=t.groupby("day").size().mean(), win=(t.pnl > 0).mean())
@@ -77,7 +85,7 @@ def run(tf):
     return pd.DataFrame(rows)
 
 if __name__ == "__main__":
-    df = pd.concat([run("1m"), run("5m")], ignore_index=True); df.to_csv("results/scalp_trend.csv", index=False)
+    df = pd.concat([run("1m"), run("5m")], ignore_index=True); df.to_csv("results/scalp_minis.csv", index=False)
     pd.set_option("display.width", 340); pd.set_option("display.max_colwidth", 30)
     print("configs:", len(df))
     c = ["tf", "symbol", "setup", "entry", "size", "TP", "SL", "time_stop", "daily_stop", "trades_day", "win", "TUNE_avg_day", "TUNE_goal%", "TUNE_red%",
