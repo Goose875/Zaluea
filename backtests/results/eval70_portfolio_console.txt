@@ -1,0 +1,5 @@
+ step                                                                                        added  trades_per_month  TUNE_pass%  TUNE_fail%  TUNE_n  TEST_pass%  TEST_fail%  TEST_n
+    1                                   GC NR10 (long) | market | micros≤$500 | BE 500 | trail 0/0            13.034       0.322       0.257     335       0.046       0.500     216
+    2    NQ ICT FVG trend (no P/D filter) (both) | confirm-close | 4 MNQ | BE 500 | trail 1000/750            16.172       0.391       0.233     335       0.065       0.579     216
+    3 GC RSI14 50-cross with trend (long) | confirm-close | micros≤$500 | BE 1000 | trail 1500/750            18.517       0.445       0.266     335       0.111       0.606     216
+    4         GC RSI14 50-cross with trend (long) | confirm-close | micros≤$500 | BE 0 | trail 0/0            18.483       0.472       0.263     335       0.111       0.606     216
