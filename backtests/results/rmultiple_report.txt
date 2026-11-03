@@ -1,0 +1,150 @@
+
+===== 1h NQ: BEST = EMA 9/21 cross with trend | entry: Limit @ signal-bar 50% | stop: 1.0 x ATR =====
+     IS_n  IS_win  IS_avgR     IS_pnl  IS_pf  OOS_n  OOS_win  OOS_avgR    OOS_pnl  OOS_pf  OOS_maxdd
+R                                                                                                   
+1.0   174   0.511    0.026   7957.892  1.075    129    0.450    -0.079  -9890.079   0.913 -34028.306
+1.5   174   0.460    0.102  28848.123  1.246    129    0.372    -0.071  -8025.016   0.938 -38476.835
+2.0   173   0.422    0.145  42649.028  1.344    128    0.359     0.004  13984.135   1.107 -33390.490
+3.0   173   0.382    0.207  64287.904  1.485    128    0.336     0.067  34654.646   1.255 -33390.490
+4.0   173   0.370    0.235  75578.238  1.561    128    0.320     0.036  29223.492   1.210 -33390.490
+5.0   173   0.370    0.280  90063.238  1.669    128    0.320     0.045  29618.492   1.213 -33390.490
+-- entry models for this setup/stop (averaged over 1R..5R) --
+                             IS_n  IS_win  IS_avgR    OOS_n  OOS_win  OOS_avgR    OOS_pnl
+entry                                                                                    
+Confirm close beyond bar   77.167   0.447    0.111   64.000    0.419     0.145  18671.283
+Limit @ close-0.5ATR      134.833   0.422    0.158  103.667    0.400     0.030   9886.756
+Limit @ signal-bar 50%    173.333   0.419    0.166  128.333    0.360     0.000  14927.611
+Market next open          228.500   0.423    0.108  175.500    0.364     0.044  21668.738
+Stop above signal bar     185.333   0.338   -0.174  146.667    0.338    -0.042 -15525.587
+-- runner-up combos (IS) --
+                                                              IS_n  IS_meanR  IS_allpos
+setup                     entry                    stop                                
+EMA 9/21 cross with trend Limit @ signal-bar 50%   1.0 x ATR   173     0.166      1.000
+                          Limit @ close-0.5ATR     1.0 x ATR   134     0.158      1.000
+Donchian 20 breakout      Confirm close beyond bar 1.0 x ATR   161     0.127      1.000
+Momentum burst            Limit @ close-0.5ATR     1.0 x ATR   187     0.125      0.833
+
+===== 1h ES: BEST = Inside-bar break in trend | entry: Stop above signal bar | stop: Signal-bar extreme =====
+     IS_n  IS_win  IS_avgR   IS_pnl  IS_pf  OOS_n  OOS_win  OOS_avgR  OOS_pnl  OOS_pf  OOS_maxdd
+R                                                                                               
+1.0   110   0.555    0.058  11112.5  1.314    100    0.420    -0.129  -1237.5   0.972   -17265.0
+1.5   109   0.495    0.102   7017.5  1.168     99    0.333    -0.165  -7682.5   0.856   -18755.0
+2.0   108   0.444    0.123   8972.5  1.200     99    0.293    -0.169  -5795.0   0.897   -17380.0
+3.0   107   0.411    0.201  14265.0  1.310     99    0.242    -0.235 -13682.5   0.770   -25315.0
+4.0   106   0.406    0.334  24045.0  1.525     99    0.212    -0.346 -19632.5   0.679   -27715.0
+5.0   105   0.400    0.385  27987.5  1.629     99    0.212    -0.316 -17657.5   0.712   -27252.5
+-- entry models for this setup/stop (averaged over 1R..5R) --
+                             IS_n  IS_win  IS_avgR    OOS_n  OOS_win  OOS_avgR    OOS_pnl
+entry                                                                                    
+Confirm close beyond bar   48.167   0.474    0.175   40.000    0.325    -0.249 -15756.250
+Limit @ close-0.5ATR       85.500   0.304   -0.159   69.333    0.255    -0.237    309.583
+Limit @ signal-bar 50%    103.333   0.304   -0.058   82.667    0.308    -0.111   1415.833
+Market next open          145.000   0.404    0.097  110.333    0.364    -0.058   8360.833
+Stop above signal bar     107.500   0.452    0.201   99.167    0.285    -0.227 -10947.917
+-- runner-up combos (IS) --
+                                                                     IS_n  IS_meanR  IS_allpos
+setup                     entry                  stop                                         
+Inside-bar break in trend Stop above signal bar  Signal-bar extreme   105     0.201      1.000
+                                                 5-bar swing          101     0.175      1.000
+EMA 9/21 cross with trend Limit @ signal-bar 50% 1.0 x ATR            158     0.145      0.833
+                          Limit @ close-0.5ATR   5-bar swing          120     0.137      1.000
+
+===== 1h GC: BEST = Donchian 20 breakout | entry: Confirm close beyond bar | stop: 1.0 x ATR =====
+     IS_n  IS_win  IS_avgR     IS_pnl  IS_pf  OOS_n  OOS_win  OOS_avgR    OOS_pnl  OOS_pf  OOS_maxdd
+R                                                                                                   
+1.0   169   0.544    0.091   6169.439  1.084    126    0.476    -0.062 -17722.038   0.865 -28929.712
+1.5   166   0.482    0.154  18699.519  1.236    123    0.431     0.022   6264.406   1.046 -19217.656
+2.0   162   0.432    0.158  15935.672  1.187    122    0.385     0.010   4591.139   1.032 -32642.023
+3.0   159   0.415    0.264  26959.054  1.317    120    0.367     0.061   2937.411   1.019 -42160.320
+4.0   158   0.411    0.292  31315.664  1.370    118    0.356     0.130  19518.077   1.129 -36710.320
+5.0   157   0.414    0.313  33750.664  1.399    118    0.356     0.140  25228.052   1.167 -36160.320
+-- entry models for this setup/stop (averaged over 1R..5R) --
+                             IS_n  IS_win  IS_avgR    OOS_n  OOS_win  OOS_avgR    OOS_pnl
+entry                                                                                    
+Confirm close beyond bar  161.833   0.450    0.212  121.167    0.395     0.050   6802.841
+Limit @ close-0.5ATR      301.167   0.370   -0.071  216.333    0.419     0.048   9864.655
+Limit @ signal-bar 50%    299.167   0.380   -0.012  217.500    0.416    -0.029 -31560.497
+Market next open          429.667   0.386    0.027  313.333    0.412     0.079  11728.833
+Stop above signal bar     348.833   0.344   -0.087  244.000    0.391     0.064  13916.468
+-- runner-up combos (IS) --
+                                                                       IS_n  IS_meanR  IS_allpos
+setup                     entry                    stop                                         
+Donchian 20 breakout      Confirm close beyond bar 1.0 x ATR            157     0.212        1.0
+                                                   Signal-bar extreme   153     0.165        1.0
+EMA 9/21 cross with trend Stop above signal bar    5-bar swing          148     0.153        1.0
+Donchian 20 breakout      Confirm close beyond bar 5-bar swing          148     0.140        1.0
+
+===== 5m NQ: BEST = Donchian 20 breakout | entry: Confirm close beyond bar | stop: 1.0 x ATR =====
+     IS_n  IS_win  IS_avgR    IS_pnl  IS_pf  OOS_n  OOS_win  OOS_avgR   OOS_pnl  OOS_pf  OOS_maxdd
+R                                                                                                 
+1.0    41   0.610    0.208  5402.151  1.480     24    0.458    -0.092 -1831.592   0.856  -4613.023
+1.5    40   0.525    0.300  6060.012  1.427     23    0.435     0.078  2428.408   1.191  -4028.023
+2.0    38   0.447    0.329  6773.122  1.443     20    0.400     0.192  4440.334   1.373  -2800.398
+3.0    35   0.343    0.326  5153.761  1.318     19    0.263    -0.092  -483.936   0.965  -5629.375
+4.0    31   0.323    0.476  8189.546  1.553     18    0.278     0.077  2857.775   1.220  -5629.375
+5.0    29   0.310    0.597  9363.700  1.648     18    0.278     0.139  3602.775   1.278  -5629.375
+-- entry models for this setup/stop (averaged over 1R..5R) --
+                            IS_n  IS_win  IS_avgR   OOS_n  OOS_win  OOS_avgR   OOS_pnl
+entry                                                                                 
+Confirm close beyond bar  35.667   0.426    0.373  20.333    0.352     0.050  1835.627
+Limit @ close-0.5ATR      58.167   0.402    0.207  38.667    0.352    -0.023  -292.013
+Limit @ signal-bar 50%    60.167   0.372    0.120  42.667    0.343    -0.098 -4364.795
+Market next open          90.667   0.341    0.008  54.333    0.353    -0.139 -7592.709
+Stop above signal bar     76.833   0.313   -0.062  42.000    0.363    -0.156 -7213.447
+-- runner-up combos (IS) --
+                                                                    IS_n  IS_meanR  IS_allpos
+setup                  entry                    stop                                         
+Donchian 20 breakout   Confirm close beyond bar 1.0 x ATR             29     0.373        1.0
+Opening-range breakout Limit @ signal-bar 50%   1.0 x ATR             22     0.363        1.0
+Donchian 20 breakout   Limit @ close-0.5ATR     1.0 x ATR             44     0.207        1.0
+                       Confirm close beyond bar Signal-bar extreme    24     0.206        1.0
+
+===== 5m ES: BEST = Momentum burst | entry: Limit @ close-0.5ATR | stop: 1.0 x ATR =====
+     IS_n  IS_win  IS_avgR    IS_pnl  IS_pf  OOS_n  OOS_win  OOS_avgR   OOS_pnl  OOS_pf  OOS_maxdd
+R                                                                                                 
+1.0    24   0.542    0.119   543.376  1.145      9    0.333    -0.365 -2056.535   0.353  -1820.753
+1.5    23   0.565    0.434  2515.229  1.707      9    0.333    -0.204 -1506.535   0.526  -1420.753
+2.0    23   0.522    0.568  3196.710  1.811      9    0.333    -0.034  -931.535   0.707  -1122.819
+3.0    23   0.391    0.442  3278.226  1.699      9    0.222    -0.149 -1039.130   0.703  -1235.414
+4.0    23   0.391    0.484  4265.726  1.910      9    0.222     0.074  -214.130   0.939  -1092.933
+5.0    21   0.381    0.602  4918.439  2.117      9    0.222     0.296   610.870   1.174  -1092.933
+-- entry models for this setup/stop (averaged over 1R..5R) --
+                            IS_n  IS_win  IS_avgR  OOS_n  OOS_win  OOS_avgR   OOS_pnl
+entry                                                                                
+Confirm close beyond bar  12.000   0.333    0.120    4.0    0.333     0.062   389.384
+Limit @ close-0.5ATR      22.833   0.465    0.442    9.0    0.278    -0.064  -856.166
+Limit @ signal-bar 50%    13.333   0.420    0.131    6.0    0.250    -0.205   -36.351
+Market next open          29.667   0.335    0.055   13.0    0.295    -0.324 -3268.039
+Stop above signal bar     23.167   0.308   -0.023   10.0    0.367    -0.200 -1620.217
+-- runner-up combos (IS) --
+                                                                  IS_n  IS_meanR  IS_allpos
+setup                  entry                  stop                                         
+Momentum burst         Limit @ close-0.5ATR   1.0 x ATR             21     0.442      1.000
+                       Market next open       Signal-bar extreme    23     0.270      1.000
+Trend pullback RSI(2)  Limit @ signal-bar 50% 1.0 x ATR             28     0.208      0.833
+Opening-range breakout Market next open       1.0 x ATR             33     0.174      0.833
+
+===== 5m GC: BEST = Bollinger snap-back | entry: Confirm close beyond bar | stop: 5-bar swing =====
+     IS_n  IS_win  IS_avgR     IS_pnl  IS_pf  OOS_n  OOS_win  OOS_avgR   OOS_pnl  OOS_pf  OOS_maxdd
+R                                                                                                  
+1.0    29   0.690    0.310   9994.951  1.966     14    0.286    -0.336 -6490.015   0.272  -6779.995
+1.5    28   0.607    0.284   9099.961  1.743     14    0.286    -0.192 -5260.015   0.410  -6779.995
+2.0    27   0.593    0.365  11494.990  1.908     14    0.286    -0.050 -4040.015   0.547  -6779.995
+3.0    26   0.577    0.417   8440.059  1.666     14    0.286     0.066 -2490.015   0.721  -6779.995
+4.0    26   0.577    0.505   9470.059  1.748     14    0.214    -0.162 -4400.044   0.538  -6779.995
+5.0    26   0.577    0.620  11250.059  1.888     14    0.214    -0.091 -3780.044   0.603  -6779.995
+-- entry models for this setup/stop (averaged over 1R..5R) --
+                            IS_n  IS_win  IS_avgR   OOS_n  OOS_win  OOS_avgR   OOS_pnl
+entry                                                                                 
+Confirm close beyond bar  27.000   0.603    0.417  14.000    0.262    -0.128 -4410.024
+Limit @ close-0.5ATR      44.333   0.334   -0.154  18.833    0.406     0.184  1092.518
+Limit @ signal-bar 50%    62.833   0.400    0.251  26.833    0.440     0.293  1719.144
+Market next open          77.500   0.499    0.284  36.333    0.436     0.232  -681.614
+Stop above signal bar     58.500   0.559    0.366  30.333    0.443     0.087 -1376.683
+-- runner-up combos (IS) --
+                                                                 IS_n  IS_meanR  IS_allpos
+setup               entry                    stop                                         
+Bollinger snap-back Confirm close beyond bar 5-bar swing           26     0.417      1.000
+                    Stop above signal bar    5-bar swing           51     0.366      1.000
+                    Confirm close beyond bar Signal-bar extreme    27     0.358      1.000
+                                             1.0 x ATR             28     0.322      0.833
