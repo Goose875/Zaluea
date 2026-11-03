@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Keel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app" class="shell">
+    <aside class="rail">
+      <div class="logo"><svg width="30" height="30" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#1d3036"/><line x1="8" y1="32" x2="56" y2="32" stroke="#7fd6c4" stroke-width="2"/><path d="M9 26 C16 20 20 27 27 22 S40 14 55 12" fill="none" stroke="#f0a43a" stroke-width="3.5" stroke-linecap="round"/><path d="M22 32 L32 54 L42 32 Z" fill="#7fd6c4"/></svg><span>Keel</span></div>
+      <nav id="nav" aria-label="Main">
+        <button data-go="dash">Today</button>
+        <button data-go="chart">Chart</button>
+        <button data-go="acct">Progress</button>
+        <button data-go="accts">Accounts</button>
+        <button data-go="strat">Strategies</button>
+        <button data-go="test">Backtest</button>
+        <button data-go="conn">Logins</button>
+        <button data-go="risk">Risk limits</button>
+        <button data-go="alerts">TradingView</button>
+      </nav>
+      <p id="version" class="ver"></p>
+    </aside>
+
+    <div class="main">
+      <header class="top">
+        <div><h1 id="title">Today</h1><p id="dateline" class="dateline"></p></div>
+        <div class="controls">
+          <label class="acctpick"><span>Account</span><select id="acctSel"></select></label>
+          <span id="pill" class="pill off">Bot stopped</span>
+          <button id="toggle">Start bot</button>
+          <button id="kill" class="danger">Stop all trading</button>
+        </div>
+      </header>
+      <div id="update" class="update" hidden><span id="updateText"></span><button id="updateGo" class="small">Restart and update</button></div>
+      <p id="notice" class="notice" role="alert" hidden></p>
+
+      <div class="content">
+        <section id="v-dash" class="view">
+          <p id="dSay" class="say"></p>
+          <div class="runway panel">
+            <div class="rw-head">
+              <div><p class="k">Today</p><p id="sToday" class="big">$0.00</p><p id="sSub" class="sub"></p></div>
+              <div class="rw-side"><div><p class="k">Total P&amp;L</p><p id="sNet" class="mid">—</p><p id="sNetSub" class="sub"></p></div>
+                <div><p class="k">Balance</p><p id="sBal" class="mid">—</p><p id="sBalSub" class="sub"></p></div></div>
+            </div>
+            <div id="gauge" class="gauge"></div>
+          </div>
+          <div class="panel"><h2>How today has gone</h2><div id="chart" class="chart"></div></div>
+          <div class="two">
+            <div class="panel"><h2>Open positions</h2><div id="posBox"></div></div>
+            <div class="panel"><h2>Activity</h2><ul id="events" class="events"></ul></div>
+          </div>
+        </section>
+
+        <section id="v-chart" class="view" hidden>
+          <div class="panel">
+            <div class="toolbar">
+              <div class="btns0">
+                <label class="inl" for="cSym">Market</label><select id="cSym" class="auto"></select>
+                <div class="seg small" id="cTf" role="group" aria-label="Bar size"><button type="button" data-tf="15">15s</button><button type="button" data-tf="60" aria-pressed="true">1m</button><button type="button" data-tf="300">5m</button></div>
+              </div>
+              <p id="cLast" class="clast"></p>
+            </div>
+            <div id="cBox" class="cbox"></div>
+            <div id="cLegend" class="clegend"></div>
+          </div>
+        </section>
+
+        <section id="v-acct" class="view" hidden>
+          <div class="panel head">
+            <div><p class="k">Account</p><p id="aName" class="aname">Start the bot to load your account</p></div>
+            <div class="aright"><p class="k">Balance</p><p id="aBal" class="abal">—</p><button id="editRules" class="ghost small">Edit rules</button></div>
+            <div class="stagebox">
+              <p class="k" id="stageLabel">Account type</p>
+              <div id="stageSeg" class="seg" role="group" aria-labelledby="stageLabel">
+                <button type="button" data-stage="evaluation">Evaluation</button>
+                <button type="button" data-stage="funded">Funded</button>
+                <button type="button" data-stage="live">Live</button>
+                <button type="button" data-stage="practice">Practice</button>
+              </div>
+              <p id="stageMsg" class="hint" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+
+          <div class="two">
+            <div class="panel"><h2 id="tLabel">Profit target</h2><p id="tText" class="big2">—</p><progress id="tBar" max="100" value="0"></progress><p id="tSub" class="hint"></p></div>
+            <div class="panel"><h2>Consistency</h2><p id="cText" class="big2">—</p><progress id="cBar" max="100" value="0"></progress><p id="cSub" class="hint"></p></div>
+            <div class="panel"><h2>Daily goal</h2><p id="dText" class="big2">—</p><progress id="dBar" max="100" value="0"></progress><p id="dSub" class="hint"></p></div>
+            <div class="panel"><h2>Room before max loss</h2><p id="fText" class="big2">—</p><progress id="fBar" max="100" value="0"></progress><p id="fSub" class="hint"></p></div>
+          </div>
+
+          <div class="two">
+            <div class="panel"><h2>Past days</h2><div id="daysBox"></div></div>
+          </div>
+        </section>
+
+        <section id="v-accts" class="view" hidden>
+          <div class="toolbar">
+            <input id="acctSearch" type="search" placeholder="Search accounts" aria-label="Search accounts" autocomplete="off">
+            <div class="btns0"><button id="sampleAccts" class="ghost" hidden>Add sample accounts</button><button id="addAcct">Add account</button></div>
+          </div>
+          <div id="acctGroups"></div>
+        </section>
+
+        <section id="v-strat" class="view" hidden>
+          <div class="panel">
+            <h2>Your strategies</h2>
+            <p class="hint">Switch a strategy on and it runs whenever the bot is running. Changes save on their own.</p>
+            <div id="myStrats" class="slist"></div>
+          </div>
+          <div class="panel">
+            <h2>Add a strategy</h2>
+            <div class="tabs2" role="tablist" aria-label="Ways to add a strategy">
+              <button role="tab" id="tabLib" data-pane="paneLib" aria-selected="true">Keel library</button>
+              <button role="tab" id="tabPine" data-pane="panePine" aria-selected="false">Pine Script</button>
+              <button role="tab" id="tabTv" data-pane="paneTv" aria-selected="false">TradingView alerts</button>
+            </div>
+            <div id="paneLib" role="tabpanel" aria-labelledby="tabLib">
+              <p class="hint">Simple starter strategies for testing. They are examples, not proven to make money.</p>
+              <div id="libGrid" class="grid"></div>
+            </div>
+            <div id="panePine" role="tabpanel" aria-labelledby="tabPine" hidden>
+              <p class="hint">Paste a strategy straight from TradingView's Pine editor. Keel runs it on live prices. Most common features work; anything that doesn't is named when you check it.</p>
+              <textarea id="pineText" rows="12" spellcheck="false" aria-label="Pine Script" placeholder="//@version=5&#10;strategy(&quot;My strategy&quot;, overlay=true)&#10;..."></textarea>
+              <div class="btns0 gap"><button id="pineCheck" class="ghost" type="button">Check script</button><button id="pineExample" class="link" type="button">Paste an example</button></div>
+              <div id="pineResult" class="result" role="status" aria-live="polite"></div>
+              <div id="pineForm" class="fgrid4" hidden>
+                <div><label for="pName">Name</label><input id="pName" type="text" maxlength="60"></div>
+                <div><label for="pSym">Market</label><input id="pSym" type="text" maxlength="12" value="MNQ" spellcheck="false"></div>
+                <div><label for="pTf">Bar size</label><select id="pTf"><option value="15">15 seconds</option><option value="30">30 seconds</option><option value="60" selected>1 minute</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="3600">1 hour</option></select></div>
+                <div><label for="pQty">Contracts</label><input id="pQty" type="number" min="1" step="1" value="1"></div>
+                <div><label for="pTp">Take profit (points, 0 = off)</label><input id="pTp" type="number" min="0" step="0.25" value="0"></div>
+                <div><label for="pSl">Stop loss (points, 0 = off)</label><input id="pSl" type="number" min="0" step="0.25" value="0"></div>
+                <div class="full"><button id="pineAdd" type="button">Add strategy</button><p id="pineMsg" class="hint" role="status" aria-live="polite"></p></div>
+              </div>
+            </div>
+            <div id="paneTv" role="tabpanel" aria-labelledby="tabTv" hidden>
+              <p class="hint">Works with any TradingView strategy or indicator alert. TradingView decides when to buy or sell. Keel places the trade with your market, size and limits.</p>
+              <div class="fgrid4">
+                <div><label for="tName">Name</label><input id="tName" type="text" maxlength="60" placeholder="My TradingView strategy"></div>
+                <div><label for="tSym">Market</label><input id="tSym" type="text" maxlength="12" value="MNQ" spellcheck="false"></div>
+                <div><label for="tQty">Contracts</label><input id="tQty" type="number" min="1" step="1" value="1"></div>
+                <div><label for="tTp">Take profit (points, 0 = off)</label><input id="tTp" type="number" min="0" step="0.25" value="0"></div>
+                <div><label for="tSl">Stop loss (points, 0 = off)</label><input id="tSl" type="number" min="0" step="0.25" value="0"></div>
+                <div class="full"><button id="tvAdd" type="button">Add strategy</button><p id="tvMsg" class="hint" role="status" aria-live="polite"></p></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="v-test" class="view" hidden>
+          <div class="panel">
+            <h2>Test a strategy on past prices</h2>
+            <p class="hint">Runs the strategy through the same engine the live bot uses. Export prices from TradingView (chart menu, Export chart data) at the same or smaller bar size as the strategy.</p>
+            <div class="fgrid4">
+              <div><label for="btStrat">Strategy</label><select id="btStrat"></select></div>
+              <div><label for="btFile">Price file (CSV)</label><input id="btFile" type="file" accept=".csv,text/csv"></div>
+              <div><label for="btSlip">Slippage (ticks per fill)</label><input id="btSlip" type="number" min="0" max="20" step="1" value="1"></div>
+              <div><label for="btFee">Fees ($ per contract, each side)</label><input id="btFee" type="number" min="0" max="50" step="0.05" value="0.5"></div>
+              <div class="full"><button id="btRun" type="button">Run backtest</button><span id="btPretendWrap" hidden><button id="btPretend" type="button" class="link">Try it on pretend prices</button></span><p id="btMsg" class="hint" role="status" aria-live="polite"></p></div>
+            </div>
+          </div>
+          <div id="btOut" hidden>
+            <p id="btWarn" class="notice warnbox" hidden></p>
+            <div class="cards four">
+              <div class="stat"><p class="k">Net profit</p><p id="btNet" class="num"></p><p id="btNetSub" class="sub"></p></div>
+              <div class="stat"><p class="k">Win rate</p><p id="btWin" class="num"></p><p id="btWinSub" class="sub"></p></div>
+              <div class="stat"><p class="k">Profit factor</p><p id="btPf" class="num"></p><p id="btPfSub" class="sub"></p></div>
+              <div class="stat"><p class="k">Biggest drop</p><p id="btDd" class="num"></p><p id="btDdSub" class="sub"></p></div>
+            </div>
+            <div class="panel"><h2>Equity</h2><div id="btChart" class="chart"></div></div>
+            <div class="panel"><h2>Trades</h2><div id="btTrades" class="tscroll plainscroll"></div></div>
+          </div>
+        </section>
+
+        <section id="v-conn" class="view" hidden>
+          <p class="say">Save your prop firm logins here. They’re encrypted by Windows and never leave this computer.</p>
+          <div id="logins" class="logins"></div>
+        </section>
+
+        <section id="v-risk" class="view" hidden>
+          <div class="panel narrow">
+            <h2>Risk limits</h2>
+            <p class="hint">Keel checks these before every trade. If you hit the daily loss limit, the bot stops and closes your positions.</p>
+            <div class="rules">
+              <div class="rule">
+                <div class="rtext"><div><label class="rname" for="rLoss">Daily loss limit</label><p class="rdesc">The most you are willing to lose in one day.</p></div></div>
+                <div class="field"><span aria-hidden="true">$</span><input id="rLoss" type="number" min="1" step="50"></div>
+                <p class="err" id="eLoss"></p>
+              </div>
+              <div class="rule">
+                <div class="rtext"><div><label class="rname" for="rQty">Contracts per order</label><p class="rdesc">The biggest single order the bot may send.</p></div></div>
+                <div class="stepper"><button type="button" data-step="rQty" data-d="-1" aria-label="Fewer contracts">−</button><input id="rQty" type="number" min="1" step="1"><button type="button" data-step="rQty" data-d="1" aria-label="More contracts">+</button></div>
+                <p class="err" id="eQty"></p>
+              </div>
+              <div class="rule">
+                <div class="rtext"><div><label class="rname" for="rPos">Open positions at once</label><p class="rdesc">How many markets the bot may hold at the same time.</p></div></div>
+                <div class="stepper"><button type="button" data-step="rPos" data-d="-1" aria-label="Fewer positions">−</button><input id="rPos" type="number" min="1" step="1"><button type="button" data-step="rPos" data-d="1" aria-label="More positions">+</button></div>
+                <p class="err" id="ePos"></p>
+              </div>
+              <div class="rule stack">
+                <div class="rtext"><div><span class="rname" id="symLabel">Markets the bot may trade</span><p class="rdesc">Anything not on this list is blocked.</p></div></div>
+                <div><div id="symChips" class="chips"></div>
+                  <div class="symadd"><input id="symInput" type="text" placeholder="Add a symbol, like MNQ" aria-labelledby="symLabel" maxlength="12" spellcheck="false" autocomplete="off"><button type="button" id="symAdd" class="ghost">Add</button></div></div>
+                <p class="err" id="eSym"></p>
+              </div>
+            </div>
+            <div class="savebar" id="riskBar" hidden><span>You have unsaved changes</span><div class="btns0"><button class="ghost" id="undoRisk" type="button">Undo</button><button id="saveRisk" type="button">Save</button></div></div>
+            <p id="riskMsg" class="hint" role="status" aria-live="polite"></p>
+          </div>
+        </section>
+
+        <section id="v-alerts" class="view" hidden>
+          <div class="panel narrow">
+            <h2>TradingView alerts</h2>
+            <p class="hint">Send alerts to <code>http://127.0.0.1:8787/signal</code> through your own tunnel, with this message:</p>
+            <pre id="alert"></pre>
+            <button id="copyAlert">Copy message</button>
+            <p id="copyMsg" class="hint" role="status" aria-live="polite"></p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+  <div id="drawerBack" class="drawer-back" hidden></div>
+  <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" hidden>
+    <header class="dhead"><h2 id="drawerTitle">Edit account</h2><button id="drawerX" class="ghost small" type="button" aria-label="Close">×</button></header>
+    <div class="dbody">
+      <p id="drawerNote" class="hint"></p>
+      <div class="dgrid">
+        <div class="full" data-single><label for="dLabel">Account name or number</label><input id="dLabel" type="text" maxlength="60" autocomplete="off"></div>
+        <div><label for="dFirm">Prop firm</label><select id="dFirm"></select></div>
+        <div><label for="dConn">Connection</label><select id="dConn"></select></div>
+        <div class="full" data-single><label for="dRef">Account ID at the broker (optional)</label><input id="dRef" type="text" maxlength="60" autocomplete="off" placeholder="Leave empty to use the first account on the login"></div>
+        <div class="full"><label for="dPreset">Start from a plan</label><select id="dPreset"></select><p class="hint2">Fills in typical rules. Check them against your firm’s current rules.</p></div>
+        <div data-single class="full"><label for="dCopy">Copy rules from</label><select id="dCopy"></select></div>
+      </div>
+      <h3 class="dsec">Type and plan</h3>
+      <div class="dgrid">
+        <div><label for="dStage">Account type</label><select id="dStage"><option value="evaluation">Evaluation</option><option value="funded">Funded</option><option value="live">Live</option><option value="practice">Practice</option></select></div>
+        <div><label for="dPlan">Plan name</label><input id="dPlan" type="text" maxlength="40" placeholder="Combine $50K"></div>
+      </div>
+      <h3 class="dsec">Rules</h3>
+      <div class="dgrid">
+        <div><label for="dSize">Account size</label><div class="field wide"><span aria-hidden="true">$</span><input id="dSize" type="number" min="0" step="1000"></div></div>
+        <div><label for="dDD">Drawdown type</label><select id="dDD"><option value="eod">End-of-day trailing</option><option value="intraday">Intraday trailing</option><option value="static">Static</option></select></div>
+        <div><label for="dMaxLoss">Max loss</label><div class="field wide"><span aria-hidden="true">$</span><input id="dMaxLoss" type="number" min="0" step="50"></div></div>
+        <div><label for="dDailyLoss">Daily loss (0 = none)</label><div class="field wide"><span aria-hidden="true">$</span><input id="dDailyLoss" type="number" min="0" step="50"></div></div>
+        <div><label for="dTarget">Profit target (0 = none)</label><div class="field wide"><span aria-hidden="true">$</span><input id="dTarget" type="number" min="0" step="50"></div></div>
+        <div><label for="dPct">Consistency (0 = off)</label><div class="field wide"><input id="dPct" type="number" min="0" max="100" step="1"><span aria-hidden="true">%</span></div></div>
+        <div><label for="dBasis">Consistency is measured against</label><select id="dBasis"><option value="target">Profit target</option><option value="total">Total profit</option></select></div>
+        <div><label for="dMinDays">Minimum trading days</label><input id="dMinDays" type="number" min="0" step="1"></div>
+        <div><label for="dMini">Max mini contracts (0 = no cap)</label><input id="dMini" type="number" min="0" step="1"></div>
+        <div><label for="dMicro">Max micro contracts (0 = no cap)</label><input id="dMicro" type="number" min="0" step="1"></div>
+      </div>
+      <h3 class="dsec">Your goals</h3>
+      <div class="dgrid">
+        <div><label for="dGoal">Daily goal (0 = off)</label><div class="field wide"><span aria-hidden="true">$</span><input id="dGoal" type="number" min="0" step="25"></div></div>
+        <div class="checkcell"><label class="check"><input id="dPause" type="checkbox"> Pause new trades at the daily goal</label></div>
+      </div>
+      <h3 class="dsec">Costs and notes</h3>
+      <div class="dgrid">
+        <div><label for="dCost">Cost</label><div class="field wide"><span aria-hidden="true">$</span><input id="dCost" type="number" min="0" step="1"></div></div>
+        <div><label for="dDate">Purchase date</label><input id="dDate" type="date"></div>
+        <div class="full"><label for="dNotes">Notes</label><textarea id="dNotes" rows="3" maxlength="500"></textarea></div>
+      </div>
+    </div>
+    <footer class="dfoot">
+      <button id="drawerDelete" class="ghost danger-text" type="button">Delete account</button>
+      <p id="drawerMsg" class="err" role="alert"></p>
+      <div class="btns0"><button id="drawerCancel" class="ghost" type="button">Cancel</button><button id="drawerSave" type="button">Save</button></div>
+    </footer>
+  </aside>
+  <script src="renderer.js"></script>
+</body>
+</html>
