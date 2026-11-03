@@ -12,7 +12,7 @@ import ict
 from common import SPECS
 MICRO = {"NQ": 2.0, "ES": 5.0, "GC": 10.0}
 CAPS = [250.0, 375.0, 500.0, 625.0, 750.0]; TPS = [1000.0, 1500.0, 2000.0, 2500.0, 3000.0]; BES = [0.0, 500.0, 750.0]
-TUNE = ("2024-06-12", "2025-09-30"); TEST = ("2025-12-01", "2026-08-03")   # last start leaves 90 days of data
+TUNE = ("2024-06-12", "2025-09-30"); TEST = ("2025-12-01", (pd.Timestamp("2026-11-02") - pd.Timedelta(days=int(os.environ.get("MAX_DAYS", "90")) or 30)).strftime("%Y-%m-%d"))
 STRATS = [("NQ", "NR7 + EMA20/50 trend", "both", "nr"), ("NQ", "NR7 + EMA20/50 trend", "long", "nr"), ("NQ", "NR10", "long", "nr"),
           ("NQ", "ICT FVG trend (no P/D filter)", "both", "ict"),
           ("GC", "ICT FVG trend (no P/D filter)", "both", "ict"), ("GC", "NR7 breakout", "both", "s2"), ("GC", "Donchian 20 breakout", "long", "s2"),
@@ -42,13 +42,16 @@ def trades_for(sym, setup, dr, kind, mode, em, sm, risk, tp, be):
     return pd.DataFrame(dict(entry_day=day[r[:, 0].astype(int)], exit_day=day[r[:, 8].astype(int)], pnl=r[:, 2], mae=r[:, 7], qty=r[:, 6], risk=r[:, 3]))
 
 MAX_DAYS = int(os.environ.get("MAX_DAYS", "90"))
+DLL = float(os.environ.get("DLL", "0")); DLL_HARD = os.environ.get("DLL_MODE", "soft") == "hard"
+TAG = f"{MAX_DAYS}d" + (f"_dll{int(DLL)}{'hard' if DLL_HARD else 'soft'}" if DLL > 0 else "")
 def eval_trades(t, all_days):
     t = t.sort_values(["exit_day", "entry_day"]).reset_index(drop=True)
     res = {}
     for lab, (a, b) in (("TUNE", TUNE), ("TEST", TEST)):
         st = np.array([x for x in all_days if pd.Timestamp(a).toordinal() <= x <= pd.Timestamp(b).toordinal()], dtype=np.int64)
-        o = run_evals(st, t.entry_day.values.astype(np.int64), t.exit_day.values.astype(np.int64), t.pnl.values, t.mae.values, MAX_DAYS)
+        o = run_evals(st, t.entry_day.values.astype(np.int64), t.exit_day.values.astype(np.int64), t.pnl.values, t.mae.values, MAX_DAYS, 2000.0, 4000.0, 0.55, DLL, DLL_HARD)
         p, f, op = (o[:, 0] == 1).sum(), (o[:, 0] == -1).sum(), (o[:, 0] == 0).sum()
+        res[f"{lab}_fail_by_DLL"] = int(((o[:, 0] == -1) & (o[:, 4] == 2)).sum())
         res.update({f"{lab}_starts": len(st), f"{lab}_pass": p, f"{lab}_fail": f, f"{lab}_open": op,
                     f"{lab}_passrate": p / (p + f) if p + f else np.nan,
                     f"{lab}_days_to_pass": np.median(o[o[:, 0] == 1, 1]) if p else np.nan,
@@ -67,4 +70,4 @@ if __name__ == "__main__":
             rows.append(dict(symbol=sym, setup=setup, dir=dr, sizing="micros" if mode else "1 std contract", entry=EN[em],
                              stop=SMN[sm] if mode else f"${cap:.0f} fixed", risk=cap, TP=tp, BE=be, trades=len(t), avg_qty=t.qty.mean(), **eval_trades(t, all_days)))
         print(sym, setup, dr, "done", len(rows), file=sys.stderr)
-    df = pd.DataFrame(rows); df.to_csv(f"results/eval_grid_{MAX_DAYS}d.csv", index=False); print(len(df), "configs")
+    df = pd.DataFrame(rows); df.to_csv(f"results/eval_grid_{TAG}.csv", index=False); print(len(df), "configs")
