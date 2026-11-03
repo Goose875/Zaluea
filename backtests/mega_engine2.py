@@ -2,13 +2,14 @@
 Entry em: 0 market next open | 1 confirm-close | 2 limit @ signal-bar 50% | 3 LIMIT AT LEVEL (lim_px[i], 6-bar expiry)
 Stop  sm: 0 signal bar | 1 1xATR | 2 5-bar swing | 3 BEYOND ZONE (stp_px[i])
 Target k: >0 k x R | 0 none | -1 NEXT LEVEL (tgt_px[i]; skipped if not ahead of entry)
-BE (+1R -> entry+1 tick), 1.5xATR trail after +1R, time stop (0 = none, else bars). Same conservative fills as before; flat at session end.
+BE (+1R -> entry+1 tick), 1.5xATR trail after +1R, time stop (0 = none, else bars).
+hold=1: positions may be held across sessions (swing); exits by stop/target/trail/time stop only. Same conservative fills as before; flat at session end.
 Returns per segment: n, sum_R, wins, gross_profit, gross_loss, sum_R^2."""
 import numpy as np
 from numba import njit, prange
 
 @njit(cache=True)
-def sim2(o, h, l, c, a, sess, L, S, lim_px, stp_px, tgt_px, em, sm, k, be, trail, tmax, cut1, cut2, tick, mult, comm, out):
+def sim2(o, h, l, c, a, sess, L, S, lim_px, stp_px, tgt_px, em, sm, k, be, trail, tmax, cut1, cut2, tick, mult, comm, out, hold=0):
     n = len(o); i = 0
     while i < n - 2:
         side = 1 if L[i] else (-1 if S[i] else 0)
@@ -58,7 +59,7 @@ def sim2(o, h, l, c, a, sess, L, S, lim_px, stp_px, tgt_px, em, sm, k, be, trail
                 break
             can_t = (j > fill) or (em == 0 or em == 1)
             if can_t and ((h[j] >= tgt + tick) if side == 1 else (l[j] <= tgt - tick)): ex = tgt; break
-            if j + 1 >= n or sess[j + 1] != sess[j]: ex = c[j] - side * tick; break
+            if j + 1 >= n or (hold == 0 and sess[j + 1] != sess[j]): ex = c[j] - side * tick; break
             if tmax > 0 and j - fill + 1 >= tmax: ex = c[j] - side * tick; break
             best = max(best, h[j]) if side == 1 else min(best, l[j])
             prog = (best - e) * side / risk
@@ -77,13 +78,13 @@ def sim2(o, h, l, c, a, sess, L, S, lim_px, stp_px, tgt_px, em, sm, k, be, trail
         i = j + 1
 
 @njit(parallel=True, cache=True)
-def run_block2(o, h, l, c, a, sess, Lm, Sm, lim_px, stp_px, tgt_px, M, cut1, cut2, tick, mult, comm):
+def run_block2(o, h, l, c, a, sess, Lm, Sm, lim_px, stp_px, tgt_px, M, cut1, cut2, tick, mult, comm, hold=0):
     nv = Lm.shape[0]; ng = M.shape[0]; res = np.zeros((nv, ng, 3, 6), np.float32)
     for t in prange(nv * ng):
         v = t // ng; g = t % ng
         out = np.zeros((3, 6))
         sim2(o, h, l, c, a, sess, Lm[v], Sm[v], lim_px, stp_px, tgt_px, int(M[g, 0]), int(M[g, 1]), M[g, 2], int(M[g, 3]), int(M[g, 4]), int(M[g, 5]),
-             cut1, cut2, tick, mult, comm, out)
+             cut1, cut2, tick, mult, comm, out, hold)
         for s_ in range(3):
             for f in range(6): res[v, g, s_, f] = out[s_, f]
     return res

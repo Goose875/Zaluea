@@ -14,8 +14,10 @@ from mega_engine2 import run_block2
 import mega, levels2
 from common import SPECS, load
 SPLIT = ("2025-03-31", "2025-11-30")
-MZ = np.array([[em, sm, k, be, tr, tm] for em in (0, 1, 2, 3) for sm in (0, 1, 2, 3) for k in (1.0, 1.5, 2.0, 3.0, 5.0, 0.0, -1.0) for be in (0, 1) for tr in (0, 1) for tm in (0, 3, 6)], float)
-MB = np.array([[em, sm, k, be, tr, tm] for em in (0, 1, 2) for sm in (0, 1, 2) for k in (1.0, 1.5, 2.0, 3.0, 5.0, 0.0) for be in (0, 1) for tr in (0, 1) for tm in (0, 3, 6)], float)
+HOLD = int(os.environ.get("HOLD", "0")); TAG = "_hold" if HOLD else ""
+TSTOPS = (6, 12, 24, 48, 96) if HOLD else (0, 3, 6)   # swing run: always time-capped (bars)
+MZ = np.array([[em, sm, k, be, tr, tm] for em in (0, 1, 2, 3) for sm in (0, 1, 2, 3) for k in (1.0, 1.5, 2.0, 3.0, 5.0, 0.0, -1.0) for be in (0, 1) for tr in (0, 1) for tm in TSTOPS], float)
+MB = np.array([[em, sm, k, be, tr, tm] for em in (0, 1, 2) for sm in (0, 1, 2) for k in (1.0, 1.5, 2.0, 3.0, 5.0, 0.0) for be in (0, 1) for tr in (0, 1) for tm in TSTOPS], float)
 PASS = dict(n0=50, n1=30, avg=0.15, pf=1.3)
 
 def filters(d, sym):
@@ -73,12 +75,12 @@ if __name__ == "__main__":
                     Lm.append(Lx); Sm.append(Sx); metas.append((tname, dr) + key)
                 if not Lm: continue
                 for c0 in range(0, len(Lm), 300):
-                    res = run_block2(*arrs, np.array(Lm[c0:c0 + 300]), np.array(Sm[c0:c0 + 300]), lim, stp, tgt, M, cuts[0], cuts[1], sp["tick"], float(sp["mult"]), sp["comm"])
+                    res = run_block2(*arrs, np.array(Lm[c0:c0 + 300]), np.array(Sm[c0:c0 + 300]), lim, stp, tgt, M, cuts[0], cuts[1], sp["tick"], float(sp["mult"]), sp["comm"], HOLD)
                     total += res.shape[0] * res.shape[1]
                     summarize(res, metas[c0:c0 + 300], sink_pass, sink_var, isz)
             if jn % 20 == 0: print(f"{sym} trigger {jn}/{len(jobs)} strategies so far {total:,} ({time.time()-t0:.0f}s)", flush=True)
         cols = ["trigger", "dir", "regime", "trend", "vol", "window", "pd", "dow"]
-        pd.DataFrame(sink_var, columns=cols + ["eligible", "passed", "pass_TE_med", "pass_TE_pos", "elig_TE_med", "pass_TR_med", "pass_VA_med"]).to_csv(f"results/mega2_{sym}_variants.csv.gz", index=False, compression="gzip")
-        pd.DataFrame(sink_pass, columns=cols + ["mgmt", "zone_mgmt", "TR_n", "TR_avg", "TR_pf", "VA_n", "VA_avg", "VA_pf", "TE_n", "TE_avg", "TE_pf"]).to_csv(f"results/mega2_{sym}_pass.csv.gz", index=False, compression="gzip")
-        with open(f"results/mega2_{sym}_count.txt", "w") as fh: fh.write(str(total))
+        pd.DataFrame(sink_var, columns=cols + ["eligible", "passed", "pass_TE_med", "pass_TE_pos", "elig_TE_med", "pass_TR_med", "pass_VA_med"]).to_csv(f"results/mega2{TAG}_{sym}_variants.csv.gz", index=False, compression="gzip")
+        pd.DataFrame(sink_pass, columns=cols + ["mgmt", "zone_mgmt", "TR_n", "TR_avg", "TR_pf", "VA_n", "VA_avg", "VA_pf", "TE_n", "TE_avg", "TE_pf"]).to_csv(f"results/mega2{TAG}_{sym}_pass.csv.gz", index=False, compression="gzip")
+        with open(f"results/mega2{TAG}_{sym}_count.txt", "w") as fh: fh.write(str(total))
         print(f"{sym} DONE: {total:,} strategies, {len(sink_pass):,} passed TRAIN+VALID, {time.time()-t0:.0f}s", flush=True)
