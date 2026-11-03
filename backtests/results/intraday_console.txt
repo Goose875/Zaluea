@@ -1,0 +1,108 @@
+NQ done
+ES done
+GC done
+
+===== 1h continuous Jun2024-Nov2026 | NQ | 723 sessions =====
+                                               usd_pnl_1lot  max_dd_usd  sharpe  total_ret  trades  win_rate  profit_factor  avg_trade
+strategy                                                                                                                              
+Overnight session only (long)                      182502.5    -62730.0    1.10       0.45     604      0.57           1.23     309.66
+Buy & hold 24h (benchmark)                         177427.5   -109765.0    0.73       0.45       1      1.00            inf  177435.00
+MACD 12/26/9 L/S (1h)                              130297.5   -180125.0    0.63       0.35    1030      0.36           1.08     126.51
+EMA 9/21 L/S (1h)                                  122287.5   -131940.0    0.39       0.18     582      0.31           1.12     210.13
+RSI(2) pullback in uptrend (1h)                     40405.0    -23587.5    0.80       0.11     343      0.64           1.21     125.30
+Bollinger 20/2 fade L/S (1h)                        37787.5    -84130.0    0.16       0.04     531      0.64           1.05      78.10
+Intraday momentum: last hour follows 1st hour        5635.0    -43605.0   -0.01      -0.00     586      0.52           1.03      17.12
+EMA 20/50 L/S (1h)                                   3147.5   -208720.0   -0.10      -0.11     244      0.31           1.00      12.93
+Donchian 20/10 breakout L/S (1h)                    -2262.5   -163780.0   -0.06      -0.06     430      0.39           1.00       0.16
+Day session only (long)                            -23165.0   -111235.0   -0.01      -0.04     603      0.54           0.98     -30.92
+RSI14 30/70 fade L/S (1h)                          -57097.5    -83282.5   -0.35      -0.13     229      0.62           0.88    -241.93
+
+===== 5m NQZ26 contract | NQ | 43 sessions =====
+                                                       usd_pnl_1lot  max_dd_usd  sharpe  total_ret  trades  win_rate  profit_factor  avg_trade
+strategy                                                                                                                                      
+EMA 9/21 L/S RTH (5m)                                       40140.0    -13630.0    3.73       0.07     153      0.41           1.45     264.12
+Gap-and-go (follow gap, exit EOD)                           21720.0    -13800.0    1.98       0.04      31      0.42           1.47     708.15
+VWAP trend: long above / short below (5m)                   13570.0    -30575.0    1.33       0.02     199      0.25           1.15      69.55
+First 30m direction -> hold to close                        12160.0    -18135.0    1.04       0.02      36      0.44           1.23     345.28
+RSI14 30/70 fade, exit 50 (5m)                                915.0     -9680.0    0.02      -0.00      44      0.64           1.03      28.30
+Opening Range Breakout 15m, stop=other side, exit EOD       -2390.0    -22465.0   -0.30      -0.00      36      0.42           0.95     -58.89
+Opening Range Breakout 5m, stop=other side, exit EOD        -4130.0    -20705.0   -0.48      -0.01      36      0.31           0.92    -107.22
+ORB 15m, 2R target, stop=other side                         -4305.0    -23320.0   -0.61      -0.01      36      0.44           0.91    -112.08
+Bollinger 20/2 fade, exit mid (5m)                          -7480.0    -13025.0   -1.51      -0.01      85      0.61           0.87     -80.50
+RTH session hold (long)                                     -7715.0    -28265.0   -0.62      -0.01      36      0.47           0.90    -206.81
+Last 30m follows open->10:00 return (Gao)                  -10335.0    -14775.0   -3.70      -0.02      35      0.31           0.48    -287.79
+Opening Range Breakout 30m, stop=other side, exit EOD      -11175.0    -26890.0   -1.06      -0.02      34      0.50           0.81    -321.18
+Gap fade to prior close (stop 1x gap)                      -14965.0    -23535.0   -1.78      -0.03      31      0.45           0.73    -475.24
+VWAP 2-sigma reversion to VWAP (5m)                        -15215.0    -17805.0   -1.96      -0.03      70      0.61           0.78    -209.86
+Overnight hold, RTH close->open (long)                     -17317.5    -46060.0   -1.28      -0.03      37      0.46           0.79    -460.54
+Buy & hold (benchmark)                                     -23952.5    -67035.0   -1.18      -0.04       1      0.00           0.00  -23945.00
+
+===== 1h continuous Jun2024-Nov2026 | ES | 723 sessions =====
+                                               usd_pnl_1lot  max_dd_usd  sharpe  total_ret  trades  win_rate  profit_factor  avg_trade
+strategy                                                                                                                              
+Buy & hold 24h (benchmark)                         108872.5    -61450.0    0.84       0.40       1      1.00            inf  108887.50
+Overnight session only (long)                       74982.5    -42067.5    0.90       0.25     604      0.57           1.22     139.14
+Bollinger 20/2 fade L/S (1h)                        18447.5    -38037.5    0.15       0.03     536      0.64           1.07      48.47
+RSI14 30/70 fade L/S (1h)                            7287.5    -61175.0    0.03      -0.01     228      0.62           1.05      46.77
+RSI(2) pullback in uptrend (1h)                     -1105.0    -19245.0    0.06       0.00     361      0.65           1.04      11.94
+Day session only (long)                             -2290.0    -53727.5    0.06       0.00     603      0.52           1.01      11.20
+Intraday momentum: last hour follows 1st hour      -16207.5    -25895.0   -0.45      -0.05     584      0.52           0.96     -12.75
+Donchian 20/10 breakout L/S (1h)                   -35540.0    -75412.5   -0.33      -0.12     431      0.39           0.93     -71.53
+EMA 20/50 L/S (1h)                                 -49390.0    -97700.0   -0.40      -0.19     266      0.28           0.87    -185.62
+MACD 12/26/9 L/S (1h)                              -77215.0   -160815.0   -0.48      -0.21    1066      0.35           0.91     -72.42
+EMA 9/21 L/S (1h)                                 -106885.0   -134410.0   -0.77      -0.32     590      0.30           0.83    -181.14
+
+===== 5m ESZ26 contract | ES | 43 sessions =====
+                                                       usd_pnl_1lot  max_dd_usd  sharpe  total_ret  trades  win_rate  profit_factor  avg_trade
+strategy                                                                                                                                      
+EMA 9/21 L/S RTH (5m)                                        3827.5    -13820.0    0.74       0.01     147      0.37           1.10      29.71
+VWAP 2-sigma reversion to VWAP (5m)                          2202.5     -7202.5    0.61       0.01      77      0.70           1.14      43.41
+VWAP trend: long above / short below (5m)                     640.0     -9207.5    0.16       0.00     197      0.24           1.03       5.99
+Overnight hold, RTH close->open (long)                       -757.5    -12290.0   -0.12      -0.00      37      0.54           0.99      -5.47
+ORB 15m, 2R target, stop=other side                         -3967.5     -8442.5   -1.41      -0.01      36      0.44           0.83     -95.21
+RSI14 30/70 fade, exit 50 (5m)                              -4640.0     -7065.0   -1.56      -0.01      38      0.66           0.78    -107.11
+Bollinger 20/2 fade, exit mid (5m)                          -4942.5     -7397.5   -1.46      -0.01      96      0.64           0.88     -37.11
+Gap-and-go (follow gap, exit EOD)                           -5970.0     -9030.0   -1.85      -0.02      24      0.33           0.69    -233.75
+Last 30m follows open->10:00 return (Gao)                   -6250.0     -7490.0   -4.25      -0.02      35      0.37           0.44    -163.57
+Buy & hold (benchmark)                                      -6377.5    -16050.0   -0.93      -0.02       1      0.00           0.00   -6362.50
+First 30m direction -> hold to close                        -6392.5     -9117.5   -1.50      -0.02      36      0.44           0.78    -162.57
+RTH session hold (long)                                     -7780.0     -8725.0   -1.70      -0.02      36      0.47           0.75    -201.11
+Opening Range Breakout 5m, stop=other side, exit EOD        -8980.0    -12940.0   -2.47      -0.02      36      0.31           0.63    -234.44
+Gap fade to prior close (stop 1x gap)                      -10707.5    -10707.5   -3.58      -0.03      24      0.46           0.48    -431.15
+Opening Range Breakout 15m, stop=other side, exit EOD      -13117.5    -15277.5   -3.43      -0.03      36      0.36           0.54    -349.38
+Opening Range Breakout 30m, stop=other side, exit EOD      -15730.0    -15465.0   -3.90      -0.04      36      0.36           0.50    -421.94
+
+===== 1h continuous Jun2024-Nov2026 | GC | 724 sessions =====
+                                               usd_pnl_1lot  max_dd_usd  sharpe  total_ret  trades  win_rate  profit_factor  avg_trade
+strategy                                                                                                                              
+MACD 12/26/9 L/S (1h)                             317767.80   -74024.98    1.39       1.03    1037      0.36           1.25     306.44
+EMA 9/21 L/S (1h)                                 258547.49   -72440.09    1.23       0.90     585      0.32           1.31     441.98
+Donchian 20/10 breakout L/S (1h)                  253594.85   -54504.93    1.29       0.83     355      0.41           1.47     724.14
+Overnight session only (long)                     186513.01   -96634.99    1.24       0.70     604      0.57           1.24     321.30
+EMA 20/50 L/S (1h)                                165402.86  -134019.82    0.76       0.48     254      0.33           1.31     651.24
+Buy & hold 24h (benchmark)                        160337.50  -169089.99    0.97       0.66       1      1.00            inf  160350.00
+RSI(2) pullback in uptrend (1h)                    15970.36   -32152.25    0.28       0.04     330      0.65           1.10      60.90
+Intraday momentum: last hour follows 1st hour      14529.44   -15425.20    0.22       0.02     600      0.50           1.12      36.72
+Day session only (long)                           -56325.51   -99650.29   -0.26      -0.10     603      0.50           0.93     -80.91
+RSI14 30/70 fade L/S (1h)                         -71949.93  -166479.86   -0.62      -0.25     214      0.55           0.83    -323.77
+Bollinger 20/2 fade L/S (1h)                     -123669.46  -155647.14   -0.83      -0.35     488      0.63           0.85    -241.25
+
+===== 5m GCZ26 contract | GC | 56 sessions =====
+                                                       usd_pnl_1lot  max_dd_usd  sharpe  total_ret  trades  win_rate  profit_factor  avg_trade
+strategy                                                                                                                                      
+ORB 15m, 2R target, stop=other side                        18639.75    -8620.07    2.95       0.05      46      0.61           1.63     417.71
+Bollinger 20/2 fade, exit mid (5m)                         17429.93    -3809.99    3.38       0.04      90      0.68           1.58     205.75
+RSI14 30/70 fade, exit 50 (5m)                             15915.11    -8500.00    2.81       0.04      45      0.71           1.75     366.17
+VWAP 2-sigma reversion to VWAP (5m)                        12514.92    -9094.95    1.66       0.03      91      0.67           1.32     149.89
+Opening Range Breakout 15m, stop=other side, exit EOD       4729.91   -12925.05    0.83       0.01      46      0.50           1.15     115.32
+Gap-and-go (follow gap, exit EOD)                           3675.05   -23250.00    0.52       0.01      41      0.41           1.10     102.14
+Last 30m follows open->10:00 return (Gao)                   3374.88    -1655.00    2.50       0.01      45      0.53           1.71      87.50
+Opening Range Breakout 30m, stop=other side, exit EOD      -3499.83   -12359.96   -0.40      -0.01      44      0.45           0.91     -67.04
+Opening Range Breakout 5m, stop=other side, exit EOD       -5014.92   -17579.96   -0.78      -0.01      47      0.30           0.87     -94.20
+First 30m direction -> hold to close                       -5285.03   -34635.01   -0.58      -0.01      47      0.51           0.91     -99.95
+EMA 9/21 L/S RTH (5m)                                     -11749.68   -38139.82   -1.09      -0.03     178      0.30           0.89     -62.71
+Gap fade to prior close (stop 1x gap)                     -12444.87   -18109.96   -1.65      -0.03      41      0.54           0.75    -291.03
+VWAP trend: long above / short below (5m)                 -33594.68   -49839.70   -3.15      -0.07     305      0.22           0.73    -108.22
+Overnight hold, RTH close->open (long)                    -37367.46   -37554.98   -2.65      -0.08      48      0.44           0.60    -765.99
+RTH session hold (long)                                   -39805.05   -47595.04   -3.82      -0.09      47      0.36           0.49    -834.42
+Buy & hold (benchmark)                                    -74822.51   -73250.00   -4.34      -0.16       1      0.00           0.00  -74810.01
