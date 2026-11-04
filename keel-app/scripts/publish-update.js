@@ -32,6 +32,15 @@ function put(key, body, type) {
 }
 /** Upload through Cloudflare's API (PUT .../r2/buckets/<bucket>/objects/<key>); the Bearer token comes from the environment. */
 function cfPut(key, body, type) {
+  // In a Claude cloud session the token is added by the HTTPS proxy, which Node's https module does not use: send it with curl.
+  if (env.HTTPS_PROXY && !env.CF_API_TOKEN) {
+    const { spawnSync } = require('child_process');
+    const r = spawnSync('curl', ['-sS', '-X', 'PUT', '-H', 'Content-Type: ' + type, '--data-binary', '@-', '-w', '\n%{http_code}',
+      'https://api.cloudflare.com/client/v4/accounts/' + ACCOUNT + '/r2/buckets/' + BUCKET + '/objects/' + encodeURIComponent(key)], { input: body, maxBuffer: 1e7 });
+    const out = String(r.stdout), code = out.slice(out.lastIndexOf('\n') + 1), text = out.slice(0, out.lastIndexOf('\n'));
+    let j = {}; try { j = JSON.parse(text); } catch { /* not JSON */ }
+    return code === '200' && j.success !== false ? Promise.resolve() : Promise.reject(new Error(key + ': HTTP ' + code + ' ' + (text || String(r.stderr)).slice(0, 300)));
+  }
   const headers = { 'Content-Type': type, 'Content-Length': body.length, ...(env.CF_API_TOKEN ? { Authorization: `Bearer ${env.CF_API_TOKEN}` } : {}) };
   return new Promise((ok, bad) => {
     const r = https.request({ host: 'api.cloudflare.com', path: `/client/v4/accounts/${ACCOUNT}/r2/buckets/${BUCKET}/objects/${encodeURIComponent(key)}`, method: 'PUT', headers }, res => {
