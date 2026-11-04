@@ -59,3 +59,47 @@ Trade counts are low (about 4–10 a year per strategy), and holds last days to 
 * **Intraday, the K system (NR breakouts and prior-day levels on NQ / GC) remains the only edge that held up.** MT5 / NinjaTrader indicator strategies on hourly bars did not.
 
 This is research, not investment advice. Code: `mt5nt.py` (ports + search), `mt5nt_analyze.py` (verdict). Results: `results/mt5nt_*`.
+
+---
+# Part 2: every MQL5 CodeBase strategy family, plus rebuild checks
+
+## What exists, and what can be tested
+* **MQL5 Market:** about 10,000 paid, closed-source (compiled) EAs. There are no rules to read, and they run only inside MetaTrader on broker data. **They cannot be tested here.**
+* **NinjaTrader Ecosystem:** paid, closed add-ons. The free user scripts sit behind a forum login. The built-in samples were tested in Part 1.
+* **MQL5 CodeBase:** **1,713 free MT5 experts**, catalogued from the public listing pages. MQL5's robots.txt allows reading listings and description pages, but **not automated source viewing or downloading**, so none was fetched.
+
+| Kind | Count |
+|---|---|
+| Strategies with their logic described | 1,061 |
+| Strategies with the logic not described in the listing (source needed) | 305 |
+| Grid / martingale / hedging | 201 (not tested: hidden blow-up risk, banned by most prop firms) |
+| Utilities (panels, guards, trade managers) | 146 |
+
+* **Coverage:** the 1,061 strategies use about 22 logic families. Most were already covered by earlier searches. The rest were ported in `mt5ext.py`:
+  * Bill Williams Alligator / Fractals;
+  * ZigZag-Fibonacci retracements;
+  * 8 candlestick patterns;
+  * OBV / MFI / volume-spike;
+  * Hull / VIDYA / T3;
+  * z-score reversion and linear-regression slope;
+  * CodeBase combos: MACD + EMA200, RSI + EMA200, ADX + DI.
+* **Not ported:** neural-net / ONNX EAs (models trained on forex data).
+* **Results for the new families:**
+  * **daily:** 1,242,000 variants; the 35 families that beat the random-entry ceiling made **+0.071R median in 2020–26, 83% positive**;
+  * **hourly:** 1,866,528 variants; no edge.
+* **Total MT5 / NinjaTrader-style variants tested: 9,673,456.**
+
+## Rebuild check of the strongest daily swing candidates (`swing_robust.py`)
+Each candidate was tested with one fixed set of trade settings (the most typical of its family, chosen on 2005–2019).
+
+| Candidate | Avg R per trade 2005–26 | 2005–19 → 2020–26 | Profitable years | Periods ±20% | Same rule on other markets | Verdict |
+|---|---|---|---|---|---|---|
+| GC TEMA(12) failed breakout, long | +0.41 (138 trades) | +0.44 → +0.36 | 16/22 | +0.27 to +0.70 | ~0 | **rebuild** |
+| NQ outside-bar reversal, long, daily trend | +0.37 (114) | +0.43 → +0.25 | 17/22 (worst year −1.4R) | n/a | ~0 | **rebuild** |
+| GC VIDYA(14) cross, long, low volatility | +0.33 (110) | +0.41 → +0.15 | 15/22 | +0.27 to +0.41 | NQ +0.35 | **rebuild** |
+| ES MACD zero cross, both, high volatility | +0.28 (97) | +0.36 → +0.10 | 15/22 | +0.06 to +0.22 | NQ +0.06 | optional |
+| GC Fractal breakout, both, filtered | +0.20 (137) | +0.21 → +0.18 | 15/22 | stable | NQ +0.10 | optional |
+| NQ three white soldiers, long | +0.49 (304) | +0.43 → +0.62 | 14/22 (worst year −14R) | n/a | positive everywhere (rides the uptrend) | too volatile |
+| NQ MACD signal cross, long | +0.32 | +0.49 → −0.02 | 13/22 | | | faded |
+
+**Important:** these hold positions for days to weeks (time stops of 5–20 days). They **cannot be traded on accounts that must be flat every day** (Topstep evaluations and most prop evaluations).
