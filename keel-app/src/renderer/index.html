@@ -61,31 +61,51 @@
         </section>
 
         <section id="v-chart" class="view" hidden>
-          <div class="panel">
-            <div class="toolbar">
-              <div class="btns0">
-                <label class="inl" for="cSym">Market</label><select id="cSym" class="auto"></select>
-                <div class="seg small" id="cTf" role="group" aria-label="Timeframe"><button type="button" data-tf="min1">1m</button><button type="button" data-tf="min5" aria-pressed="true">5m</button><button type="button" data-tf="min15">15m</button><button type="button" data-tf="hour">1h</button><button type="button" data-tf="hour4">4h</button><button type="button" data-tf="day">1D</button></div>
-                <button type="button" id="cFit" class="ghost small">Latest</button>
+          <div class="term">
+            <div class="tbar">
+              <select id="cSym" class="tsym" aria-label="Market"></select>
+              <div class="tf" id="cTf" role="group" aria-label="Timeframe"><button type="button" data-tf="min1">1m</button><button type="button" data-tf="min5" aria-pressed="true">5m</button><button type="button" data-tf="min15">15m</button><button type="button" data-tf="hour">1h</button><button type="button" data-tf="hour4">4h</button><button type="button" data-tf="day">D</button></div>
+              <span class="tsep" aria-hidden="true"></span>
+              <div class="indwrap">
+                <button type="button" id="cIndBtn" class="tbtn" aria-haspopup="true" aria-expanded="false" aria-controls="cIndMenu"><span class="fx">ƒx</span> Indicators</button>
+                <div id="cIndMenu" class="indmenu" hidden>
+                  <p class="indh">On the chart</p><div id="cIndOn" class="indon"></div>
+                  <p class="indh">Add</p><div id="cIndAdd" class="indadd"></div>
+                </div>
               </div>
-              <div class="liverow"><span id="cLive" class="livepill">…</span><p id="cLast" class="clast"></p></div>
+              <button type="button" id="cFit" class="tbtn" title="Jump to the latest bars">⇥ Latest</button>
+              <span class="grow"></span>
+              <span id="cLive" class="livepill">…</span>
+              <span id="cLast" class="clast"></span>
             </div>
-            <div id="cBox" class="cbox lw"></div>
-            <p class="hint">Drag to move, scroll or pinch to zoom, drag the price or time axis to stretch it. Drag a trade's dashed stop or target line (or a working limit's entry line) up or down to move it at the broker; Keel asks before sending. Arrows mark entries and dots mark exits. Times are New York time. Chart by TradingView Lightweight Charts.</p>
-            <div id="cLegend" class="clegend"></div>
-          </div>
-          <div class="panel">
-            <h2>Trade from the chart</h2>
-            <p id="tkHint" class="hint"></p>
-            <div id="tkAccts" class="tkaccts"></div>
-            <div class="fgrid4">
-              <div><label for="tkQty">Contracts</label><input id="tkQty" type="number" min="1" max="100" step="1" value="1"></div>
-              <div><label for="tkStop">Stop (points, 0 = none)</label><input id="tkStop" type="number" min="0" step="0.25" value="0"></div>
-              <div><label for="tkTgt">Target (points, 0 = none)</label><input id="tkTgt" type="number" min="0" step="0.25" value="0"></div>
-              <div><label for="tkPx">Limit price (empty = market)</label><input id="tkPx" type="number" step="0.01" placeholder="Click the chart to set"></div>
+            <div class="tbody">
+              <div class="tchart">
+                <div id="cBox" class="cbox lw"></div>
+                <div id="cOhlc" class="ohlc" aria-live="off"></div>
+              </div>
+              <aside class="ticket" aria-label="Order ticket">
+                <div class="tkbig"><button id="tkSell" type="button" class="sell">Sell</button><button id="tkBuy" type="button" class="buy">Buy</button></div>
+                <label for="tkQty">Contracts</label>
+                <div class="stepper"><button type="button" class="tbtn" data-step="-1" aria-label="One fewer">−</button><input id="tkQty" type="number" min="1" max="100" step="1" value="1"><button type="button" class="tbtn" data-step="1" aria-label="One more">+</button></div>
+                <label for="tkPx">Limit price <span class="hint">(empty = market)</span></label>
+                <input id="tkPx" type="number" step="0.01" placeholder="Market · click chart to set">
+                <div class="tk2">
+                  <div><label for="tkStop">Stop (pts)</label><input id="tkStop" type="number" min="0" step="0.25" value="0"></div>
+                  <div><label for="tkTgt">Target (pts)</label><input id="tkTgt" type="number" min="0" step="0.25" value="0"></div>
+                </div>
+                <p class="indh">Accounts</p>
+                <div id="tkAccts" class="tkaccts"></div>
+                <button id="tkFlat" type="button" class="ghost small tkflat">Flatten this market</button>
+                <p id="tkMsg" class="hint" role="status" aria-live="polite"></p>
+                <p id="tkHint" class="hint tkhint"></p>
+              </aside>
             </div>
-            <div class="mixrow" style="margin-top:12px"><button id="tkBuy" type="button" class="buy">Buy</button><button id="tkSell" type="button" class="sell">Sell</button><button id="tkFlat" type="button" class="ghost">Flatten this market</button></div>
-            <p id="tkMsg" class="hint" role="status" aria-live="polite"></p>
+            <div class="tpos">
+              <div class="tposh"><h3>Open on this market</h3>
+                <details class="chelp"><summary>How the chart works</summary><p class="hint">Drag to move, scroll or pinch to zoom, drag the price or time axis to stretch it. Click the chart to set a limit price. Drag a trade's dashed stop or target line (or a working limit's entry line) up or down to move it at the broker; Keel asks before sending. Arrows mark entries and dots mark exits. Times are New York time. Chart by TradingView Lightweight Charts.</p></details>
+              </div>
+              <div id="cLegend" class="clegend"></div>
+            </div>
           </div>
         </section>
 

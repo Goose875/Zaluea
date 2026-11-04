@@ -6,6 +6,8 @@ const NAMES = { projectx: 'TopstepX', rithmic: 'Rithmic', cqg: 'CQG', tradovate:
 const nm = v => NAMES[v] || v;
 const STATUS = { ready: '', beta: ' (beta)', 'needs-approval': ' (needs approval)' };
 const TITLES = { journal: 'Journal', ai: 'Claude', rank: 'Compare mixes', dash: 'Today', chart: 'Chart', acct: 'Progress', accts: 'Accounts', k: 'Strategies', kval: 'Validate the K system', strat: 'Custom strategies', test: 'Backtest', conn: 'Logins', risk: 'Risk limits', alerts: 'TradingView alerts' };
+// Mixes you picked from Compare mixes: always offered in the mix lists (Strategies page and each account).
+const PINNED_MIXES = ['K8 + K9 + K1 + K3 + K4 + K6 + K7', 'K8 + K9 + K3 + K4 + K5 + K6 + K7'];
 const STAGE = { evaluation: ['Evaluation', 'Profit target'], funded: ['Funded', 'Payout target'], live: ['Live', 'Payout target'], practice: ['Practice', 'Practice goal'] };
 const DD = { eod: 'EOD trailing', intraday: 'Intraday trailing', static: 'Static' };
 const MULT = { ES: 50, NQ: 20, MES: 5, MNQ: 2, YM: 5, MYM: 0.5, RTY: 50, M2K: 5, CL: 1000, MCL: 100, GC: 100, MGC: 10 };
@@ -270,6 +272,7 @@ async function loadAcctDefaults() {
     const R = k.rankings, seen = new Set(), mixes = [];
     for (const r of [...(R ? R.mixes : [])].sort((x, y) => (y.score ?? 0) - (x.score ?? 0))) { if (!seen.has(r.strategies)) { seen.add(r.strategies); mixes.push(r.strategies); } if (mixes.length >= 10) break; }
     if (R && !seen.has(R.recommended.strategies)) mixes.unshift(R.recommended.strategies);
+    for (const m of [...PINNED_MIXES].reverse()) if (!seen.has(m)) { seen.add(m); mixes.splice(R && mixes[0] === R.recommended.strategies ? 1 : 0, 0, m); }
     acctDefaults = { risk: k.cfg.riskUsd, mixes };
   } catch { /* keep defaults */ }
 }
@@ -575,11 +578,12 @@ $('tvAdd').onclick = async () => {
 };
 
 // ---------- live chart (TradingView Lightweight Charts) ----------
-let chartTf = 'min5', chartSym = '', lw = null, lwSeries = null, lwLines = [], lwKey = '', lwLast = 0, lwBusy = false, lwN = 0;
+let chartTf = 'min5', chartSym = '', lw = null, lwLC = null, lwMk = null, lwWm = null, lwSeries = null, lwLines = [], lwKey = '', lwLast = 0, lwBusy = false, lwN = 0;
 // Lightweight Charts shows times as UTC: shift each bar to New York wall-clock so the axis reads New York time.
 const nyParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const nySec = ms => { const p = Object.fromEntries(nyParts.formatToParts(new Date(ms)).map(x => [x.type, x.value])); return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) / 1000; };
-const toBar = b => ({ time: nySec(b.t), open: b.o, high: b.h, low: b.l, close: b.c });
+const toBar = b => ({ time: nySec(b.t), open: b.o, high: b.h, low: b.l, close: b.c, v: Number.isFinite(b.v) ? b.v : 0 });
+const candle = ({ time, open, high, low, close }) => ({ time, open, high, low, close });
 function chartSymbols(extra) {
   const list = [...new Set([...(savedRisk ? savedRisk.allowedSymbols : []), ...(extra || [])])];
   const sel = $('cSym'), keep = chartSym || list[0] || '';
@@ -602,21 +606,29 @@ function lwEnsure() {
   }
   const W = lwReady ? lwFrame.contentWindow : null, LC = W && W.LightweightCharts;
   if (!LC) return;
+  const hair = { color: 'rgba(147,167,166,0.55)', width: 1, style: LC.LineStyle.Dashed, labelBackgroundColor: '#26393f' };
   lw = LC.createChart(W.document.getElementById('c'), {
-    autoSize: true, layout: { background: { type: 'solid', color: '#16252a' }, textColor: '#9fb3b7', fontFamily: getComputedStyle(document.body).fontFamily },
-    grid: { vertLines: { color: 'rgba(120,150,155,0.10)' }, horzLines: { color: 'rgba(120,150,155,0.10)' } },
-    rightPriceScale: { borderColor: '#2a3a3f' }, timeScale: { borderColor: '#2a3a3f', timeVisible: true, secondsVisible: false, rightOffset: 8 },
-    crosshair: { mode: LC.CrosshairMode.Normal }, handleScroll: true, handleScale: true
+    autoSize: true, layout: { background: { type: 'solid', color: '#0e181b' }, textColor: '#8fa3a6', fontSize: 11, fontFamily: getComputedStyle(document.body).fontFamily },
+    grid: { vertLines: { color: 'rgba(120,150,155,0.06)' }, horzLines: { color: 'rgba(120,150,155,0.06)' } },
+    rightPriceScale: { borderColor: '#22333a', minimumWidth: 72 }, timeScale: { borderColor: '#22333a', timeVisible: true, secondsVisible: false, rightOffset: 8, minBarSpacing: 1.5 },
+    crosshair: { mode: LC.CrosshairMode.Normal, vertLine: hair, horzLine: hair }, handleScroll: true, handleScale: true
   });
-  lwSeries = lw.addCandlestickSeries({ upColor: '#6fd3b8', downColor: '#ff7b70', borderVisible: false, wickUpColor: '#6fd3b8', wickDownColor: '#ff7b70' });
+  lw.applyOptions({ layout: { panes: { separatorColor: '#1d2c31', separatorHoverColor: 'rgba(240,164,58,0.25)', enableResize: true } } });
+  lwLC = LC;
+  lwSeries = lw.addSeries(LC.CandlestickSeries, { upColor: '#3fbf9f', downColor: '#ef5f56', borderUpColor: '#3fbf9f', borderDownColor: '#ef5f56', wickUpColor: '#3fbf9f', wickDownColor: '#ef5f56' });
+  lwMk = LC.createSeriesMarkers(lwSeries, []);
+  lwWm = LC.createTextWatermark(lw.panes()[0], { horzAlign: 'center', vertAlign: 'center', lines: [{ text: '', color: 'rgba(147,167,166,0.06)', fontSize: 56 }] });
+  lw.subscribeCrosshairMove(p => { const i = p && p.time !== undefined ? lwIdx.get(p.time) : undefined; const n = i === undefined ? null : i; if (n !== ohlcAt) { ohlcAt = n; ohlcRender(); } });
+  indBuild();
   lwDragSetup(W);
-  lw.subscribeClick(p => { if (!p.point || Date.now() - lwNoClick < 500) return; const px = lwSeries.coordinateToPrice(p.point.y); if (px === null) return; const t = /GC/.test(chartSym) ? 0.1 : 0.25; $('tkPx').value = (Math.round(px / t) * t).toFixed(/GC/.test(chartSym) ? 1 : 2); $('tkMsg').textContent = 'Limit price set from the chart. Clear it for a market order.'; });
+  lw.subscribeClick(p => { if (!p.point || (p.paneIndex || 0) !== 0 || Date.now() - lwNoClick < 500) return; const px = lwSeries.coordinateToPrice(p.point.y); if (px === null) return; const t = /GC/.test(chartSym) ? 0.1 : 0.25; $('tkPx').value = (Math.round(px / t) * t).toFixed(/GC/.test(chartSym) ? 1 : 2); $('tkMsg').textContent = 'Limit price set from the chart. Clear it for a market order.'; });
 }
 // ---------- trades on the chart: drag a stop / target (or a working limit's entry) to move it at the broker ----------
 let lwMeta = [], lwDrag = null, lwNoClick = 0;
 const chartTick = () => (/GC/.test(chartSym) ? 0.1 : 0.25), chartFmt = n => n.toFixed(/GC/.test(chartSym) ? 1 : 2);
 function lwHit(y) {
   let best = null, bd = 7;
+  if (y > lw.panes()[0].getHeight()) return null;
   for (const m of lwMeta) { if (!m.drag) continue; const c = lwSeries.priceToCoordinate(m.price); if (c === null) continue; const d = Math.abs(c - y); if (d < bd) { bd = d; best = m; } }
   return best;
 }
@@ -662,7 +674,7 @@ async function lwMoved(d) {
 }
 /** Entry arrows and exit dots for trades on this market (open ones and the journal's closed ones). */
 function lwMarkers(closed, lines) {
-  const data = lwSeries.data(); if (!data.length) { lwSeries.setMarkers([]); return; }
+  const data = lwSeries.data(); if (!data.length) { lwMk.setMarkers([]); return; }
   const snap = ms => { const s = nySec(ms); if (s < data[0].time) return null; let lo = 0, hi = data.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (data[mid].time <= s) lo = mid; else hi = mid - 1; } return data[lo].time; };
   const mk = [];
   const entry = (t, dir, text) => { const time = snap(t); if (time !== null) mk.push({ time, position: dir === 'long' ? 'belowBar' : 'aboveBar', color: dir === 'long' ? '#6fd3b8' : '#ff7b70', shape: dir === 'long' ? 'arrowUp' : 'arrowDown', text }); };
@@ -673,7 +685,7 @@ function lwMarkers(closed, lines) {
       text: t.pnl === null ? 'exit' : `${t.pnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(t.pnl))}` });
   }
   for (const l of lines) if (l.opened) entry(l.opened, l.side === 'buy' ? 'long' : 'short', `${l.name} ${l.side === 'buy' ? 'B' : 'S'}${l.qty}`);
-  mk.sort((a, b) => a.time - b.time); lwSeries.setMarkers(mk);
+  mk.sort((a, b) => a.time - b.time); lwMk.setMarkers(mk);
 }
 function lwPriceLines(lines) {
   if (lwDrag) return;                                  // never redraw under the mouse
@@ -695,7 +707,8 @@ function lwPriceLines(lines) {
   if (!lines.length) leg.append(el('p', 'empty', 'No open trades on this market. Entry, target and stop lines show on the chart when the bot opens one.'));
 }
 $('cSym').onchange = () => { chartSym = $('cSym').value; drawLive(); };
-document.querySelectorAll('#cTf button').forEach(b => { b.onclick = () => { chartTf = b.dataset.tf; document.querySelectorAll('#cTf button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); drawLive(); }; });
+const tfPress = () => document.querySelectorAll('#cTf button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.tf === chartTf)));
+document.querySelectorAll('#cTf button').forEach(b => { b.onclick = () => { chartTf = b.dataset.tf; store_.set('keel.chart.tf', chartTf); tfPress(); drawLive(); }; });
 // ---------- trading from the chart ----------
 let tkSel = null, tkCan = false;
 async function tkRender() {
@@ -746,9 +759,11 @@ function lwLiveUpdate(tick, now) {
   if (!tick || lwStale || !lwSeries) return;
   const data = lwSeries.data(); if (!data.length) return;
   const lastBar = data[data.length - 1], period = (TF_MS[chartTf] || 3e5) / 1000, tSec = nySec(tick.ts);
-  if (chartTf !== 'day' && tSec >= lastBar.time + period) lwSeries.update({ time: lastBar.time + Math.floor((tSec - lastBar.time) / period) * period, open: tick.price, high: tick.price, low: tick.price, close: tick.price });
-  else if (tSec >= lastBar.time || chartTf === 'day') lwSeries.update({ ...lastBar, high: Math.max(lastBar.high, tick.price), low: Math.min(lastBar.low, tick.price), close: tick.price });
-  $('cLast').textContent = `${chartSym}  ${tick.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  let nb = null;
+  if (chartTf !== 'day' && tSec >= lastBar.time + period) nb = { time: lastBar.time + Math.floor((tSec - lastBar.time) / period) * period, open: tick.price, high: tick.price, low: tick.price, close: tick.price };
+  else if (tSec >= lastBar.time || chartTf === 'day') nb = { ...lastBar, high: Math.max(lastBar.high, tick.price), low: Math.min(lastBar.low, tick.price), close: tick.price };
+  if (nb) { lwSeries.update(candle(nb)); barsPut(nb); indApply(); }
+  lastShow(tick.price);
 }
 async function drawLive() {
   if (!cat || lwBusy) return;
@@ -759,26 +774,198 @@ async function drawLive() {
   lwBusy = true;
   try {
     const r = await window.keel.chartHist(chartSym, chartTf, full ? (chartTf === 'day' ? 600 : 2000) : 3);
-    if (!r || !r.ok) { if (full) { lwSeries.setData([]); lwKey = ''; } $('cLast').textContent = chartSym; $('cLegend').replaceChildren(el('p', 'empty', r ? r.error : 'Start the bot or pick an account.')); return; }
+    if (!r || !r.ok) { if (full) { lwSeries.setData([]); barsSet([]); indApply(); lwKey = ''; } lastShow(null); $('cLegend').replaceChildren(el('p', 'empty', r ? r.error : 'Start the bot or pick an account.')); return; }
     const data = r.bars.filter(b => [b.t, b.o, b.h, b.l, b.c].every(Number.isFinite) && b.h >= b.l).map(toBar).sort((x, y) => x.time - y.time)
       .filter((x, i, a) => i === a.length - 1 || x.time !== a[i + 1].time);   // one bar per time (the newest wins)
     if (full) {
-      lwSeries.setData(data); lwKey = key; lwN = data.length;
+      lwSeries.setData(data.map(candle)); barsSet(data); lwKey = key; lwN = data.length; ohlcAt = null;
       lwSeries.applyOptions({ priceFormat: { type: 'price', precision: /GC/.test(chartSym) ? 1 : 2, minMove: /GC/.test(chartSym) ? 0.1 : 0.25 } });
+      lwWm.applyOptions({ lines: [{ text: `${chartSym} · ${TF_NAME[chartTf] || ''}`, color: 'rgba(147,167,166,0.06)', fontSize: 56 }] }); indBuild();
       const show = () => lw.timeScale().setVisibleLogicalRange({ from: Math.max(0, data.length - 150), to: data.length + 8 });
       show(); requestAnimationFrame(show); setTimeout(show, 120);   // again once the chart knows its width
     } else {
       const lastT = lwSeries.data().length ? lwSeries.data()[lwSeries.data().length - 1].time : 0;
-      for (const bar of data) if (bar.time >= lastT) { lwSeries.update(bar); if (bar.time > lastT) lwN++; }
+      for (const bar of data) if (bar.time >= lastT) { lwSeries.update(candle(bar)); barsPut(bar); if (bar.time > lastT) lwN++; }
+      indApply();
     }
     lwLast = Date.now();
     const lastBar = data[data.length - 1];
-    $('cLast').textContent = lastBar ? `${chartSym}  ${lastBar.close.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : chartSym;
+    lastShow(lastBar ? lastBar.close : null);
     lwPriceLines(r.lines || []); lwMarkers(r.closed || [], r.lines || []); lwLiveUpdate(r.tick, Date.now());
   } catch (err) { $('cLegend').replaceChildren(el('p', 'empty', String(err.message || err))); }
   finally { lwBusy = false; }
 }
 
+// ---------- indicators (drawn on the chart, saved on this PC) ----------
+const IND_TYPES = {
+  sma: { name: 'SMA', params: [['Length', 20]] },
+  ema: { name: 'EMA', params: [['Length', 21]] },
+  vwap: { name: 'VWAP', params: [] },
+  bb: { name: 'Bollinger Bands', short: 'BB', params: [['Length', 20], ['StdDev', 2]] },
+  vol: { name: 'Volume', short: 'Vol', params: [] },
+  rsi: { name: 'RSI', params: [['Length', 14]], osc: true },
+  macd: { name: 'MACD', params: [['Fast', 12], ['Slow', 26], ['Signal', 9]], osc: true },
+  atr: { name: 'ATR', params: [['Length', 14]], osc: true }
+};
+const IND_COLORS = ['#4fc3f7', '#f0a43a', '#c792ea', '#ffd54f', '#81c784', '#f06292', '#90a4ae'];
+const IND_DEFAULT = [{ t: 'vol' }, { t: 'ema', p: [9], c: '#4fc3f7' }, { t: 'ema', p: [21], c: '#f0a43a' }, { t: 'vwap', c: '#c792ea' }];
+const store_ = { get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* not saved */ } } };
+let indSeq = 0;
+const indNorm = x => { const T = IND_TYPES[x && x.t]; if (!T) return null;
+  const p = T.params.map(([, d], i) => { const v = Number(x.p && x.p[i]); return Number.isFinite(v) && v > 0 ? Math.min(500, v) : d; });
+  return { id: ++indSeq, t: x.t, p, c: /^#[0-9a-f]{6}$/i.test(x.c || '') ? x.c : IND_COLORS[indSeq % IND_COLORS.length] }; };
+let inds = (Array.isArray(store_.get('keel.chart.inds', null)) ? store_.get('keel.chart.inds', null) : IND_DEFAULT).map(indNorm).filter(Boolean).slice(0, 12);
+const indSave = () => store_.set('keel.chart.inds', inds.map(({ t, p, c }) => ({ t, p, c })));
+const indLabel = d => { const T = IND_TYPES[d.t]; return (T.short || T.name) + (d.p.length ? ' ' + d.p.join(' ') : ''); };
+let lwBars = [], lwIdx = new Map(), indSer = [], indOut = [], ohlcAt = null;
+
+// --- maths: every function returns one value per bar (null while warming up) ---
+function smaA(v, n) { const o = new Array(v.length).fill(null); let s = 0; for (let i = 0; i < v.length; i++) { s += v[i]; if (i >= n) s -= v[i - n]; if (i >= n - 1) o[i] = s / n; } return o; }
+function emaA(v, n) { const o = new Array(v.length).fill(null), k = 2 / (n + 1); let e = null, s = 0, c = 0;
+  for (let i = 0; i < v.length; i++) { if (v[i] === null) continue; if (e === null) { s += v[i]; c++; if (c === n) { e = s / n; o[i] = e; } } else { e = v[i] * k + e * (1 - k); o[i] = e; } } return o; }
+function wilder(v, n) { const o = new Array(v.length).fill(null); let a = null, s = 0;
+  for (let i = 0; i < v.length; i++) { if (a === null) { s += v[i]; if (i === n - 1) { a = s / n; o[i] = a; } } else { a = (a * (n - 1) + v[i]) / n; o[i] = a; } } return o; }
+function rsiA(c, n) { const g = [0], l = [0]; for (let i = 1; i < c.length; i++) { const d = c[i] - c[i - 1]; g.push(Math.max(d, 0)); l.push(Math.max(-d, 0)); }
+  const ag = wilder(g.slice(1), n), al = wilder(l.slice(1), n); return [null, ...ag.map((x, i) => (x === null ? null : al[i] === 0 ? 100 : 100 - 100 / (1 + x / al[i])))]; }
+function atrA(b, n) { return wilder(b.map((x, i) => (i ? Math.max(x.high - x.low, Math.abs(x.high - b[i - 1].close), Math.abs(x.low - b[i - 1].close)) : x.high - x.low)), n); }
+function vwapA(b) { const o = []; let key = null, pv = 0, vv = 0;
+  for (const x of b) { const k = Math.floor((x.time - 18 * 3600) / 86400); if (k !== key) { key = k; pv = 0; vv = 0; }   // new session at 6 PM New York
+    const tp = (x.high + x.low + x.close) / 3, v = x.v || 0; pv += tp * v; vv += v; o.push(vv > 0 ? pv / vv : tp); } return o; }
+function indCalc(d, b) {
+  const c = b.map(x => x.close), C = d.c, P = d.p;
+  switch (d.t) {
+    case 'sma': return [{ k: 'line', color: C, vals: smaA(c, P[0]) }];
+    case 'ema': return [{ k: 'line', color: C, vals: emaA(c, P[0]) }];
+    case 'vwap': return [{ k: 'line', color: C, vals: chartTf === 'day' ? c.map(() => null) : vwapA(b) }];
+    case 'bb': { const m = smaA(c, P[0]), sd = m.map((x, i) => { if (x === null) return null; let s = 0; for (let j = i - P[0] + 1; j <= i; j++) s += (c[j] - x) ** 2; return Math.sqrt(s / P[0]); });
+      return [{ k: 'line', color: C, vals: m, name: 'basis' }, { k: 'line', color: C + '99', vals: m.map((x, i) => (x === null ? null : x + P[1] * sd[i])), name: 'upper' }, { k: 'line', color: C + '99', vals: m.map((x, i) => (x === null ? null : x - P[1] * sd[i])), name: 'lower' }]; }
+    case 'vol': return [{ k: 'vol', vals: b.map(x => x.v || 0), colors: b.map(x => (x.close >= x.open ? 'rgba(63,191,159,0.38)' : 'rgba(239,95,86,0.38)')) }];
+    case 'rsi': return [{ k: 'line', color: C, vals: rsiA(c, P[0]) }];
+    case 'atr': return [{ k: 'line', color: C, vals: atrA(b, P[0]) }];
+    case 'macd': { const f = emaA(c, P[0]), s = emaA(c, P[1]), m = f.map((x, i) => (x === null || s[i] === null ? null : x - s[i])), sg = emaA(m, P[2]);
+      return [{ k: 'hist', vals: m.map((x, i) => (x === null || sg[i] === null ? null : x - sg[i])), name: 'hist' }, { k: 'line', color: C, vals: m, name: 'macd' }, { k: 'line', color: '#f0a43a', vals: sg, name: 'signal' }]; }
+  }
+  return [];
+}
+
+// --- layout: volume sits under the candles; each oscillator (RSI, MACD, ATR) gets its own pane with its own scale ---
+function indLayout() {
+  if (!lw) return;
+  const hasVol = inds.some(d => d.t === 'vol');
+  lw.priceScale('right', 0).applyOptions({ scaleMargins: { top: 0.07, bottom: hasVol ? 0.16 : 0.05 } });
+  if (hasVol) lw.priceScale('vol', 0).applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+  const panes = lw.panes(); panes.forEach((p, i) => p.setStretchFactor(i === 0 ? 1 : 0.26));
+  for (let i = 1; i < panes.length; i++) lw.priceScale('right', i).applyOptions({ scaleMargins: { top: 0.12, bottom: 0.08 } });
+}
+/** Recreates the indicator series (after one is added, removed or changed). */
+function indBuild() {
+  if (!lw) return;
+  for (const s of indSer) for (const x of s.list) lw.removeSeries(x);
+  indSer = []; while (lw.panes().length > 1) lw.removePane(lw.panes().length - 1);
+  let pane = 0;
+  const prec = /GC/.test(chartSym) ? 1 : 2, base = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+  for (const d of inds) {
+    const T = IND_TYPES[d.t], scale = d.t === 'vol' ? 'vol' : 'right', list = [], at = T.osc ? ++pane : 0;
+    const fmt = d.t === 'vol' ? { type: 'volume' } : T.osc ? { type: 'price', precision: 2, minMove: 0.01 } : { type: 'price', precision: prec, minMove: prec === 1 ? 0.1 : 0.25 };
+    for (const part of indCalc(d, lwBars.length ? lwBars.slice(-3) : [])) {
+      const opt = { ...base, priceScaleId: scale, priceFormat: fmt };
+      list.push(part.k === 'line' ? lw.addSeries(lwLC.LineSeries, { ...opt, color: part.color, lineWidth: part.name === 'upper' || part.name === 'lower' ? 1 : 2 }, at)
+        : lw.addSeries(lwLC.HistogramSeries, { ...opt, color: part.k === 'vol' ? 'rgba(147,167,166,0.35)' : '#5b7178' }, at));
+    }
+    if (d.t === 'rsi') for (const lv of [70, 30]) list[0].createPriceLine({ price: lv, color: 'rgba(147,167,166,0.45)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: '' });
+    if (d.t === 'macd') list[1].createPriceLine({ price: 0, color: 'rgba(147,167,166,0.3)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: '' });
+    indSer.push({ d, list, pane: at });
+  }
+  indLayout(); indApply();
+}
+/** Recomputes every indicator from the bars on the chart. */
+function indApply() {
+  if (!lw) return;
+  indOut = [];
+  for (const s of indSer) {
+    const parts = indCalc(s.d, lwBars); indOut.push({ d: s.d, parts });
+    parts.forEach((p, j) => {
+      const ser = s.list[j]; if (!ser) return;
+      const pts = [];
+      for (let i = 0; i < lwBars.length; i++) { const v = p.vals[i]; if (v === null || !Number.isFinite(v)) continue;
+        pts.push(p.k === 'vol' ? { time: lwBars[i].time, value: v, color: p.colors[i] } : p.k === 'hist' ? { time: lwBars[i].time, value: v, color: v >= 0 ? 'rgba(63,191,159,0.6)' : 'rgba(239,95,86,0.6)' } : { time: lwBars[i].time, value: v }); }
+      ser.setData(pts);
+    });
+  }
+  ohlcRender();
+}
+/** Keeps a copy of the bars (with volume) in step with the candles. */
+function barsSet(data) { lwBars = data.slice(); lwIdx = new Map(lwBars.map((b, i) => [b.time, i])); }
+function barsPut(bar) {
+  const last = lwBars[lwBars.length - 1];
+  if (last && bar.time === last.time) lwBars[lwBars.length - 1] = { ...last, ...bar, v: bar.v ?? last.v };
+  else if (!last || bar.time > last.time) { lwBars.push({ v: 0, ...bar }); lwIdx.set(bar.time, lwBars.length - 1); }
+}
+
+// --- the legend in the chart's corner: OHLC of the bar under the mouse (or the latest), and each indicator's value ---
+const pxFmt = n => n.toLocaleString(undefined, { minimumFractionDigits: /GC/.test(chartSym) ? 1 : 2, maximumFractionDigits: /GC/.test(chartSym) ? 1 : 2 });
+const volFmt = n => (n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'K' : String(Math.round(n)));
+const TF_NAME = { min1: '1m', min5: '5m', min15: '15m', hour: '1h', hour4: '4h', day: 'D' };
+function ohlcRender() {
+  const box = $('cOhlc'); if (!box) return;
+  box.replaceChildren(); document.querySelectorAll('.tchart .osclab').forEach(x => x.remove());
+  if (!lwBars.length) return;
+  const i = ohlcAt !== null && ohlcAt < lwBars.length ? ohlcAt : lwBars.length - 1, b = lwBars[i], prev = i ? lwBars[i - 1].close : b.open, ch = b.close - prev;
+  const r1 = el('div', 'ol1'); r1.append(el('b', '', chartSym), el('span', 'oltf', TF_NAME[chartTf] || ''));
+  for (const [k, v] of [['O', b.open], ['H', b.high], ['L', b.low], ['C', b.close]]) { const s = el('span', 'olv'); s.append(el('i', '', k), document.createTextNode(pxFmt(v))); r1.append(s); }
+  r1.append(el('span', ch >= 0 ? 'pos' : 'neg', `${ch >= 0 ? '+' : '−'}${pxFmt(Math.abs(ch))} (${ch >= 0 ? '+' : '−'}${Math.abs(prev ? ch / prev * 100 : 0).toFixed(2)}%)`));
+  if (b.v) { const s = el('span', 'olv'); s.append(el('i', '', 'Vol'), document.createTextNode(volFmt(b.v))); r1.append(s); }
+  box.append(r1);
+  const tch = box.parentElement, psw = lw ? lw.priceScale('right').width() : 60, panes = lw ? lw.panes() : [];
+  for (const o of indOut) {
+    if (o.d.t === 'vol') continue;
+    const T = IND_TYPES[o.d.t], row = el('div', 'ol2'), name = el('span', 'olname', indLabel(o.d)); name.style.color = o.d.c; row.append(name);
+    for (const p of o.parts) { const v = p.vals[i]; const s = el('span', 'olv', v === null || v === undefined ? '—' : T.osc ? v.toFixed(2) : pxFmt(v)); if (p.color) s.style.color = p.color.slice(0, 7); row.append(s); }
+    if (!T.osc) { box.append(row); continue; }
+    const pi = (indSer.find(x => x.d === o.d) || {}).pane || 0; let top = 0; for (let j = 0; j < pi && j < panes.length; j++) top += panes[j].getHeight() + 1;
+    row.className = 'osclab'; row.style.top = top + 'px'; row.style.right = psw + 'px'; tch.append(row);
+  }
+}
+function lastShow(price) {
+  const box = $('cLast'); box.replaceChildren(); if (typeof price !== 'number') { box.textContent = chartSym; return; }
+  // change since the previous session's close (sessions start at 6 PM New York; on the daily chart: since yesterday)
+  let ref = null; const n = lwBars.length;
+  if (n) { if (chartTf === 'day') ref = n > 1 ? lwBars[n - 2].close : null;
+    else { const key = t => Math.floor((t - 18 * 3600) / 86400), k = key(lwBars[n - 1].time); for (let j = n - 1; j >= 0; j--) if (key(lwBars[j].time) < k) { ref = lwBars[j].close; break; } } }
+  box.append(el('b', '', `${chartSym}  ${pxFmt(price)}`));
+  if (ref) { const ch = price - ref; box.append(el('span', ch >= 0 ? 'pos' : 'neg', ` ${ch >= 0 ? '+' : '−'}${pxFmt(Math.abs(ch))}  ${ch >= 0 ? '+' : '−'}${Math.abs(ch / ref * 100).toFixed(2)}%`)); }
+}
+
+// --- the Indicators menu ---
+function indMenu() {
+  const on = $('cIndOn'); on.replaceChildren();
+  if (!inds.length) on.append(el('p', 'empty', 'None yet. Add one below.'));
+  for (const d of inds) {
+    const T = IND_TYPES[d.t], row = el('div', 'indrow');
+    const col = el('input'); col.type = 'color'; col.value = d.c; col.title = 'Colour'; col.setAttribute('aria-label', indLabel(d) + ' colour');
+    col.oninput = () => { d.c = col.value; indSave(); indBuild(); };
+    if (d.t === 'vol') col.disabled = true;
+    row.append(col, el('span', 'indname', T.name));
+    T.params.forEach(([lab], j) => { const inp = el('input'); inp.type = 'number'; inp.min = j === 1 && d.t === 'bb' ? '0.5' : '1'; inp.step = d.t === 'bb' && j === 1 ? '0.5' : '1'; inp.max = '500'; inp.value = String(d.p[j]); inp.title = lab; inp.setAttribute('aria-label', `${T.name} ${lab}`);
+      inp.onchange = () => { const v = Number(inp.value); if (v > 0 && v <= 500) { d.p[j] = d.t === 'bb' && j === 1 ? v : Math.round(v); indSave(); indBuild(); } inp.value = String(d.p[j]); }; row.append(inp); });
+    const x = el('button', 'tbtn indx', '×'); x.type = 'button'; x.title = 'Remove'; x.setAttribute('aria-label', 'Remove ' + indLabel(d));
+    x.onclick = () => { inds = inds.filter(y => y !== d); indSave(); indBuild(); indMenu(); };
+    row.append(x); on.append(row);
+  }
+  const add = $('cIndAdd'); add.replaceChildren();
+  for (const [t, T] of Object.entries(IND_TYPES)) {
+    if (t === 'vol' && inds.some(d => d.t === 'vol')) continue;
+    const b = el('button', 'tbtn', '+ ' + T.name); b.type = 'button'; b.disabled = inds.length >= 12;
+    b.onclick = () => { const used = new Set(inds.map(d => d.c)); const d = indNorm({ t, c: IND_COLORS.find(c => !used.has(c)) }); inds.push(d); indSave(); indBuild(); indMenu(); };
+    add.append(b);
+  }
+}
+$('cIndBtn').onclick = ev => { ev.stopPropagation(); const m = $('cIndMenu'), open = m.hidden; m.hidden = !open; $('cIndBtn').setAttribute('aria-expanded', String(open)); if (open) indMenu(); };
+document.addEventListener('click', ev => { const m = $('cIndMenu'); const path = ev.composedPath(); if (!m.hidden && !path.includes(m) && !path.includes($('cIndBtn'))) { m.hidden = true; $('cIndBtn').setAttribute('aria-expanded', 'false'); } });
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !$('cIndMenu').hidden) { $('cIndMenu').hidden = true; $('cIndBtn').setAttribute('aria-expanded', 'false'); $('cIndBtn').focus(); } });
+document.querySelectorAll('.stepper [data-step]').forEach(b => { b.onclick = () => { const q = $('tkQty'); q.value = String(Math.max(1, Math.min(100, (Number(q.value) || 1) + Number(b.dataset.step)))); }; });
+
+{ const t = store_.get('keel.chart.tf', ''); if (TF_MS[t]) { chartTf = t; tfPress(); } }   // the timeframe you last used
 // ---------- backtest ----------
 function fillBtStrats() {
   const sel = $('btStrat'), keep = sel.value;
@@ -1008,6 +1195,7 @@ function mixList() {
   const out = [{ ...recRow, label: 'Recommended' }];
   const fastest = rows.filter(r => r.pass_pct >= 0.85 && r.xfa_first_payout_pct >= 0.8).sort((a, b) => a.median_days_to_pass - b.median_days_to_pass)[0];
   if (fastest && fastest.strategies !== recRow.strategies) out.push({ ...fastest, label: 'Fastest pass' });
+  for (const m of PINNED_MIXES) if (!out.some(o => o.strategies === m)) { const r = rows.find(x => x.strategies === m) || R.mixes.find(x => x.strategies === m); if (r) out.push({ ...r, label: 'Pinned' }); }
   for (const r of rows.slice(0, 15)) if (!out.some(o => o.strategies === r.strategies)) out.push({ ...r, label: '' });
   return out;
 }

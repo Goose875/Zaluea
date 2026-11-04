@@ -17,7 +17,7 @@
     "@types/ws": "^8.18.2",
     "electron": "^38.0.0",
     "electron-builder": "^25.0.0",
-    "lightweight-charts": "^4.2.3",
+    "lightweight-charts": "^5.2.1",
     "typescript": "^5.6.0"
   },
   "build": {

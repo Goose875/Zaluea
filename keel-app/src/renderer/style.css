@@ -93,14 +93,13 @@ button.danger-text { color:var(--flare); border-color:#5a2f2b; }
 .chart .lim { stroke:var(--flare); stroke-dasharray:5 5; }
 .chart .line { fill:none; stroke:var(--amber); stroke-width:2.5; stroke-linejoin:round; stroke-linecap:round; }
 .chart text { fill:var(--fog); font:9px var(--gauge); }
-.cbox { margin-top:12px; } .cbox.lw { height:560px; position:relative; } @media (max-width:900px) { .cbox.lw { height:420px; } }
+.cbox { margin-top:12px; }
 button.small { min-height:34px; }
 .cbox .grid { stroke:var(--line); }
 .cbox .ax { fill:var(--fog); font:10px var(--gauge); }
 .cbox .up { fill:var(--sea); stroke:var(--sea); } .cbox .dn { fill:var(--flare); stroke:var(--flare); }
 .cbox .lvl { stroke-width:1.5; } .cbox .entry { stroke:var(--amber); } .cbox .tp { stroke:var(--sea); stroke-dasharray:6 4; } .cbox .sl { stroke:var(--flare); stroke-dasharray:6 4; }
 .cbox .tag text { font:600 10px var(--gauge); fill:#0d1416; }
-.clast { font-size:22px; }
 .clegend { display:flex; flex-direction:column; gap:6px; margin-top:12px; font-size:14px; }
 .clegend .row2 { display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
 .dot { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; }
@@ -290,3 +289,56 @@ dialog#jDlg::backdrop { background:rgba(0,0,0,.55); }
 .fgrid4 .end { display:flex; align-items:flex-end; }
 .porules { margin-top:14px; } .porules summary { cursor:pointer; color:var(--fog); }
 @media (max-width:700px) { .jcards { grid-template-columns:1fr 1fr; } }
+
+/* chart page: a trading terminal */
+.term { background:#0e181b; border:1px solid var(--line); border-radius:10px; overflow:hidden; display:flex; flex-direction:column; }
+.tbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:6px 10px; border-bottom:1px solid #1d2c31; background:#121e22; }
+.tbar .grow { flex:1; }
+.tsep { width:1px; align-self:stretch; background:#22333a; margin:2px 2px; }
+.tsym { width:auto; min-width:110px; font:600 14px var(--gauge); background:#0e181b; border-color:#22333a; padding:5px 8px; min-height:32px; }
+.tbtn { background:transparent; color:var(--fog); border:1px solid transparent; min-height:30px; padding:4px 10px; font:600 13px var(--text); border-radius:6px; }
+.tbtn:hover:not(:disabled) { background:#1b2b30; color:var(--chalk); filter:none; }
+.tbtn[aria-expanded=true] { background:#1b2b30; color:var(--chalk); border-color:#2a3d43; }
+.tbtn .fx { font-style:italic; font-family:Georgia, serif; color:var(--amber); margin-right:2px; }
+.tf { display:flex; gap:2px; }
+.tf button { background:transparent; color:var(--fog); border:0; min-height:30px; min-width:0; padding:4px 9px; font:600 13px var(--gauge); border-radius:6px; }
+.tf button:hover { background:#1b2b30; color:var(--chalk); filter:none; }
+.tf button[aria-pressed=true] { background:#1b2b30; color:var(--amber); }
+.clast { font:600 15px var(--gauge); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.clast b { font-weight:600; } .clast span { font-size:13px; margin-left:6px; }
+.tbody { display:grid; grid-template-columns:minmax(0,1fr) 270px; min-height:0; }
+.tchart { position:relative; min-width:0; border-right:1px solid #1d2c31; }
+.tchart .cbox.lw { margin:0; height:calc(100vh - 250px); min-height:460px; max-height:900px; position:relative; }
+.ohlc { position:absolute; left:10px; top:6px; right:90px; pointer-events:none; font:12px var(--gauge); font-variant-numeric:tabular-nums; color:var(--fog); display:flex; flex-direction:column; gap:2px; }
+.ol1, .ol2, .osclab { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; }
+.ol1 b { color:var(--chalk); font-size:13px; } .oltf { color:var(--dim); }
+.olv { color:var(--chalk); } .olv i { font-style:normal; color:var(--dim); margin-right:3px; }
+.olname { font-weight:600; }
+.osclab { position:absolute; left:0; padding:3px 10px 0; pointer-events:none; font:12px var(--gauge); font-variant-numeric:tabular-nums; }
+.indwrap { position:relative; }
+.indmenu { position:absolute; z-index:30; top:calc(100% + 6px); left:0; width:min(380px, 86vw); background:#14232a; border:1px solid #2a3d43; border-radius:8px; padding:10px 12px 12px; box-shadow:0 10px 30px rgba(0,0,0,.45); }
+.indh { font:600 11px var(--gauge); letter-spacing:.08em; text-transform:uppercase; color:var(--dim); margin:4px 0 6px; }
+.indon { display:flex; flex-direction:column; gap:4px; margin-bottom:8px; }
+.indrow { display:flex; align-items:center; gap:6px; }
+.indrow .indname { flex:1; font-size:13px; }
+.indrow input[type=number] { width:58px; min-height:28px; padding:2px 6px; font-size:13px; }
+.indrow input[type=color] { width:24px; height:24px; padding:0; border:1px solid #2a3d43; border-radius:4px; background:none; cursor:pointer; }
+.indrow input[type=color]:disabled { opacity:.3; cursor:default; }
+.indx { min-height:26px; padding:0 8px; font-size:16px; }
+.indadd { display:flex; flex-wrap:wrap; gap:4px; } .indadd .tbtn { border-color:#22333a; font-size:12px; }
+.ticket { padding:12px 12px 14px; display:flex; flex-direction:column; gap:4px; background:#111d21; min-width:0; }
+.ticket label { font-size:12px; color:var(--fog); margin-top:6px; }
+.ticket input { min-height:34px; }
+.tkbig { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.tkbig button { min-width:0; min-height:48px; font:700 16px var(--gauge); letter-spacing:.03em; border-radius:6px; }
+.stepper { display:flex; gap:4px; } .stepper input { flex:1; min-width:0; width:auto; text-align:center; } .stepper .tbtn { flex:0 0 34px; min-width:0; border-color:#22333a; font-size:16px; padding:0; }
+.tk2 { display:grid; grid-template-columns:1fr 1fr; gap:6px; } .tk2 > div { display:flex; flex-direction:column; min-width:0; }
+.ticket .tkaccts { flex-direction:column; gap:6px; margin:0 0 6px; font-size:13px; } .ticket label.check { margin:0; font-size:13px; color:var(--chalk); }
+.tkflat { margin-top:4px; }
+.tkhint { margin-top:6px; font-size:12px; line-height:1.4; }
+.tpos { padding:10px 14px 14px; border-top:1px solid #1d2c31; }
+.tposh { display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.tposh h3 { font-size:14px; color:var(--fog); }
+.chelp summary { cursor:pointer; color:var(--dim); font-size:12px; } .chelp p { max-width:80ch; margin-top:6px; }
+.tpos .clegend { margin-top:8px; font-size:13px; }
+@media (max-width:1100px) { .tbody { grid-template-columns:1fr; } .tchart { border-right:0; border-bottom:1px solid #1d2c31; } .tchart .cbox.lw { height:440px; min-height:0; } }
