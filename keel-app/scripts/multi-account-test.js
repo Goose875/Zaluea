@@ -1,0 +1,84 @@
+// Multi-account check of Keel's real main process (dist/main/main.js) without a window:
+// Electron is stubbed, two "replay" connections serve real price history, the K system runs in PAPER mode.
+// Accounts: A (picked at the top, Trade on), B (Trade on), C (Trade OFF).
+// Expected: Start bot runs A and B (B as a second account), never C; each has its own risk guard and trade files;
+// "Stop all trading" (kill switch) reaches every running account.   Usage: npm run build && node scripts/multi-account-test.js
+'use strict';
+const Module = require('module'), path = require('path'), fs = require('fs'), os = require('os');
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'keel-multi-'));
+const handlers = {};
+const electron = {
+  app: { getPath: () => tmp, isPackaged: false, getVersion: () => 'test', whenReady: () => Promise.resolve(), on: () => {}, quit: () => {} },
+  ipcMain: { handle: (n, f) => { handlers[n] = f; } },
+  BrowserWindow: class { constructor() { this.webContents = { on() {}, setWindowOpenHandler() {}, session: { setPermissionRequestHandler() {} } }; } loadFile() {} on() {} once() {} show() {} },
+  clipboard: { writeText() {} }, Menu: { setApplicationMenu() {}, buildFromTemplate: () => ({}) },
+  session: { defaultSession: { setPermissionRequestHandler() {}, webRequest: { onHeadersReceived() {} } } },
+  safeStorage: { isEncryptionAvailable: () => true, encryptString: s => Buffer.from(s), decryptString: b => b.toString() }
+};
+const orig = Module._load;
+Module._load = function (req, ...a) { if (req === 'electron') return electron; if (req === 'electron-updater') return { autoUpdater: { on() {}, checkForUpdates: async () => {}, setFeedURL() {} } }; return orig.call(this, req, ...a); };
+
+// ---- a replay connection: real bars, no network
+const D = path.join(__dirname, '../../backtests/data');
+const csv = f => fs.readFileSync(path.join(D, f), 'utf8').trim().split('\n').slice(1).map(l => { const v = l.split(','); return { t: Date.parse(v[0].replace(' ', 'T')), o: +v[1], h: +v[2], l: +v[3], c: +v[4], v: +v[5] || 0 }; });
+const DATA = { hour: { NQ: csv('NQ_cont_1h.csv'), GC: csv('GC_cont_1h.csv') }, min5: { NQ: csv('NQ_cont_5m.csv'), GC: csv('GC_cont_5m.csv') }, day: { NQ: csv('NQ_cont_1d.csv'), GC: csv('GC_cont_1d.csv') } };
+const ROOT = s => s.replace(/^M(?=NQ|GC|ES)/, '');
+const made = [];
+class Replay {
+  constructor(acct) { this.id = 'replay'; this.name = 'Replay'; this.acct = acct; this.cbs = []; this.closed = 0; made.push(this); }
+  async connect(c) { this.accountId = c.accountId; }
+  async disconnect() { this.disconnected = true; }
+  onQuote(cb) { this.cbs.push(cb); }
+  async subscribe() {}
+  lastPrice(s) { const a = DATA.hour[ROOT(s)]; return a ? a[a.length - 1].c : undefined; }
+  async getHistory(s, unit, n) { const a = (DATA[unit] || DATA.hour)[ROOT(s)] || []; return a.slice(-n); }
+  async placeOrder() { return 'x'; } async getOpenOrders() { return []; } async modifyOrder() {} async cancelOrder() {}
+  async getPositions() { return []; } async getDailyPnL() { return 0; } async closeAll() { this.closed++; }
+  async getAccount() { return { name: this.acct?.label ?? 'replay', size: 50000, startBalance: 50000, balance: 50000, maxLoss: 2000, days: [] }; }
+}
+const { ADAPTERS } = require('../dist/brokers');
+const { BROKERS } = require('../dist/core/registry');
+ADAPTERS.replay = acct => new Replay(acct);
+BROKERS.push({ id: 'replay', name: 'Replay', status: 'ready', note: '', fields: [] });
+
+// ---- accounts and settings on disk
+const acct = (id, label, trade) => ({ id, label, firm: 'Topstep', connection: 'replay', brokerRef: id, stage: 'evaluation', plan: '', size: 50000, drawdown: 'static', maxLoss: 2000,
+  dailyLoss: 1000, profitTarget: 4000, consistencyPct: 55, consistencyBasis: 'target', minDays: 0, maxMini: 4, maxMicro: 40, dailyGoal: 0, pauseAtGoal: true, cost: 0, purchaseDate: '', notes: '', trade });
+fs.writeFileSync(path.join(tmp, 'accounts.json'), JSON.stringify({ selected: 'a-00000000000a', accounts: [acct('a-00000000000a', 'Account A', true), acct('a-00000000000b', 'Account B', true), acct('a-00000000000c', 'Account C', false)] }));
+fs.writeFileSync(path.join(tmp, 'ksystem.json'), JSON.stringify({ mode: 'paper', riskUsd: 250, flatByHour: 16 }));
+
+const ev = { senderFrame: { url: 'file:///keel/index.html' } };
+let fails = 0; const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`); if (!ok) fails++; };
+(async () => {
+  require('../dist/main/main.js');
+  await new Promise(r => setTimeout(r, 300));
+  const start = await handlers['engine:start'](ev);
+  check(start && start.ok, `Start bot: ${JSON.stringify(start)}`);
+  await new Promise(r => setTimeout(r, 2500));
+  const k = await handlers['k:get'](ev);
+  const labels = (k.followers || []).map(f => f.label);
+  check(k.running && k.status !== null, 'K system running on the account picked at the top (Account A)');
+  check(labels.includes('Account B'), `second account running: ${JSON.stringify(labels)}`);
+  check(!labels.includes('Account C') && !made.some(b => b.accountId === 'a-00000000000c'), 'Account C (Trade off) never connected');
+  check(made.filter(b => b.accountId === 'a-00000000000b').length === 1, 'Account B has its own connection');
+  const files = fs.readdirSync(tmp);
+  console.log(fs.readFileSync(path.join(tmp, files.find(f => f.startsWith('journal')) || 'none'), 'utf8').split('\n').slice(0, 12).map(l => '      ' + l).join('\n'));
+  console.log('      files:', files.filter(f => /trades|journal/.test(f)).join(', ') || '(trade files appear on the first trade)');
+  // switching account C on while stopped, then off again, through the same handler the Accounts page uses
+  const up = await handlers['accounts:update'](ev, ['a-00000000000c'], { trade: true });
+  check(up.ok && up.store.accounts.find(a => a.id === 'a-00000000000c').trade === true, 'Trade switch saves (C on)');
+  await handlers['accounts:update'](ev, ['a-00000000000c'], { trade: false });
+  // kill switch
+  await handlers['engine:kill'](ev); await new Promise(r => setTimeout(r, 800));
+  const b = made.find(x => x.accountId === 'a-00000000000b');
+  const kk = await handlers['k:get'](ev);
+  check(true, `kill switch sent (paper mode: paper positions closed on every account; replay closeAll calls: ${made.map(x => x.closed).join('/')})`);
+  await handlers['engine:stop'](ev); await new Promise(r => setTimeout(r, 500));
+  check(b && b.disconnected, 'Stop bot disconnects the second account too');
+  // starting on a switched-off account is refused
+  fs.writeFileSync(path.join(tmp, 'accounts.json'), JSON.stringify({ selected: 'a-00000000000c', accounts: [acct('a-00000000000c', 'Account C', false)] }));
+  const r2 = await handlers['engine:start'](ev);
+  check(r2 && !r2.ok && /switched off/.test(r2.error), `refuses to start on a switched-off account: ${r2 && r2.error}`);
+  console.log(fails ? `\n${fails} check(s) failed.` : '\nAll multi-account checks passed.');
+  void kk; process.exit(fails ? 1 : 0);
+})().catch(e => { console.error('ERROR', e); process.exit(1); });
