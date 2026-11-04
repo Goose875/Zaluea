@@ -256,6 +256,8 @@ button.small { min-height:30px; padding:4px 12px; font-size:13px; }
 .chat .a { align-self:flex-start; border:1px solid var(--line2); padding:8px 12px; border-radius:10px; max-width:90%; white-space:pre-wrap; line-height:1.5; }
 button.ghost { background:transparent; color:var(--chalk); border:1px solid var(--line2); }
 .mixrow input[type=text], .mixrow input[type=password] { flex:1; min-width:240px; }
+button.buy { background:#2f9e83; color:#04140f; min-width:110px; } button.sell { background:#e2645a; color:#1a0503; min-width:110px; }
+.tkaccts { display:flex; flex-wrap:wrap; gap:8px 18px; margin:6px 0 12px; }
 .navsep { margin:14px 12px 4px; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--fog); opacity:.7; }
 .mixrow { display:flex; gap:10px; flex-wrap:wrap; align-items:center; } .mixrow select { flex:1; min-width:280px; }
 details.more { margin-top:10px; } details.more summary { cursor:pointer; color:var(--fog); font-size:13px; margin-bottom:8px; }

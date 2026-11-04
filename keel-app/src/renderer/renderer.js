@@ -32,7 +32,7 @@ const selAcct = () => store.accounts.find(a => a.id === store.selected) || null;
 // ---------- navigation ----------
 let view = 'dash';
 function go(v) {
-  view = v; if (v === 'chart') requestAnimationFrame(() => requestAnimationFrame(drawLive)); if (v === 'test') fillBtStrats(); if (v === 'k') kLoad(); if (v === 'rank') rkLoad(); if (v === 'ai') aiLoad();
+  view = v; if (v === 'chart') { requestAnimationFrame(() => requestAnimationFrame(drawLive)); void tkRender(); } if (v === 'test') fillBtStrats(); if (v === 'k') kLoad(); if (v === 'rank') rkLoad(); if (v === 'ai') aiLoad();
   for (const k of Object.keys(TITLES)) $('v-' + k).hidden = k !== v;
   document.querySelectorAll('#nav button').forEach(b => { if (b.dataset.go === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   $('title').textContent = v === 'dash' ? greeting() : TITLES[v];
@@ -523,6 +523,7 @@ function lwEnsure() {
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal }, handleScroll: true, handleScale: true
   });
   lwSeries = lw.addCandlestickSeries({ upColor: '#6fd3b8', downColor: '#ff7b70', borderVisible: false, wickUpColor: '#6fd3b8', wickDownColor: '#ff7b70' });
+  lw.subscribeClick(p => { if (!p.point) return; const px = lwSeries.coordinateToPrice(p.point.y); if (px === null) return; const t = /GC/.test(chartSym) ? 0.1 : 0.25; $('tkPx').value = (Math.round(px / t) * t).toFixed(/GC/.test(chartSym) ? 1 : 2); $('tkMsg').textContent = 'Limit price set from the chart. Clear it for a market order.'; });
   // Size it ourselves (not autoSize): whenever the box, the window or the zoom / display scaling changes, resize and repaint.
   const fit = () => { if (lw && box.clientWidth && box.clientHeight) lw.resize(Math.floor(box.clientWidth), Math.floor(box.clientHeight), true); };
   new ResizeObserver(() => requestAnimationFrame(fit)).observe(box);
@@ -544,6 +545,40 @@ function lwPriceLines(lines) {
 }
 $('cSym').onchange = () => { chartSym = $('cSym').value; drawLive(); };
 document.querySelectorAll('#cTf button').forEach(b => { b.onclick = () => { chartTf = b.dataset.tf; document.querySelectorAll('#cTf button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); drawLive(); }; });
+// ---------- trading from the chart ----------
+let tkSel = null;
+async function tkRender() {
+  const r = await window.keel.chartAccounts(); if (!r) return;
+  const box = $('tkAccts'), keep = tkSel; box.replaceChildren();
+  $('tkHint').textContent = !r.running ? 'Start the bot to trade from the chart. Orders go to every account you tick below, through the same connections, risk limits and flat-by time as the bot.'
+    : `Orders go to every ticked account (${r.mode === 'paper' ? 'PAPER mode: pretend orders' : 'LIVE mode: real orders'}). Stops and targets go to the broker as soon as each entry fills. A market a Keel strategy already holds is skipped on that account.`;
+  for (const a of r.accounts) {
+    const l = el('label', 'check'), cb = el('input'); cb.type = 'checkbox'; cb.value = a.id; cb.checked = keep ? keep.has(a.id) : true;
+    cb.onchange = () => { tkSel = new Set([...document.querySelectorAll('#tkAccts input:checked')].map(x => x.value)); };
+    l.append(cb, document.createTextNode(' ' + a.label)); box.append(l);
+  }
+  ['tkBuy', 'tkSell', 'tkFlat'].forEach(id => { $(id).disabled = !r.running || !r.accounts.length; });
+}
+const tkAccounts = () => [...document.querySelectorAll('#tkAccts input:checked')].map(x => x.value);
+const tkReport = res => { if (!res || !res.ok) { $('tkMsg').textContent = res ? res.error : 'Something went wrong.'; return; }
+  $('tkMsg').textContent = res.results.map(x => `${x.account}: ${x.ok ? 'sent' : 'not sent (' + x.why + ')'}`).join(' · '); };
+async function tkSend(dir) {
+  const px = $('tkPx').value.trim(), qty = Number($('tkQty').value), ids = tkAccounts();
+  if (!ids.length) { $('tkMsg').textContent = 'Tick at least one account.'; return; }
+  const what = `${dir === 'long' ? 'BUY' : 'SELL'} ${qty} ${chartSym} ${px ? 'limit @ ' + px : 'at market'}${Number($('tkStop').value) ? ', stop ' + $('tkStop').value + ' pts' : ', NO stop'}${Number($('tkTgt').value) ? ', target ' + $('tkTgt').value + ' pts' : ''}`;
+  if (!confirm(`${what}\n\non ${ids.length} account${ids.length === 1 ? '' : 's'}?`)) return;
+  $('tkMsg').textContent = 'Sending…';
+  tkReport(await window.keel.chartOrder({ orderSym: chartSym, dir, qty, type: px ? 'limit' : 'market', price: px ? Number(px) : undefined, stopPts: Number($('tkStop').value) || 0, tgtPts: Number($('tkTgt').value) || 0, accounts: ids }));
+  $('tkPx').value = ''; lwLast = 0;
+}
+$('tkBuy').onclick = () => tkSend('long');
+$('tkSell').onclick = () => tkSend('short');
+$('tkFlat').onclick = async () => {
+  const ids = tkAccounts(); if (!ids.length) { $('tkMsg').textContent = 'Tick at least one account.'; return; }
+  if (!confirm(`Flatten ${chartSym} on ${ids.length} account${ids.length === 1 ? '' : 's'}? Working orders are cancelled and positions closed at market.`)) return;
+  tkReport(await window.keel.chartFlatten(chartSym, ids)); lwLast = 0;
+};
+
 $('cFit').onclick = () => { if (lw && lwN) lw.timeScale().setVisibleLogicalRange({ from: Math.max(0, lwN - 150), to: lwN + 8 }); };
 
 async function drawLive() {

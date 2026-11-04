@@ -427,6 +427,33 @@ app.whenReady().then(async () => {
     clipboard.writeText(JSON.stringify({ secret: webhookSecret(), symbol: 'ES', side: 'buy', qty: 1 }));
     return true;
   });
+  // ---------- trading from the chart, on any running account ----------
+  const runners = () => {
+    const st = loadAccounts(conns()), main = st.accounts.find(a => a.id === activeAccount);
+    return [...(xLive ? [{ id: activeAccount || 'main', label: main?.label ?? 'Paper account', x: xLive }] : []), ...followers.map(f => ({ id: f.acct.id, label: f.acct.label, x: f.x }))];
+  };
+  ipcMain.handle('chart:accounts', e => allowed(e) ? { running: !!engine, mode: loadKConfig().mode, accounts: runners().map(r => ({ id: r.id, label: r.label })) } : null);
+  ipcMain.handle('chart:order', async (e, o: any) => {
+    if (!allowed(e) || !o || typeof o !== 'object') return { ok: false, error: 'Not allowed.' };
+    if (!engine) return { ok: false, error: 'Start the bot first: chart orders go through the running accounts.' };
+    if (typeof o.orderSym !== 'string' || !/^[A-Z0-9]{1,6}$/.test(o.orderSym) || !['long', 'short'].includes(o.dir) || !['market', 'limit'].includes(o.type)) return { ok: false, error: 'That order is not valid.' };
+    const ids: string[] = Array.isArray(o.accounts) ? o.accounts : [], targets = runners().filter(r => ids.includes(r.id));
+    if (!targets.length) return { ok: false, error: 'Tick at least one account.' };
+    const results = await Promise.all(targets.map(async r => {
+      try { const why = await r.x.manualOrder({ orderSym: o.orderSym, dir: o.dir, qty: Number(o.qty), type: o.type, price: Number(o.price), stopPts: Number(o.stopPts) || 0, tgtPts: Number(o.tgtPts) || 0 });
+        return { account: r.label, ok: !why, why }; }
+      catch (err) { return { account: r.label, ok: false, why: (err as Error).message }; }
+    }));
+    for (const x of results) jot(`Chart ${o.dir} ${o.type} ${o.qty} ${o.orderSym} on ${x.account}: ${x.ok ? 'sent' : 'not sent, ' + x.why}`);
+    return { ok: true, results };
+  });
+  ipcMain.handle('chart:flatten', async (e, root: unknown, accounts: unknown) => {
+    if (!allowed(e) || typeof root !== 'string' || !/^[A-Z0-9]{1,6}$/.test(root)) return { ok: false, error: 'Not allowed.' };
+    const ids: string[] = Array.isArray(accounts) ? accounts as string[] : [], targets = runners().filter(r => ids.includes(r.id));
+    const results = await Promise.all(targets.map(async r => { try { await r.x.flattenMarket(root.replace(/^M(?=NQ|ES|GC|YM|CL)/, '')); return { account: r.label, ok: true, why: '' }; } catch (err) { return { account: r.label, ok: false, why: (err as Error).message }; } }));
+    return { ok: true, results };
+  });
+
   const HIST_UNITS = ['min1', 'min5', 'min15', 'hour', 'hour4', 'day'];
   ipcMain.handle('chart:hist', async (e, symbol: unknown, unit: unknown, count: unknown) => {
     if (!allowed(e) || typeof symbol !== 'string' || !HIST_UNITS.includes(unit as string)) return { ok: false, error: 'Not allowed.' };

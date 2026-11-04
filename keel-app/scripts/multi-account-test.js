@@ -45,6 +45,7 @@ BROKERS.push({ id: 'replay', name: 'Replay', status: 'ready', note: '', fields: 
 const acct = (id, label, trade) => ({ id, label, firm: 'Topstep', connection: 'replay', brokerRef: id, stage: 'evaluation', plan: '', size: 50000, drawdown: 'static', maxLoss: 2000,
   dailyLoss: 1000, profitTarget: 4000, consistencyPct: 55, consistencyBasis: 'target', minDays: 0, maxMini: 4, maxMicro: 40, dailyGoal: 0, pauseAtGoal: true, cost: 0, purchaseDate: '', notes: '', trade });
 fs.writeFileSync(path.join(tmp, 'accounts.json'), JSON.stringify({ selected: 'a-00000000000a', accounts: [acct('a-00000000000a', 'Account A', true), acct('a-00000000000b', 'Account B', true), acct('a-00000000000c', 'Account C', false)] }));
+fs.writeFileSync(path.join(tmp, 'risk.json'), JSON.stringify({ maxDailyLoss: 1000, maxQtyPerOrder: 10, maxOpenPositions: 4, allowedSymbols: ['MNQ', 'MGC', 'NQ', 'GC'] }));
 fs.writeFileSync(path.join(tmp, 'ksystem.json'), JSON.stringify({ mode: 'paper', riskUsd: 250, flatByHour: 16 }));
 
 const ev = { senderFrame: { url: 'file:///keel/index.html' } };
@@ -61,6 +62,22 @@ let fails = 0; const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'
   check(labels.includes('Account B'), `second account running: ${JSON.stringify(labels)}`);
   check(!labels.includes('Account C') && !made.some(b => b.accountId === 'a-00000000000c'), 'Account C (Trade off) never connected');
   check(made.filter(b => b.accountId === 'a-00000000000b').length === 1, 'Account B has its own connection');
+  // trading from the chart on both accounts
+  const ca = await handlers['chart:accounts'](ev), ids = ca.accounts.map(x => x.id);
+  check(ca.accounts.length === 2, `chart order ticket sees both running accounts: ${ca.accounts.map(x => x.label).join(', ')}`);
+  const o1 = await handlers['chart:order'](ev, { orderSym: 'MNQ', dir: 'long', qty: 1, type: 'market', stopPts: 20, tgtPts: 40, accounts: ids });
+  check(o1.ok && o1.results.length === 2 && o1.results.every(r => r.ok), `chart BUY 1 MNQ (stop 20, target 40) sent to both: ${JSON.stringify(o1.results)}`);
+  const kd = await handlers['k:get'](ev);
+  const fillsA = (kd.paper && kd.paper.fills) || [];
+  check(fillsA.some(f => f.symbol === 'MNQ' && f.side === 'buy'), `account A paper fill: ${JSON.stringify(fillsA.slice(-1))}`);
+  check((kd.followers || []).some(f => f.label === 'Account B' && f.open >= 1), `account B holds the chart trade: ${JSON.stringify(kd.followers)}`);
+  const o2 = await handlers['chart:order'](ev, { orderSym: 'MNQ', dir: 'long', qty: 1, type: 'market', stopPts: 20, tgtPts: 0, accounts: ids });
+  check(o2.results.every(r => !r.ok && /already/.test(r.why)), `second order refused while each account already holds NQ: ${o2.results.map(r => r.why).join(' | ')}`);
+  const fl = await handlers['chart:flatten'](ev, 'MNQ', ids);
+  check(fl.ok && fl.results.every(r => r.ok), 'flatten MNQ on both');
+  const o3 = await handlers['chart:order'](ev, { orderSym: 'MGC', dir: 'short', qty: 2, type: 'limit', price: 9999, stopPts: 5, tgtPts: 10, accounts: ids });
+  check(o3.results.every(r => r.ok), `SELL 2 MGC limit working on both: ${JSON.stringify(o3.results)}`);
+  await handlers['chart:flatten'](ev, 'MGC', ids);
   const files = fs.readdirSync(tmp);
   console.log(fs.readFileSync(path.join(tmp, files.find(f => f.startsWith('journal')) || 'none'), 'utf8').split('\n').slice(0, 12).map(l => '      ' + l).join('\n'));
   console.log('      files:', files.filter(f => /trades|journal/.test(f)).join(', ') || '(trade files appear on the first trade)');

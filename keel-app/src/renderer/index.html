@@ -73,6 +73,19 @@
             <p class="hint">Drag to move, scroll or pinch to zoom, drag the price or time axis to stretch it. Times are New York time. Chart by TradingView Lightweight Charts.</p>
             <div id="cLegend" class="clegend"></div>
           </div>
+          <div class="panel">
+            <h2>Trade from the chart</h2>
+            <p id="tkHint" class="hint"></p>
+            <div id="tkAccts" class="tkaccts"></div>
+            <div class="fgrid4">
+              <div><label for="tkQty">Contracts</label><input id="tkQty" type="number" min="1" max="100" step="1" value="1"></div>
+              <div><label for="tkStop">Stop (points, 0 = none)</label><input id="tkStop" type="number" min="0" step="0.25" value="0"></div>
+              <div><label for="tkTgt">Target (points, 0 = none)</label><input id="tkTgt" type="number" min="0" step="0.25" value="0"></div>
+              <div><label for="tkPx">Limit price (empty = market)</label><input id="tkPx" type="number" step="0.01" placeholder="Click the chart to set"></div>
+            </div>
+            <div class="mixrow" style="margin-top:12px"><button id="tkBuy" type="button" class="buy">Buy</button><button id="tkSell" type="button" class="sell">Sell</button><button id="tkFlat" type="button" class="ghost">Flatten this market</button></div>
+            <p id="tkMsg" class="hint" role="status" aria-live="polite"></p>
+          </div>
         </section>
 
         <section id="v-acct" class="view" hidden>

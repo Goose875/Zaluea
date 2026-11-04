@@ -3,6 +3,7 @@ import { RiskGuard } from '../core/risk';
 import { OrderDesk, KConfig, EntryContext } from './live';
 import { XSTRATEGIES, XStrategy, XOrder, toXBars, xOrders, xSimulate, XTICK } from './extra';
 import { wallOf, utcOf, sessionKey } from './time';
+import { tick as tickOf } from '../core/contracts';
 
 /** One K8 / K9 / P1-P3 trade Keel is running (or its entry order still waiting). Saved so a restart picks it up. */
 export interface XLiveTrade {
@@ -170,16 +171,57 @@ export class XLive {
     await this.onFilled(t); return '';
   }
 
+  /** A trade placed by you from the chart: market or limit entry, optional stop / target in points (placed at the broker as soon
+   *  as it fills), same risk limits as every Keel entry, out at the stop / target / flat-by. Refused if a Keel trade holds the market. */
+  async manualOrder(o: { orderSym: string; dir: 'long' | 'short'; qty: number; type: 'market' | 'limit'; price?: number; stopPts: number; tgtPts: number }): Promise<string> {
+    const now = this.now(), m = mins(now), root = o.orderSym.replace(/^M(?=NQ|ES|GC|YM|CL)/, '');
+    if (!Number.isInteger(o.qty) || o.qty < 1 || o.qty > 100) return 'quantity must be a whole number from 1 to 100';
+    if (this.cfg.flatByHour !== null && m >= this.cfg.flatByHour * 60 - 5 && m < 18 * 60) return 'too close to the flat-by time';
+    if (this.d.kHolds(root) || this.holds(root)) return `a Keel trade already holds ${root}`;
+    let pnl: number; try { pnl = await this.d.dailyPnL(); } catch { return "today's P&L can't be read"; }
+    const positions = await this.d.desk.getPositions();
+    if (positions.some(p => p.symbol.replace(/^M(?=NQ|ES|GC|YM|CL)/, '') === root && p.qty !== 0)) return `there is already an open ${root} position`;
+    const side = o.dir === 'long' ? 'buy' as const : 'sell' as const;
+    const v = this.d.risk.check({ symbol: o.orderSym, side, qty: o.qty, source: 'strategy', strategyId: 'MANUAL', from: 'chart' }, { dailyPnL: pnl, openPositions: positions.filter(p => p.qty !== 0).length, positions });
+    if (!v.ok) return v.reason ?? 'blocked by your risk limits';
+    const T = tickOf(o.orderSym), flat = this.cfg.flatByHour !== null ? this.cfg.flatByHour : 17;
+    const w = new Date(wallOf(now)), cutWall = Date.UTC(w.getUTCFullYear(), w.getUTCMonth(), w.getUTCDate(), flat, 0) - 5 * 60_000;
+    const liveUntil = m < 18 * 60 ? utcOf(cutWall, 'America/New_York') : utcOf(cutWall + 86_400_000, 'America/New_York');
+    const t: XLiveTrade = { key: `MAN:${now}:${o.orderSym}`, id: 'MANUAL', sym: root, orderSym: o.orderSym, dir: o.dir, qty: o.qty, state: 'working', entryOrder: null, limitPx: null,
+      liveUntil, stopPts: Math.max(0, o.stopPts || 0), tgtPts: Math.max(0, o.tgtPts || 0), endAt: null, entry: null, stop: null, target: null, stopOrder: null, targetOrder: null, placed: now };
+    if (o.type === 'limit') {
+      if (!(Number.isFinite(o.price) && (o.price as number) > 0)) return 'a limit order needs a price';
+      t.limitPx = Math.round((o.price as number) / T) * T;
+      t.entryOrder = await this.d.desk.placeOrder({ symbol: o.orderSym, side, qty: o.qty, type: 'limit', price: t.limitPx });
+      this.trades.push(t); this.save(); this.d.note(`Chart order: ${o.dir} limit ${o.qty} ${o.orderSym} @ ${t.limitPx.toFixed(2)} working.`, 'trade');
+      return '';
+    }
+    await this.d.desk.placeOrder({ symbol: o.orderSym, side, qty: o.qty, type: 'market' });
+    this.trades.push(t); this.save(); this.d.note(`Chart order: ${o.dir} market ${o.qty} ${o.orderSym} sent.`, 'trade');
+    await this.onFilled(t); return '';
+  }
+  /** Flatten one market on this account: cancel its working orders, close the position, forget Keel's trades there. */
+  async flattenMarket(root: string): Promise<string> {
+    const same = (s: string) => s.replace(/^M(?=NQ|ES|GC|YM|CL)/, '') === root;
+    for (const o of (await this.d.desk.getOpenOrders()).filter(o => same(o.symbol))) await this.d.desk.cancelOrder(o.id).catch(() => {});
+    let closed = '';
+    for (const p of (await this.d.desk.getPositions()).filter(p => same(p.symbol) && p.qty !== 0)) {
+      await this.d.desk.placeOrder({ symbol: p.symbol, side: p.qty > 0 ? 'sell' : 'buy', qty: Math.abs(p.qty), type: 'market' }); closed += ` ${p.qty > 0 ? 'sold' : 'bought'} ${Math.abs(p.qty)} ${p.symbol}`;
+    }
+    this.trades = this.trades.filter(t => !same(t.sym)); this.save();
+    this.d.note(`Flattened ${root} from the chart.${closed || ' Nothing was open.'}`, 'trade'); return '';
+  }
+
   /** Entry filled: put the stop (and target) at the broker, measured from the real average fill price. */
   private async onFilled(t: XLiveTrade) {
-    const d = t.dir === 'long' ? 1 : -1, T = XTICK[t.sym], exit = d > 0 ? 'sell' as const : 'buy' as const;
+    const d = t.dir === 'long' ? 1 : -1, T = XTICK[t.sym] ?? tickOf(t.orderSym), exit = d > 0 ? 'sell' as const : 'buy' as const;
     if (t.entryOrder) { await this.d.desk.cancelOrder(t.entryOrder).catch(() => {}); t.entryOrder = null; }   // a partial fill keeps what filled
     const pos = (await this.d.desk.getPositions()).find(p => p.symbol === t.orderSym && Math.sign(p.qty) === d);
     if (!pos) { this.d.note(`${t.id}: entry sent but no position showed up; nothing to protect.`, 'warn'); this.trades = this.trades.filter(x => x !== t); this.save(); return; }
     t.qty = Math.abs(pos.qty); t.entry = Number.isFinite(pos.avgPrice) ? pos.avgPrice : (t.limitPx ?? 0);
-    t.stop = Math.round((t.entry - d * t.stopPts) / T) * T; t.target = t.tgtPts > 0 ? Math.round((t.entry + d * t.tgtPts) / T) * T : null;
+    t.stop = t.stopPts > 0 ? Math.round((t.entry - d * t.stopPts) / T) * T : null; t.target = t.tgtPts > 0 ? Math.round((t.entry + d * t.tgtPts) / T) * T : null;
     t.state = 'open'; t.placed = this.now();
-    try { t.stopOrder = await this.d.desk.placeOrder({ symbol: t.orderSym, side: exit, qty: t.qty, type: 'stop', price: t.stop }); }
+    if (t.stop !== null) try { t.stopOrder = await this.d.desk.placeOrder({ symbol: t.orderSym, side: exit, qty: t.qty, type: 'stop', price: t.stop }); }
     catch (e) {
       await this.d.desk.placeOrder({ symbol: t.orderSym, side: exit, qty: t.qty, type: 'market' }).catch(() => {});
       this.d.note(`${t.id} was closed right away because its stop could not be placed (${(e as Error).message}). Check your platform.`, 'warn');
@@ -187,7 +229,7 @@ export class XLive {
     }
     if (t.target !== null) { try { t.targetOrder = await this.d.desk.placeOrder({ symbol: t.orderSym, side: exit, qty: t.qty, type: 'limit', price: t.target }); } catch { this.d.note(`${t.id}: target order failed; the stop is in place.`, 'warn'); } }
     this.save();
-    this.d.note(`${t.id} filled ${t.dir} ${t.qty} ${t.orderSym} @ ${t.entry.toFixed(2)}: stop ${t.stop.toFixed(2)}${t.target !== null ? `, target ${t.target.toFixed(2)}` : ''}${t.endAt ? `, out by ${new Date(wallOf(t.endAt)).toISOString().slice(11, 16)} ET` : ''}.`, 'trade');
+    this.d.note(`${t.id} filled ${t.dir} ${t.qty} ${t.orderSym} @ ${t.entry.toFixed(2)}: ${t.stop !== null ? `stop ${t.stop.toFixed(2)}` : 'no stop'}${t.target !== null ? `, target ${t.target.toFixed(2)}` : ''}${t.endAt ? `, out by ${new Date(wallOf(t.endAt)).toISOString().slice(11, 16)} ET` : ''}.`, 'trade');
   }
 
   private async exit(t: XLiveTrade, why: string) {
