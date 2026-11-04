@@ -54,3 +54,33 @@ Seven hourly strategies from the research (`keel/KEEL_BOT_SPEC.md`). Signals use
 * **Lucid / Rithmic:** still waiting on Rithmic's API approval. K live needs history, stop orders and order modify on that connection too.
 * **TopstepX endpoints:** `Contract/search`, `Position/searchOpen`, `Order/searchOpen` and `Order/modify` field names follow ProjectX's docs and third-party clients. **Run paper mode, then live on a practice account, before real money.**
 * **Not investment advice.** Backtests don't guarantee future results.
+
+## PO3 and Fractal (K8, K9, P1–P3), new in 0.4.0
+| Id | Strategy | Market | Evidence | Live? |
+|---|---|---|---|---|
+| K8 | GC Fractal breakout, day trade: daily signal, market entry at the 18:00 reopen, stop 0.5× daily ATR, target 3R | MGC | 2005–2026 daily | yes |
+| K9 | GC PO3 1h rejection block, 4h EMA20 bias, exit at the 4h candle close | MGC | Jun 2024 – Nov 2026 hourly | yes |
+| P1 | GC PO3 15m FVG midpoint, exit at the 4h close | MGC | 10 weeks only | paper only |
+| P2 | GC PO3 15m rejection block, bias vs 18:00 open, 3R | MGC | 10 weeks only | paper only |
+| P3 | NQ PO3 15m FVG midpoint, exit at the 4h close | MNQ | 10 weeks only | paper only |
+
+**How they trade:**
+- **PO3 entries** are resting limit orders at the exact level, rounded a tick in the safe direction.
+- The entry is cancelled when the research's window ends: 3 hours into the 4h candle, or 15:55 ET.
+- When an entry fills, the stop (and target) are placed at once, measured from the real fill.
+- **Exits:** stop or target at the broker, the 4h candle's close, or the flat-by time.
+- **One position per market** across K1–K9 and P1–P3. If a market is held, or has a working entry, any other entry on it is skipped.
+
+**Tests** (after `npx tsc -p .`):
+- `node scripts/parity-x.js ../backtests` reproduces all 632 research trades exactly (K8 168, K9 183, P1 115, P2 53, P3 113).
+- `node scripts/replay-x.js P1 ../backtests/data/GC_cont_5m.csv` replays bars through the live runner with paper orders and compares its fills with the simulator.
+
+## Rankings page
+It shows every mix and single strategy from the Topstep 50K Static simulation ($4k target, $2k static drawdown, $1k daily loss limit, 55% consistency, payouts after 5 days of $150+).
+- Sort by pass rate, days to pass, payout rate, days to payout, cash, or results on the last year only.
+- **Use** switches the K system to that mix and risk.
+- Recommended: **K1+K3+K4+K5+K6+K7 at $350**. On the last year that passed 97% of the time in a median of 27 trading days, and every passed account reached a first payout, a median of 13 trading days later.
+
+**Topstep notes:**
+- The API only works on Topstep's simulated accounts (Combine and Express Funded), not Live Funded.
+- Topstep requires automated trading to run from your own computer. A VPS or VPN can get the account closed.

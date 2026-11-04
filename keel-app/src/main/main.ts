@@ -20,8 +20,11 @@ import { parseCsv, runBacktest, samplePrices } from '../core/backtest';
 import { parseStrategy } from '../strategies/rules';
 import { loadStrategies, saveStrategies } from './strategies';
 import { KLive, parseKConfig, OrderDesk } from '../ksys/live';
+import { XLive } from '../ksys/xlive';
+import { XSTRATEGIES } from '../ksys/extra';
 import { PaperOrders } from '../ksys/paperOrders';
-import { loadKConfig, saveKConfig, kTradeStore } from './kstore';
+import { loadKConfig, saveKConfig, kTradeStore, xTradeStore } from './kstore';
+import RANKINGS from '../ksys/rankings.json';
 import { parseHourly, buildSeries, DailyClose } from '../ksys/series';
 import { simulate, VALIDATION, STRATEGIES, INSTRUMENTS } from '../ksys/sim';
 import { compare, EXPECTED, stats as kStats } from '../ksys/validate';
@@ -29,6 +32,7 @@ import { wallOf } from '../ksys/time';
 
 let engine: Engine | null = null;
 let kLive: KLive | null = null;
+let xLive: XLive | null = null;
 let kPaper: PaperOrders | null = null;
 let kAcct: { equity: number; floor: number } | null = null;
 let kAcctTimer: ReturnType<typeof setInterval> | undefined;
@@ -96,7 +100,7 @@ function webhookSecret(): string {
   return secret;
 }
 
-function stopK() { kLive?.stop(); kLive = null; kPaper = null; clearInterval(kAcctTimer); kAcct = null; }
+function stopK() { kLive?.stop(); kLive = null; xLive?.stop(); xLive = null; kPaper = null; clearInterval(kAcctTimer); kAcct = null; }
 async function stopTrading() {
   stopK();
   await engine?.shutdown();
@@ -244,13 +248,19 @@ app.whenReady().then(async () => {
       kLive = new KLive(kc, {
         data: broker, desk, risk: guard, store: kTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
-        account: () => kAcct, note: m => e.say(m)
+        account: () => kAcct, note: m => e.say(m), xHolds: sym => !!xLive?.holds(sym)
+      });
+      // K8, K9, P1-P3: same order desk, same risk limits, one position per market shared with K1-K7.
+      xLive = new XLive(kc, {
+        data: broker, desk, risk: guard, store: xTradeStore(kc.mode),
+        dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
+        note: m => e.say(m), kHolds: sym => !!kLive?.trades.some(t => t.sym === sym)
       });
       const pollAcct = async () => {
         try { const i = broker.getAccount ? await broker.getAccount() : null; if (i) kAcct = { equity: i.balance, floor: i.floor ?? ((acct?.size || i.size) - (acct?.maxLoss || i.maxLoss)) }; } catch { /* keep the last value */ }
       };
       void pollAcct(); kAcctTimer = setInterval(() => void pollAcct(), 60_000); (kAcctTimer as any).unref?.();
-      engine.onHalt = () => { kLive?.stop(); kLive?.forgetAll(); void kPaper?.closeAll(); };
+      engine.onHalt = () => { kLive?.stop(); kLive?.forgetAll(); xLive?.stop(); xLive?.forgetAll(); void kPaper?.closeAll(); };
     }
     engine.onTick = q => { bars.add(q); kPaper?.onQuote(q); };
     await seedBars(broker);
@@ -260,7 +270,9 @@ app.whenReady().then(async () => {
       const miss = K_SYMBOLS.filter(x => x.startsWith('M') && !limits.allowedSymbols.includes(x));
       if (miss.length) engine.say(`K system: add ${miss.join(' and ')} to your allowed symbols under Risk limits, or its trades there will be blocked.`);
       engine.say(`K system started in ${kc.mode} mode. It checks for signals a few seconds after every hour.`);
-      kLive.start();
+      kLive.start(); xLive?.start();
+      const xOn = XSTRATEGIES.filter(S => kc.enabled[S.id]).map(S => S.id);
+      if (xOn.length) engine.say(`PO3/Fractal strategies on: ${xOn.join(', ')}. PO3 entries are resting limit orders at the exact level; stops go in as soon as they fill.`);
     }
     activeBroker = brokerId; activeAccount = acct?.id ?? '';
     hook = startWebhook(8787, webhookSecret(), s => void engine?.handleSignal(s));
@@ -317,7 +329,8 @@ app.whenReady().then(async () => {
   // ---------- K system ----------
   ipcMain.handle('k:get', e => {
     if (!allowed(e)) return null;
-    return { cfg: loadKConfig(), status: kLive ? kLive.status() : null, running: !!engine,
+    return { cfg: loadKConfig(), status: kLive ? kLive.status() : null, running: !!engine, x: xLive ? xLive.view() : null, rankings: RANKINGS,
+      xmeta: XSTRATEGIES.map(S => ({ id: S.id, name: S.name, symbol: S.symbol, orderSymbol: S.symbol === 'NQ' ? 'MNQ' : 'MGC', paperOnly: S.paperOnly, evidence: S.evidence })),
       paper: kPaper ? { realized: kPaper.realized, unrealized: kPaper.unrealized(), fills: kPaper.fills.slice(-50) } : null,
       meta: STRATEGIES.map(S => ({ id: S.id, name: S.name, symbol: S.symbol, orderSymbol: INSTRUMENTS[S.symbol].micro, direction: S.direction,
         flat: S.flat_at_session_end, expected: (EXPECTED as any)[S.id] })) };
@@ -327,7 +340,7 @@ app.whenReady().then(async () => {
     const next = parseKConfig(x), cur = loadKConfig();
     if (engine && next.mode !== cur.mode) return { ok: false, error: 'Stop the bot before switching the K system between off, paper and live.' };
     if (next.mode === 'live' && cur.mode !== 'live' && !next.countFrom) next.countFrom = Date.now();
-    saveKConfig(next); kLive?.setConfig(next);
+    saveKConfig(next); kLive?.setConfig(next); xLive?.setConfig(next);
     return { ok: true, cfg: next };
   });
   /** Validation: runs Keel's K engine on hourly CSVs (and optional daily CSVs) and compares with spec section 8. */

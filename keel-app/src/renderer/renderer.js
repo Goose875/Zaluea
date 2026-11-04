@@ -32,7 +32,7 @@ const selAcct = () => store.accounts.find(a => a.id === store.selected) || null;
 // ---------- navigation ----------
 let view = 'dash';
 function go(v) {
-  view = v; if (v === 'chart') drawLive(); if (v === 'test') fillBtStrats(); if (v === 'k') kLoad();
+  view = v; if (v === 'chart') drawLive(); if (v === 'test') fillBtStrats(); if (v === 'k') kLoad(); if (v === 'rank') rkLoad();
   for (const k of Object.keys(TITLES)) $('v-' + k).hidden = k !== v;
   document.querySelectorAll('#nav button').forEach(b => { if (b.dataset.go === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   $('title').textContent = v === 'dash' ? greeting() : TITLES[v];
@@ -695,6 +695,20 @@ function kRender() {
       el('td', '', s && s.rollingN ? `${s.rollingR >= 0 ? '+' : ''}${s.rollingR.toFixed(2)}R (${s.rollingN})` : '—'));
     t.append(row);
   }
+  const xt = $('xTable'); xt.replaceChildren();
+  const xh = el('tr'); for (const h of ['On', 'Strategy', 'Market', 'Evidence', 'Now']) xh.append(el('th', '', h)); xt.append(xh);
+  for (const m of d.xmeta || []) {
+    const row = el('tr'), s = d.x ? d.x.find(x => x.id === m.id) : null;
+    const cb = el('input'); cb.type = 'checkbox'; cb.checked = !!c.enabled[m.id]; cb.setAttribute('aria-label', `Run ${m.id}`);
+    cb.onchange = () => { kDraft.enabled[m.id] = cb.checked; kSave(true); };
+    const tcell = el('td'); tcell.append(cb);
+    let now = !c.enabled[m.id] ? 'Off' : m.paperOnly && c.mode === 'live' ? 'Paper only: not traded in live mode' : !s ? '—' : 'Waiting for a setup';
+    if (s && s.trade) { const t = s.trade; now = t.state === 'working' ? `Limit ${t.dir} ${t.qty} ${t.orderSym} @ ${t.limitPx.toFixed(2)} working until ${nyTime(t.liveUntil)}`
+      : `${t.dir === 'long' ? 'Long' : 'Short'} ${t.qty} ${t.orderSym} @ ${t.entry.toFixed(2)}, stop ${t.stop.toFixed(2)}${t.target !== null ? `, target ${t.target.toFixed(2)}` : ''}${t.endAt ? `, out by ${nyTime(t.endAt)}` : ''}`; }
+    else if (s && s.note) now = s.note;
+    row.append(tcell, el('td', '', `${m.id} · ${m.name}${m.paperOnly ? ' (paper only)' : ''}`), el('td', '', `${m.symbol} → ${m.orderSymbol}`), el('td', '', m.evidence), el('td', '', now));
+    xt.append(row);
+  }
   $('kPaperBox').hidden = !d.paper;
   if (d.paper) {
     $('kPaperText').textContent = `Paper P&L ${usd0(d.paper.realized + d.paper.unrealized)} (closed ${usd0(d.paper.realized)}, open ${usd0(d.paper.unrealized)})`;
@@ -726,6 +740,58 @@ document.querySelectorAll('#kMode button').forEach(b => {
     kDraft = { ...kReadForm(), mode }; await kSave(true);
   };
 });
+
+// ---------- Rankings ----------
+let rkData = null, rkTab = 'mixes', rkSort = { key: 'score', dir: -1 };
+const pct = x => (x === null || x === undefined ? '—' : Math.round(x * 100) + '%'), num = x => (x === null || x === undefined ? '—' : String(Math.round(x * 10) / 10));
+const RK_COLS = {
+  mixes: [['strategies', 'Mix'], ['risk', 'Risk'], ['pass_pct', 'Pass'], ['median_days_to_pass', 'Days to pass'], ['xfa_first_payout_pct', 'Reached payout'],
+    ['median_days_pass_to_1st_payout', 'Days pass → payout'], ['xfa_blown_before_payout_pct', 'Funded lost before payout'], ['median_cash_first60d', 'Cash in 60 funded days'],
+    ['oos_pass_pct', 'Pass (last year only)'], ['oos_days_to_pass', 'Days (last year)'], ['score', 'Pass × payout']],
+  paper: [['strategies', 'Strategy'], ['risk', 'Risk'], ['pass_pct', 'Pass'], ['median_days_to_pass', 'Days to pass'], ['note', 'Note']]
+};
+RK_COLS.singles = RK_COLS.mixes.map(c => (c[0] === 'strategies' ? ['strategies', 'Strategy'] : c));
+const rkFmt = (k, v) => (v === null || v === undefined ? '—' : /pct|score/.test(k) ? pct(v) : k === 'risk' || k === 'median_cash_first60d' ? usd0(v) : typeof v === 'number' ? num(v) : String(v));
+async function rkLoad() {
+  if (!kData) { try { kData = await window.keel.kGet(); } catch { return; } if (kData && !kDraft) kDraft = JSON.parse(JSON.stringify(kData.cfg)); }
+  rkData = kData && kData.rankings; if (!rkData) return;
+  $('rkSource').textContent = rkData.source + ` Recommended: ${rkData.recommended.strategies} at ${usd0(rkData.recommended.risk)} risk.`;
+  rkRender();
+}
+function rkRender() {
+  const cols = RK_COLS[rkTab], riskF = $('rkRisk').value, t = $('rkTable'); t.replaceChildren();
+  let rows = (rkData[rkTab] || []).filter(r => riskF === 'all' || String(r.risk) === riskF);
+  const k = rkSort.key in (rows[0] || {}) ? rkSort.key : 'pass_pct';
+  rows = rows.slice().sort((a, b) => { const x = a[k], y = b[k]; if (x === y) return 0; if (x === null || x === undefined) return 1; if (y === null || y === undefined) return -1; return (x < y ? -1 : 1) * rkSort.dir; });
+  const hr = el('tr');
+  for (const [key, label] of cols) {
+    const th = el('th', '', label + (k === key ? (rkSort.dir < 0 ? ' ▼' : ' ▲') : '')); th.style.cursor = 'pointer'; th.tabIndex = 0;
+    th.onclick = th.onkeydown = ev => { if (ev.type === 'keydown' && ev.key !== 'Enter') return; rkSort = { key, dir: rkSort.key === key ? -rkSort.dir : (/days|blown/.test(key) ? 1 : -1) }; rkRender(); };
+    hr.append(th);
+  }
+  if (rkTab !== 'paper') hr.append(el('th', '', ''));
+  t.append(hr);
+  const rec = rkData.recommended;
+  for (const r of rows.slice(0, 150)) {
+    const row = el('tr'); if (r.strategies === rec.strategies && r.risk === rec.risk) row.className = 'pos';
+    for (const [key] of cols) row.append(el('td', '', rkFmt(key, r[key])));
+    if (rkTab !== 'paper') {
+      const b = el('button', 'small', 'Use'); b.type = 'button';
+      b.onclick = async () => {
+        const ids = r.strategies.split(' + ');
+        if (!confirm(`Switch the K system to ${r.strategies} at ${usd0(r.risk)} risk per trade?\n\nEvery other strategy is switched off. Paper/live mode is not changed.`)) return;
+        const en = Object.fromEntries(Object.keys(kDraft.enabled).map(id => [id, ids.includes(id)]));
+        const res = await window.keel.kSet({ ...kDraft, enabled: en, sizing: 'fixed', riskUsd: r.risk });
+        if (!res.ok) { flash($('rkMsg'), res.error, true); return; }
+        kDraft = JSON.parse(JSON.stringify(res.cfg)); kData = await window.keel.kGet(); flash($('rkMsg'), `K system set to ${r.strategies} at ${usd0(r.risk)}.`);
+      };
+      const td = el('td'); td.append(b); row.append(td);
+    }
+    t.append(row);
+  }
+}
+document.querySelectorAll('#rkTabs button').forEach(b => { b.onclick = () => { rkTab = b.dataset.tab; document.querySelectorAll('#rkTabs button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); rkRender(); }; });
+$('rkRisk').onchange = () => rkRender();
 
 // ---------- K system: validation ----------
 $('kvRun').onclick = async () => {

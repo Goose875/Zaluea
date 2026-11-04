@@ -3,6 +3,7 @@ import { RiskGuard } from '../core/risk';
 import { buildSeries, fromHistory, dailyFromHistory, Series } from './series';
 import { simulate, planEntry, STRATEGIES, INSTRUMENTS, PRIORITY, SimOptions, SimResult, Dir, KStrategy } from './sim';
 import { wallOf } from './time';
+import { XSTRATEGIES } from './extra';
 
 /** K system settings, saved by the app. */
 export interface KConfig {
@@ -21,7 +22,7 @@ export interface KConfig {
   allowMinis: boolean;
 }
 export const DEFAULT_KCONFIG: KConfig = {
-  mode: 'off', enabled: Object.fromEntries(STRATEGIES.map(s => [s.id, s.id !== 'K2'])), sizing: 'fixed', riskUsd: 300, divisor: 12, capMult: 3, pauseOn: true, countFrom: 0,
+  mode: 'off', enabled: { ...Object.fromEntries(STRATEGIES.map(s => [s.id, s.id !== 'K2'])), ...Object.fromEntries(XSTRATEGIES.map(s => [s.id, false])) }, sizing: 'fixed', riskUsd: 350, divisor: 12, capMult: 3, pauseOn: true, countFrom: 0,
   allowMinis: false,
   flatByHour: 16   // K2's edge needs overnight holds; with a 4 PM flat-by its test year was ~breakeven, so it starts switched off
 };
@@ -29,7 +30,7 @@ export function parseKConfig(x: any): KConfig {
   const c = { ...DEFAULT_KCONFIG, enabled: { ...DEFAULT_KCONFIG.enabled } };
   if (!x || typeof x !== 'object') return c;
   if (['off', 'paper', 'live'].includes(x.mode)) c.mode = x.mode;
-  for (const s of STRATEGIES) if (typeof x.enabled?.[s.id] === 'boolean') c.enabled[s.id] = x.enabled[s.id];
+  for (const s of [...STRATEGIES, ...XSTRATEGIES]) if (typeof x.enabled?.[s.id] === 'boolean') c.enabled[s.id] = x.enabled[s.id];
   if (x.sizing === 'fixed' || x.sizing === 'cushion') c.sizing = x.sizing;
   const num = (v: unknown, lo: number, hi: number, d: number) => (typeof v === 'number' && v >= lo && v <= hi ? v : d);
   c.riskUsd = num(x.riskUsd, 50, 5000, c.riskUsd); c.divisor = num(x.divisor, 4, 40, c.divisor); c.capMult = num(x.capMult, 1, 10, c.capMult);
@@ -61,6 +62,7 @@ export interface KDeps {
   store: { load(): LiveTrade[]; save(t: LiveTrade[]): void };
   note: (msg: string, kind?: 'trade' | 'warn' | 'info') => void;
   now?: () => number;                                          // for tests
+  xHolds?: (sym: string) => boolean;                           // a K8/K9/P1-P3 trade (or working entry) holds this market
 }
 
 const H = 3_600_000;
@@ -187,7 +189,7 @@ export class KLive {
     for (const p of due) {
       const S = STRATEGIES.find(s => s.id === p.id)!;
       if (!this.cfg.enabled[S.id] || this.trades.some(t => t.id === S.id && t.signalUtc === p.signalUtc)) continue;
-      if (this.trades.some(t => t.sym === S.symbol)) { this.d.note(`K system: skipped ${S.id}, another K trade already holds ${S.symbol}.`, 'info'); continue; }
+      if (this.trades.some(t => t.sym === S.symbol) || this.d.xHolds?.(S.symbol)) { this.d.note(`K system: skipped ${S.id}, another Keel trade already holds ${S.symbol}.`, 'info'); continue; }
       await this.enter(S, p.dir, p.signalUtc, risk);
     }
   }

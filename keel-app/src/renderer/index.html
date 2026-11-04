@@ -15,6 +15,7 @@
         <button data-go="acct">Progress</button>
         <button data-go="accts">Accounts</button>
         <button data-go="k">K system</button>
+        <button data-go="rank">Rankings</button>
         <button data-go="kval">Validate K</button>
         <button data-go="strat">Strategies</button>
         <button data-go="test">Backtest</button>
@@ -132,10 +133,34 @@
             <div class="tscroll plainscroll"><table id="kTable"></table></div>
             <p class="hint">Backtest column: the untouched test year (Dec 2025 &ndash; Nov 2026), one mini contract, from the research. Past results don't promise future ones.</p>
           </div>
+          <div class="panel">
+            <h2>PO3 and Fractal (K8, K9, P1&ndash;P3)</h2>
+            <p class="hint">PO3 entries are resting <b>limit orders at the exact level</b> (fair value gap midpoint or rejection-block body); the stop goes to the broker the moment the entry fills, measured from your real fill. They exit at the stop, the target, the 4-hour candle's close, or the flat-by time. K8 enters at the 18:00 reopen. One position per market across every Keel strategy. P1&ndash;P3 only have 10 weeks of evidence, so they run in paper mode only.</p>
+            <div class="tscroll plainscroll"><table id="xTable"></table></div>
+          </div>
           <div id="kPaperBox" class="panel" hidden>
             <h2>Paper account</h2>
             <p id="kPaperText" class="big2"></p>
             <div id="kFills" class="tscroll plainscroll"></div>
+          </div>
+        </section>
+
+        <section id="v-rank" class="view" hidden>
+          <div class="panel">
+            <h2>Rankings: Topstep 50K Static</h2>
+            <p id="rkSource" class="hint"></p>
+            <div id="rkTabs" class="seg small" role="group" aria-label="Which list">
+              <button type="button" data-tab="mixes" aria-pressed="true">Strategy mixes</button>
+              <button type="button" data-tab="singles" aria-pressed="false">Single strategies</button>
+              <button type="button" data-tab="paper" aria-pressed="false">Paper only (P1, P2)</button>
+            </div>
+            <div class="fgrid4" style="margin-top:12px">
+              <div><label for="rkRisk">Risk per trade</label><select id="rkRisk"><option value="all">All</option><option value="150">$150</option><option value="250">$250</option><option value="350">$350</option><option value="500">$500</option></select></div>
+            </div>
+            <p class="hint">Click a column to sort. <b>Use</b> switches the K system to that mix and risk (it does not start the bot or change paper/live).</p>
+            <div class="tscroll plainscroll"><table id="rkTable"></table></div>
+            <p id="rkMsg" class="saved" role="status" aria-live="polite"></p>
+            <p class="hint">Simulated on past data; the first payout figures assume the payout rules above. Past results don't promise future ones.</p>
           </div>
         </section>
 

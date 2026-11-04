@@ -38,7 +38,7 @@ export interface BrokerAdapter {
   /** Start live prices for these symbols (if the broker has a price feed). */
   subscribe?(symbols: string[]): Promise<void>;
   /** Optional: completed history bars (t = bar open time, ms UTC) for the front-month contract, oldest first. */
-  getHistory?(symbol: string, unit: 'hour' | 'day', count: number): Promise<HistBar[]>;
+  getHistory?(symbol: string, unit: 'min5' | 'hour' | 'day', count: number): Promise<HistBar[]>;
   /** Optional: working orders, and changing / cancelling one. Needed for broker-side stops (K system live mode). */
   getOpenOrders?(): Promise<WorkingOrder[]>;
   modifyOrder?(id: string, change: { price: number }): Promise<void>;

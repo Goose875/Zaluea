@@ -248,3 +248,4 @@ progress.ok::-webkit-progress-value { background:var(--sea); } progress.bad::-we
 @media (max-width:700px) { .two, .cards, .cards.four, .fgrid4, .dgrid { grid-template-columns:1fr; } .big { font-size:40px; } .rw-side { gap:20px; } }
 @media (prefers-reduced-motion:reduce) { * { transition:none !important; } }
 .events li.empty { display:block; border-top:0; }
+button.small { min-height:30px; padding:4px 12px; font-size:13px; }

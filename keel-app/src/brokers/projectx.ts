@@ -164,11 +164,12 @@ export class ProjectXBroker implements BrokerAdapter {
 
   lastPrice(symbol: string) { const c = this.bySymbol.get(symbol); return c ? this.last.get(c.id) : undefined; }
 
-  /** Completed bars for the front-month contract (History/retrieveBars: unit 3 = hour, 4 = day; at most 20,000 bars). */
-  async getHistory(symbol: string, unit: 'hour' | 'day', count: number): Promise<HistBar[]> {
-    const c = await this.contractFor(symbol), end = new Date(), days = unit === 'hour' ? Math.ceil(count / 22) + 14 : Math.ceil(count * 1.5) + 14;
+  /** Completed bars for the front-month contract (History/retrieveBars: unit 2 = minute, 3 = hour, 4 = day; at most 20,000 bars). */
+  async getHistory(symbol: string, unit: 'min5' | 'hour' | 'day', count: number): Promise<HistBar[]> {
+    const c = await this.contractFor(symbol), end = new Date();
+    const days = unit === 'min5' ? Math.ceil(count / 276) + 5 : unit === 'hour' ? Math.ceil(count / 22) + 14 : Math.ceil(count * 1.5) + 14;
     const j = await this.call('/api/History/retrieveBars', { contractId: c.id, live: false, startTime: new Date(end.getTime() - days * 86_400_000).toISOString(),
-      endTime: end.toISOString(), unit: unit === 'hour' ? 3 : 4, unitNumber: 1, limit: Math.min(20_000, count), includePartialBar: false });
+      endTime: end.toISOString(), unit: unit === 'min5' ? 2 : unit === 'hour' ? 3 : 4, unitNumber: unit === 'min5' ? 5 : 1, limit: Math.min(20_000, count), includePartialBar: false });
     const bars: HistBar[] = (j.bars || []).map((b: any) => ({ t: Date.parse(b.t), o: +b.o, h: +b.h, l: +b.l, c: +b.c, v: +b.v || 0 }))
       .filter((b: HistBar) => Number.isFinite(b.t) && [b.o, b.h, b.l, b.c].every(Number.isFinite));
     return bars.sort((a, b) => a.t - b.t).slice(-count);

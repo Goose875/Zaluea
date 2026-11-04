@@ -2,6 +2,7 @@ import { app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { KConfig, LiveTrade, parseKConfig } from '../ksys/live';
+import { XLiveTrade, XStore } from '../ksys/xlive';
 
 /** K system settings and the K trades Keel is running, kept next to Keel's other settings. */
 const file = (n: string) => path.join(app.getPath('userData'), n);
@@ -14,4 +15,16 @@ const isTrade = (t: any): t is LiveTrade => t && typeof t.id === 'string' && typ
 export const kTradeStore = (mode: 'paper' | 'live') => ({
   load(): LiveTrade[] { try { const x = JSON.parse(fs.readFileSync(file(`k_trades_${mode}.json`), 'utf8')); return Array.isArray(x) ? x.filter(isTrade) : []; } catch { return []; } },
   save(t: LiveTrade[]) { fs.writeFileSync(file(`k_trades_${mode}.json`), JSON.stringify(t, null, 1)); }
+});
+
+const isX = (t: any): t is XLiveTrade => t && typeof t.key === 'string' && typeof t.orderSym === 'string' && (t.dir === 'long' || t.dir === 'short')
+  && (t.state === 'working' || t.state === 'open') && Number.isFinite(t.qty) && Number.isFinite(t.stopPts);
+/** K8 / K9 / P1-P3 trades and the setups already decided (so nothing is sent twice), paper and live apart. */
+export const xTradeStore = (mode: 'paper' | 'live'): XStore => ({
+  load() {
+    try { const x = JSON.parse(fs.readFileSync(file(`x_trades_${mode}.json`), 'utf8'));
+      return { trades: Array.isArray(x.trades) ? x.trades.filter(isX) : [], done: Array.isArray(x.done) ? x.done.filter((k: unknown) => typeof k === 'string') : [] }; }
+    catch { return { trades: [], done: [] }; }
+  },
+  save(x) { fs.writeFileSync(file(`x_trades_${mode}.json`), JSON.stringify(x, null, 1)); }
 });
