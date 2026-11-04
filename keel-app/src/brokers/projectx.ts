@@ -1,4 +1,4 @@
-import { AccountInfo, BrokerAdapter, HistBar, Order, Position, Quote, WorkingOrder } from '../core/types';
+import { AccountInfo, BrokerAdapter, HistBar, Order, Position, Quote, WorkingOrder, HistUnit } from '../core/types';
 import type { AccountRecord } from '../core/accounts';
 import { assertSafeUrl } from '../core/net';
 import { SignalRClient } from './signalr';
@@ -164,12 +164,13 @@ export class ProjectXBroker implements BrokerAdapter {
 
   lastPrice(symbol: string) { const c = this.bySymbol.get(symbol); return c ? this.last.get(c.id) : undefined; }
 
-  /** Completed bars for the front-month contract (History/retrieveBars: unit 2 = minute, 3 = hour, 4 = day; at most 20,000 bars). */
-  async getHistory(symbol: string, unit: 'min5' | 'hour' | 'day', count: number): Promise<HistBar[]> {
-    const c = await this.contractFor(symbol), end = new Date();
-    const days = unit === 'min5' ? Math.ceil(count / 276) + 5 : unit === 'hour' ? Math.ceil(count / 22) + 14 : Math.ceil(count * 1.5) + 14;
+  /** Bars for the front-month contract (History/retrieveBars: unit 2 = minute, 3 = hour, 4 = day; at most 20,000 bars).
+   *  Completed bars only, unless `partial` (the chart wants the bar that is still forming). */
+  async getHistory(symbol: string, unit: HistUnit, count: number, partial = false): Promise<HistBar[]> {
+    const U: Record<HistUnit, [number, number, number]> = { min1: [2, 1, 1380], min5: [2, 5, 276], min15: [2, 15, 92], hour: [3, 1, 22], hour4: [3, 4, 6], day: [4, 1, 0.66] };
+    const [u, n, perDay] = U[unit], c = await this.contractFor(symbol), end = new Date(), days = Math.ceil(count / perDay) + (unit === 'day' ? 14 : unit === 'hour' || unit === 'hour4' ? 14 : 5);
     const j = await this.call('/api/History/retrieveBars', { contractId: c.id, live: false, startTime: new Date(end.getTime() - days * 86_400_000).toISOString(),
-      endTime: end.toISOString(), unit: unit === 'min5' ? 2 : unit === 'hour' ? 3 : 4, unitNumber: unit === 'min5' ? 5 : 1, limit: Math.min(20_000, count), includePartialBar: false });
+      endTime: end.toISOString(), unit: u, unitNumber: n, limit: Math.min(20_000, count), includePartialBar: partial });
     const bars: HistBar[] = (j.bars || []).map((b: any) => ({ t: Date.parse(b.t), o: +b.o, h: +b.h, l: +b.l, c: +b.c, v: +b.v || 0 }))
       .filter((b: HistBar) => Number.isFinite(b.t) && [b.o, b.h, b.l, b.c].every(Number.isFinite));
     return bars.sort((a, b) => a.t - b.t).slice(-count);

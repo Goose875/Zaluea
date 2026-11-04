@@ -39,6 +39,7 @@ let xLive: XLive | null = null;
 let ai: KeelAI | null = null;
 let aiTimer: ReturnType<typeof setInterval> | undefined;
 let kBroker: any = null;
+let runBroker: any = null;   // the running bot's connection (also serves chart history)
 // The bot journal: every K / PO3 / Claude note with its New York time (today's notes feed the daily review and the chat).
 const journal: string[] = [];
 const nyStamp = (t = Date.now()) => new Date(wallOf(t)).toISOString().slice(0, 16).replace('T', ' ');
@@ -117,7 +118,7 @@ function webhookSecret(): string {
 
 function stopK() { clearInterval(aiTimer); kBroker = null; kLive?.stop(); kLive = null; xLive?.stop(); xLive = null; kPaper = null; clearInterval(kAcctTimer); kAcct = null; }
 async function stopTrading() {
-  stopK();
+  stopK(); runBroker = null;
   await engine?.shutdown();
   engine = null;
   hook?.close();
@@ -284,6 +285,7 @@ app.whenReady().then(async () => {
     const creds = vault.get(`broker:${brokerId}`);
     if (def.fields.length && !creds) return { ok: false, error: `Save your ${def.name} keys under Connections first.` };
     const broker = ADAPTERS[brokerId](acct ?? undefined);
+    runBroker = broker;
     try { await broker.connect({ ...(creds ?? {}), ...(acct?.brokerRef ? { accountId: acct.brokerRef } : {}) }); }
     catch (err) { void startWatch(); return { ok: false, error: (err as Error).message }; }
     const global = loadRisk();
@@ -363,6 +365,22 @@ app.whenReady().then(async () => {
     if (!allowed(e)) return false;
     clipboard.writeText(JSON.stringify({ secret: webhookSecret(), symbol: 'ES', side: 'buy', qty: 1 }));
     return true;
+  });
+  const HIST_UNITS = ['min1', 'min5', 'min15', 'hour', 'hour4', 'day'];
+  ipcMain.handle('chart:hist', async (e, symbol: unknown, unit: unknown, count: unknown) => {
+    if (!allowed(e) || typeof symbol !== 'string' || !HIST_UNITS.includes(unit as string)) return { ok: false, error: 'Not allowed.' };
+    const b: any = runBroker ?? watch?.broker;
+    if (!b?.getHistory) return { ok: false, error: 'Start the bot (or pick an account) to load chart history.' };
+    try {
+      const n = Math.max(3, Math.min(5000, Number(count) || 1500));
+      const bars = await b.getHistory(symbol, unit, n, true);
+      const root = symbol.replace(/^M(?=NQ|ES|GC)/, ''), same = (s: string) => s.replace(/^M(?=NQ|ES|GC)/, '') === root;
+      const lines: { name: string; side: string; qty: number; entry: number | null; tp: number | null; sl: number | null }[] = [];
+      for (const t of kLive?.trades ?? []) if (same(t.sym)) lines.push({ name: t.id, side: t.dir === 'long' ? 'buy' : 'sell', qty: t.qty, entry: t.entry, tp: t.target, sl: t.stop });
+      for (const t of xLive?.trades ?? []) if (same(t.sym)) lines.push({ name: t.id + (t.state === 'working' ? ' (limit working)' : ''), side: t.dir === 'long' ? 'buy' : 'sell', qty: t.qty, entry: t.entry ?? t.limitPx, tp: t.target, sl: t.stop });
+      for (const t of engine ? engine.openTrades() : []) if (same(t.symbol)) lines.push({ name: t.name, side: t.side, qty: t.qty, entry: t.entry, tp: t.tpPx ?? null, sl: t.slPx ?? null });
+      return { ok: true, bars, lines };
+    } catch (err) { return { ok: false, error: (err as Error).message }; }
   });
   ipcMain.handle('chart:get', (e, symbol: unknown, tf: unknown) => {
     if (!allowed(e) || typeof symbol !== 'string' || ![15, 60, 300].includes(tf as number)) return null;

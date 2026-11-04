@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('keel', {
   checkPine: (text: string) => ipcRenderer.invoke('strategies:checkPine', text),
   copyStrategyAlert: (id: string) => ipcRenderer.invoke('copy:strategyAlert', id),
   chart: (symbol: string, tf: number) => ipcRenderer.invoke('chart:get', symbol, tf),
+  chartHist: (symbol: string, unit: string, count: number) => ipcRenderer.invoke('chart:hist', symbol, unit, count),
   backtest: (id: string, csv: string, opts: unknown) => ipcRenderer.invoke('backtest:run', id, csv, opts),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   kill: () => ipcRenderer.invoke('engine:kill'),

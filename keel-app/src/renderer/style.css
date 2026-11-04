@@ -93,7 +93,8 @@ button.danger-text { color:var(--flare); border-color:#5a2f2b; }
 .chart .lim { stroke:var(--flare); stroke-dasharray:5 5; }
 .chart .line { fill:none; stroke:var(--amber); stroke-width:2.5; stroke-linejoin:round; stroke-linecap:round; }
 .chart text { fill:var(--fog); font:9px var(--gauge); }
-.cbox { margin-top:12px; }
+.cbox { margin-top:12px; } .cbox.lw { height:560px; position:relative; } @media (max-width:900px) { .cbox.lw { height:420px; } }
+button.small { min-height:34px; }
 .cbox .grid { stroke:var(--line); }
 .cbox .ax { fill:var(--fog); font:10px var(--gauge); }
 .cbox .up { fill:var(--sea); stroke:var(--sea); } .cbox .dn { fill:var(--flare); stroke:var(--flare); }

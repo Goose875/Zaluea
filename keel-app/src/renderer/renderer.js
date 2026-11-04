@@ -466,59 +466,71 @@ $('tvAdd').onclick = async () => {
   if (r.ok) { strats = r.list; openEdits.add(strats[strats.length - 1].id); renderStrats(); flash($('tvMsg'), 'Added. Its alert message is open in Your strategies above.'); } else flash($('tvMsg'), r.error, true);
 };
 
-// ---------- live chart ----------
-let chartTf = 60, chartSym = '';
+// ---------- live chart (TradingView Lightweight Charts) ----------
+let chartTf = 'min5', chartSym = '', lw = null, lwSeries = null, lwLines = [], lwKey = '', lwLast = 0, lwBusy = false, lwN = 0;
+// Lightweight Charts shows times as UTC: shift each bar to New York wall-clock so the axis reads New York time.
+const nyParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const nySec = ms => { const p = Object.fromEntries(nyParts.formatToParts(new Date(ms)).map(x => [x.type, x.value])); return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) / 1000; };
+const toBar = b => ({ time: nySec(b.t), open: b.o, high: b.h, low: b.l, close: b.c });
 function chartSymbols(extra) {
   const list = [...new Set([...(savedRisk ? savedRisk.allowedSymbols : []), ...(extra || [])])];
   const sel = $('cSym'), keep = chartSym || list[0] || '';
   if ([...sel.options].map(o => o.value).join() !== list.join()) sel.replaceChildren(...list.map(x => new Option(x, x)));
   sel.value = keep; chartSym = sel.value;
 }
+function lwEnsure() {
+  if (lw || !window.LightweightCharts) return;
+  const box = $('cBox'); box.replaceChildren();
+  lw = LightweightCharts.createChart(box, {
+    autoSize: true, layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#9fb3b7', fontFamily: getComputedStyle(document.body).fontFamily },
+    grid: { vertLines: { color: 'rgba(120,150,155,0.10)' }, horzLines: { color: 'rgba(120,150,155,0.10)' } },
+    rightPriceScale: { borderColor: '#2a3a3f' }, timeScale: { borderColor: '#2a3a3f', timeVisible: true, secondsVisible: false, rightOffset: 8 },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal }, handleScroll: true, handleScale: true
+  });
+  lwSeries = lw.addCandlestickSeries({ upColor: '#6fd3b8', downColor: '#ff7b70', borderVisible: false, wickUpColor: '#6fd3b8', wickDownColor: '#ff7b70' });
+}
+function lwPriceLines(lines) {
+  for (const p of lwLines) lwSeries.removePriceLine(p); lwLines = [];
+  const add = (price, color, title, style) => { if (typeof price === 'number') lwLines.push(lwSeries.createPriceLine({ price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title })); };
+  for (const t of lines) { add(t.entry, '#f0a43a', `${t.name} in`, 0); add(t.tp, '#6fd3b8', `${t.name} target`, 2); add(t.sl, '#ff7b70', `${t.name} stop`, 2); }
+  const leg = $('cLegend'); leg.replaceChildren();
+  for (const t of lines) {
+    const row = el('div', 'row2'); row.append(el('strong', '', `${t.side === 'buy' ? 'Long' : 'Short'} ${t.qty} · ${t.name}`));
+    const part = (cls, label, v) => { const sp = el('span'); sp.append(el('span', 'dot ' + cls), document.createTextNode(`${label} ${typeof v === 'number' ? v.toFixed(2) : 'none'}`)); return sp; };
+    row.append(part('e', 'Entry', t.entry), part('t', 'Target', t.tp), part('s', 'Stop', t.sl)); leg.append(row);
+  }
+  if (!lines.length) leg.append(el('p', 'empty', 'No open trades on this market. Entry, target and stop lines show on the chart when the bot opens one.'));
+}
 $('cSym').onchange = () => { chartSym = $('cSym').value; drawLive(); };
-document.querySelectorAll('#cTf button').forEach(b => { b.onclick = () => { chartTf = Number(b.dataset.tf); document.querySelectorAll('#cTf button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); drawLive(); }; });
+document.querySelectorAll('#cTf button').forEach(b => { b.onclick = () => { chartTf = b.dataset.tf; document.querySelectorAll('#cTf button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); drawLive(); }; });
+$('cFit').onclick = () => { if (lw && lwN) lw.timeScale().setVisibleLogicalRange({ from: Math.max(0, lwN - 150), to: lwN + 8 }); };
 
 async function drawLive() {
-  if (!cat) return;
-  chartSymbols();
-  if (!chartSym) return;
-  const d = await window.keel.chart(chartSym, chartTf); if (!d) return;
-  chartSymbols(d.symbols);
-  const box = $('cBox'), bars = d.bars;
-  $('cLast').textContent = bars.length ? `${chartSym}  ${bars[bars.length - 1].c.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : chartSym;
-  if (bars.length < 2) { box.replaceChildren(el('p', 'empty', 'Waiting for prices. Pick an account at the top or start the bot.')); $('cLegend').replaceChildren(); return; }
-  const W = 900, H = 380, L = 8, R = 92, T = 12, B = 24, n = bars.length;
-  const lv = d.trades.flatMap(t => [t.entry, t.tp, t.sl]).filter(v => typeof v === 'number');
-  let lo = Math.min(...bars.map(b => b.l), ...lv), hi = Math.max(...bars.map(b => b.h), ...lv); const pad = (hi - lo) * 0.06 || 1; lo -= pad; hi += pad;
-  const cw = (W - L - R) / n, x = i => L + i * cw + cw / 2, y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
-  const NS = 'http://www.w3.org/2000/svg', mk = (nme, a) => { const e2 = document.createElementNS(NS, nme); for (const k in a) e2.setAttribute(k, a[k]); return e2; };
-  const svg = mk('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `${chartSym} price chart with open trade levels` });
-  for (let i = 0; i <= 4; i++) { const v = lo + ((hi - lo) * i) / 4, yy = y(v); svg.append(mk('line', { class: 'grid', x1: L, x2: W - R, y1: yy, y2: yy })); const t = mk('text', { class: 'ax', x: W - R + 6, y: yy + 3 }); t.textContent = v.toFixed(2); svg.append(t); }
-  bars.forEach((b, i) => {
-    const up = b.c >= b.o, cls = up ? 'up' : 'dn';
-    svg.append(mk('line', { class: 'wick ' + cls, x1: x(i), x2: x(i), y1: y(b.h), y2: y(b.l) }));
-    const top = y(Math.max(b.o, b.c)), hgt = Math.max(1, Math.abs(y(b.o) - y(b.c)));
-    svg.append(mk('rect', { class: cls, x: x(i) - Math.max(1, cw * 0.32), y: top, width: Math.max(2, cw * 0.64), height: hgt }));
-  });
-  for (const [lbl, anchor] of [[0, 'start'], [Math.floor(n / 2), 'middle'], [n - 1, 'end']]) { const t = mk('text', { class: 'ax', x: anchor === 'start' ? L : anchor === 'end' ? W - R : x(lbl), y: H - 6, 'text-anchor': anchor }); t.textContent = new Date(bars[lbl].t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); svg.append(t); }
-  const tag = (v, cls, text, color) => {
-    if (typeof v !== 'number') return;
-    const yy = y(v); svg.append(mk('line', { class: 'lvl ' + cls, x1: L, x2: W - R, y1: yy, y2: yy }));
-    const g = mk('g', { class: 'tag' }); g.append(mk('rect', { x: W - R + 2, y: yy - 8, width: R - 4, height: 16, fill: color }));
-    const t = mk('text', { x: W - R + 6, y: yy + 3.5 }); t.textContent = text; g.append(t); svg.append(g);
-  };
-  const leg = $('cLegend'); leg.replaceChildren();
-  for (const t of d.trades) {
-    const dir = t.side === 'buy' ? 1 : -1, last = bars[n - 1].c;
-    tag(t.entry, 'entry', `IN ${t.entry?.toFixed(2)}`, '#c8a24a'); tag(t.tp, 'tp', `TP ${t.tp?.toFixed(2)}`, '#6fd3b8'); tag(t.sl, 'sl', `SL ${t.sl?.toFixed(2)}`, '#ff7b70');
-    const row = el('div', 'row2');
-    row.append(el('strong', '', `${t.side === 'buy' ? 'Long' : 'Short'} ${t.qty} \u00b7 ${t.name}`));
-    const part = (cls, label, v) => { const sp = el('span'); sp.append(el('span', 'dot ' + cls), document.createTextNode(`${label} ${typeof v === 'number' ? v.toFixed(2) : 'none'}`)); return sp; };
-    row.append(part('e', 'Entry', t.entry), part('t', 'Target', t.tp), part('s', 'Stop', t.sl));
-    if (typeof t.entry === 'number') row.append(el('span', (last - t.entry) * dir >= 0 ? 'pos' : 'neg', `${((last - t.entry) * dir >= 0 ? '+' : '\u2212')}${Math.abs(last - t.entry).toFixed(2)} pts`));
-    leg.append(row);
-  }
-  if (!d.trades.length) leg.append(el('p', 'empty', 'No open trades on this market. Entry, target and stop lines show here when the bot opens one.'));
-  box.replaceChildren(svg);
+  if (!cat || lwBusy) return;
+  chartSymbols(); if (!chartSym) return;
+  lwEnsure(); if (!lw) { $('cLegend').replaceChildren(el('p', 'empty', 'The chart library did not load.')); return; }
+  const key = chartSym + '|' + chartTf, full = key !== lwKey;
+  if (!full && Date.now() - lwLast < 3000) return;          // newest bars every 3 s
+  lwBusy = true;
+  try {
+    const r = await window.keel.chartHist(chartSym, chartTf, full ? (chartTf === 'day' ? 600 : 2000) : 3);
+    if (!r || !r.ok) { if (full) { lwSeries.setData([]); lwKey = ''; } $('cLast').textContent = chartSym; $('cLegend').replaceChildren(el('p', 'empty', r ? r.error : 'Start the bot or pick an account.')); return; }
+    const data = r.bars.map(toBar).sort((x, y) => x.time - y.time).filter((x, i, a) => i === 0 || x.time !== a[i - 1].time);
+    if (full) {
+      lwSeries.setData(data); lwKey = key; lwN = data.length;
+      lwSeries.applyOptions({ priceFormat: { type: 'price', precision: /GC/.test(chartSym) ? 1 : 2, minMove: /GC/.test(chartSym) ? 0.1 : 0.25 } });
+      const show = () => lw.timeScale().setVisibleLogicalRange({ from: Math.max(0, data.length - 150), to: data.length + 8 });
+      show(); requestAnimationFrame(show); setTimeout(show, 120);   // again once the chart knows its width
+    } else {
+      const lastT = lwSeries.data().length ? lwSeries.data()[lwSeries.data().length - 1].time : 0;
+      for (const bar of data) if (bar.time >= lastT) { lwSeries.update(bar); if (bar.time > lastT) lwN++; }
+    }
+    lwLast = Date.now();
+    const lastBar = data[data.length - 1];
+    $('cLast').textContent = lastBar ? `${chartSym}  ${lastBar.close.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : chartSym;
+    lwPriceLines(r.lines || []);
+  } catch (err) { $('cLegend').replaceChildren(el('p', 'empty', String(err.message || err))); }
+  finally { lwBusy = false; }
 }
 
 // ---------- backtest ----------

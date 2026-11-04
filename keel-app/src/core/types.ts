@@ -8,6 +8,7 @@ export interface Order {
 }
 /** A working (unfilled) order at the broker. */
 export interface WorkingOrder { id: string; symbol: string; side: Side; qty: number; type: 'market' | 'limit' | 'stop' | 'other'; price: number | null }
+export type HistUnit = 'min1' | 'min5' | 'min15' | 'hour' | 'hour4' | 'day';
 export interface HistBar { t: number; o: number; h: number; l: number; c: number; v: number }
 export interface Position { symbol: string; qty: number; avgPrice: number; pnl?: number }
 export interface DayResult { date: string; pnl: number }
@@ -38,7 +39,7 @@ export interface BrokerAdapter {
   /** Start live prices for these symbols (if the broker has a price feed). */
   subscribe?(symbols: string[]): Promise<void>;
   /** Optional: completed history bars (t = bar open time, ms UTC) for the front-month contract, oldest first. */
-  getHistory?(symbol: string, unit: 'min5' | 'hour' | 'day', count: number): Promise<HistBar[]>;
+  getHistory?(symbol: string, unit: HistUnit, count: number, partial?: boolean): Promise<HistBar[]>;
   /** Optional: working orders, and changing / cancelling one. Needed for broker-side stops (K system live mode). */
   getOpenOrders?(): Promise<WorkingOrder[]>;
   modifyOrder?(id: string, change: { price: number }): Promise<void>;
