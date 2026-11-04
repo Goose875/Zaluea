@@ -27,6 +27,7 @@ import { PaperOrders } from '../ksys/paperOrders';
 import { loadKConfig, saveKConfig, kTradeStore, xTradeStore } from './kstore';
 import RANKINGS from '../ksys/rankings.json';
 import { KeelAI, parseAIConfig } from './ai';
+import { ping, checkWebhook, testPing } from './discord';
 import { listRithmicAccounts } from '../brokers/rithmic';
 import type { AccountRecord } from '../core/accounts';
 import { ProjectXBroker } from '../brokers/projectx';
@@ -44,7 +45,8 @@ let aiTimer: ReturnType<typeof setInterval> | undefined;
 let kBroker: any = null;
 let runBroker: any = null;
 let runData: any = null;
-let chartData: Promise<any> | null = null;   // TopstepX prices for the chart when the account is on Rithmic Test     // a separate price connection when the account's own has no data   // the running bot's connection (also serves chart history)
+let chartData: Promise<any> | null = null;
+const chartTicks = new Map<string, { price: number; ts: number }>();   // TopstepX prices for the chart when the account is on Rithmic Test     // a separate price connection when the account's own has no data   // the running bot's connection (also serves chart history)
 /** Other accounts trading at the same time (Accounts page "Trade with Keel"). */
 interface Follower { acct: AccountRecord; broker: any; k: KLive; x: XLive; paper: PaperOrders | null; error: string; stop: () => Promise<void>; flatten: () => Promise<void> }
 let followers: Follower[] = [];
@@ -149,7 +151,7 @@ function createWindow() {
 /** Starts K1-K9 / P1-P3 on more accounts, each with its own connection, risk guard, paper desk and trade records. */
 async function startFollowers(list: AccountRecord[], kc: ReturnType<typeof loadKConfig>, say: (m: string) => void) {
   for (const a of list) {
-    const tag = (m: string) => { const line = `[${a.label}] ${m}`; jot(line); say(line); };
+    const tag = (m: string, k?: string) => { const line = `[${a.label}] ${m}`; jot(line); say(line); if (k === 'trade') ping(line); };
     try {
       const def = BROKERS.find(b => b.id === a.connection), creds = vault.get(`broker:${a.connection}`);
       if (!def || (def.fields.length && !creds)) { tag(`not started: save your ${def?.name ?? a.connection} login first.`); continue; }
@@ -193,6 +195,8 @@ async function dataFor(broker: any, say: (m: string) => void): Promise<any> {
     return d;
   } catch (err) { say(`No price data on this account, and TopstepX prices failed too (${(err as Error).message}).`); return broker; }
 }
+
+const mainLabel = () => loadAccounts(conns()).accounts.find(a => a.id === activeAccount)?.label ?? 'Paper account';
 
 /** Before any entry is sent: the news pause, then (if switched on for this mode) Claude's entry check. */
 async function aiGate(ctx: EntryContext, mode: string): Promise<{ ok: boolean; reason?: string }> {
@@ -371,13 +375,13 @@ app.whenReady().then(async () => {
       kLive = new KLive(kc, {
         data: dataSrc, desk, risk: guard, store: kTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
-        account: () => kAcct, note: m => { jot(m); e.say(m); }, xHolds: sym => !!xLive?.holds(sym), gate: ctx => aiGate(ctx, kc.mode)
+        account: () => kAcct, note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, xHolds: sym => !!xLive?.holds(sym), gate: ctx => aiGate(ctx, kc.mode)
       });
       // K8, K9, P1-P3: same order desk, same risk limits, one position per market shared with K1-K7.
       xLive = new XLive(kc, {
         data: dataSrc, desk, risk: guard, store: xTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
-        note: m => { jot(m); e.say(m); }, kHolds: sym => !!kLive?.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode)
+        note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, kHolds: sym => !!kLive?.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode)
       });
       const pollAcct = async () => {
         try { const i = broker.getAccount ? await broker.getAccount() : null; if (i) kAcct = { equity: i.balance, floor: i.floor ?? ((acct?.size || i.size) - (acct?.maxLoss || i.maxLoss)) }; } catch { /* keep the last value */ }
@@ -385,7 +389,7 @@ app.whenReady().then(async () => {
       void pollAcct(); kAcctTimer = setInterval(() => void pollAcct(), 60_000); (kAcctTimer as any).unref?.();
       engine.onHalt = () => { kLive?.stop(); kLive?.forgetAll(); xLive?.stop(); xLive?.forgetAll(); void kPaper?.closeAll(); for (const f of followers) void f.flatten(); };
     }
-    engine.onTick = q => { bars.add(q); kPaper?.onQuote(q); };
+    engine.onTick = q => { if (runData) return; bars.add(q); kPaper?.onQuote(q); };   // with a separate price source, that source feeds both
     await seedBars(broker);
     await engine.start(kLive ? [...new Set([...limits.allowedSymbols, ...K_SYMBOLS])] : limits.allowedSymbols);
     if (kErr) engine.say(`K system is off: ${kErr}`);
@@ -404,7 +408,7 @@ app.whenReady().then(async () => {
       // Strategies off: chart trading only. Real orders on this account and every account switched on under Accounts.
       const mc = { ...kc, mode: 'live' as const, enabled: {} as Record<string, boolean> }, e = engine;
       xLive = new XLive(mc, { data: broker, desk: broker as unknown as OrderDesk, risk: guard, store: xTradeStore('live'), dailyPnL: () => broker.getDailyPnL(),
-        note: m => { jot(m); e.say(m); }, kHolds: () => false });
+        note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, kHolds: () => false });
       xLive.start();
       const others = st.accounts.filter(a => a.trade !== false && a.id !== acct?.id && a.connection in ADAPTERS && a.connection !== 'paper');
       engine.say(`Strategies are off, so the bot is in chart-trading mode: orders you place from the chart are REAL orders on ${1 + others.length} account${others.length ? 's' : ''}.`);
@@ -457,7 +461,7 @@ app.whenReady().then(async () => {
         return { account: r.label, ok: !why, why }; }
       catch (err) { return { account: r.label, ok: false, why: (err as Error).message }; }
     }));
-    for (const x of results) jot(`Chart ${o.dir} ${o.type} ${o.qty} ${o.orderSym} on ${x.account}: ${x.ok ? 'sent' : 'not sent, ' + x.why}`);
+    for (const x of results) { const line = `Chart ${o.dir} ${o.type} ${o.qty} ${o.orderSym} on ${x.account}: ${x.ok ? 'sent' : 'not sent, ' + x.why}`; jot(line); if (x.ok) ping(line); }
     return { ok: true, results };
   });
   ipcMain.handle('chart:flatten', async (e, root: unknown, accounts: unknown) => {
@@ -467,13 +471,21 @@ app.whenReady().then(async () => {
     return { ok: true, results };
   });
 
+  const twinOf = (s: string) => (/^M(NQ|ES|GC|YM|CL)$/.test(s) ? s.slice(1) : /^(NQ|ES|GC|YM|CL)$/.test(s) ? 'M' + s : s);
+  /** The newest live tick for a market from the chart's price source (null = no live prices yet). */
+  const liveTick = (symbol: string) => {
+    const src = chartData && !runData && !runBroker ? chartTicks : chartData && runBroker?.id === 'rithmic' && runBroker?.isTest && !runData ? chartTicks : bars.last;
+    const a = src.get(symbol), b = src.get(twinOf(symbol)); return a && b ? (a.ts >= b.ts ? a : b) : a ?? b ?? null;
+  };
+  ipcMain.handle('chart:tick', (e, symbol: unknown) => (allowed(e) && typeof symbol === 'string' ? { tick: liveTick(symbol), now: Date.now() } : null));
   const HIST_UNITS = ['min1', 'min5', 'min15', 'hour', 'hour4', 'day'];
   ipcMain.handle('chart:hist', async (e, symbol: unknown, unit: unknown, count: unknown) => {
     if (!allowed(e) || typeof symbol !== 'string' || !HIST_UNITS.includes(unit as string)) return { ok: false, error: 'Not allowed.' };
     let b: any = runData ?? runBroker ?? watch?.broker;
     if (b && b.id === 'rithmic' && b.isTest && vault.get('broker:projectx')) {          // Rithmic Test: show real prices from TopstepX
-      if (!chartData) { const d: any = ADAPTERS.projectx(); chartData = d.connect(vault.get('broker:projectx')).then(() => d).catch((err: Error) => { chartData = null; throw err; }); }
-      b = await chartData;
+      if (!chartData) { const d: any = ADAPTERS.projectx(); d.onQuote((q: any) => chartTicks.set(q.symbol, { price: q.price, ts: Date.now() }));
+        chartData = d.connect(vault.get('broker:projectx')).then(() => d).catch((err: Error) => { chartData = null; throw err; }); }
+      b = await chartData; await b.subscribe?.([symbol, twinOf(symbol)]).catch(() => {});
     }
     if (!b?.getHistory) return { ok: false, error: 'Start the bot (or pick an account) to load chart history.' };
     try {
@@ -484,7 +496,7 @@ app.whenReady().then(async () => {
       for (const t of kLive?.trades ?? []) if (same(t.sym)) lines.push({ name: t.id, side: t.dir === 'long' ? 'buy' : 'sell', qty: t.qty, entry: t.entry, tp: t.target, sl: t.stop });
       for (const t of xLive?.trades ?? []) if (same(t.sym)) lines.push({ name: t.id + (t.state === 'working' ? ' (limit working)' : ''), side: t.dir === 'long' ? 'buy' : 'sell', qty: t.qty, entry: t.entry ?? t.limitPx, tp: t.target, sl: t.stop });
       for (const t of engine ? engine.openTrades() : []) if (same(t.symbol)) lines.push({ name: t.name, side: t.side, qty: t.qty, entry: t.entry, tp: t.tpPx ?? null, sl: t.slPx ?? null });
-      return { ok: true, bars, lines };
+      return { ok: true, bars, lines, tick: liveTick(symbol) };
     } catch (err) { return { ok: false, error: (err as Error).message }; }
   });
   ipcMain.handle('chart:get', (e, symbol: unknown, tf: unknown) => {
@@ -508,7 +520,7 @@ app.whenReady().then(async () => {
       return { ok: true, pretend: !(typeof csv === 'string' && csv), report: { ...r, trades: r.trades.slice(-300), tradeCount: r.trades.length } };
     } catch (err) { return { ok: false, error: (err as Error).message }; }
   });
-  ipcMain.handle('engine:kill', async e => { if (allowed(e)) await engine?.halt(); });
+  ipcMain.handle('engine:kill', async e => { if (allowed(e)) { ping('Stop all trading pressed: every account is being flattened.'); await engine?.halt(); } });
 
   // ---------- K system ----------
   // ---------- accounts on your logins ----------
@@ -537,6 +549,14 @@ app.whenReady().then(async () => {
       return st;
     });
   });
+
+  // ---------- Discord ----------
+  ipcMain.handle('discord:get', e => (allowed(e) ? { saved: vault.has('discord') } : null));
+  ipcMain.handle('discord:save', async (e, url: unknown) => {
+    if (!allowed(e) || typeof url !== 'string') return { ok: false, error: 'Not allowed.' };
+    try { const u = checkWebhook(url); await testPing(u); vault.set('discord', { url: u }); return { ok: true }; } catch (err) { return { ok: false, error: (err as Error).message }; }
+  });
+  ipcMain.handle('discord:remove', e => { if (allowed(e)) vault.remove('discord'); return { ok: true }; });
 
   // ---------- Claude ----------
   ipcMain.handle('ai:get', e => allowed(e) && ai ? { cfg: ai.cfg, hasKey: ai.hasKey(), preflight: ai.state.preflight, review: ai.state.review, chat: ai.state.chat,

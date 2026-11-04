@@ -5,8 +5,11 @@ export interface Candle { t: number; o: number; h: number; l: number; c: number 
 /** Keeps 15-second candles per market from live prices, for the chart. Larger sizes are built from these. */
 export class BarStore {
   private base = new Map<string, Candle[]>();
+  /** Last live tick per symbol (history seeding does not count). */
+  last = new Map<string, { price: number; ts: number }>();
   static readonly BASE = 15_000;
   add(q: Quote) {
+    this.last.set(q.symbol, { price: q.price, ts: Date.now() });
     const t = Math.floor(q.ts / BarStore.BASE) * BarStore.BASE;
     const arr = this.base.get(q.symbol) ?? []; const last = arr[arr.length - 1];
     if (last && last.t === t) { last.h = Math.max(last.h, q.price); last.l = Math.min(last.l, q.price); last.c = q.price; }

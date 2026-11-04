@@ -32,7 +32,7 @@ const selAcct = () => store.accounts.find(a => a.id === store.selected) || null;
 // ---------- navigation ----------
 let view = 'dash';
 function go(v) {
-  view = v; if (v === 'chart') { requestAnimationFrame(() => requestAnimationFrame(drawLive)); void tkRender(); } if (v === 'test') fillBtStrats(); if (v === 'k') kLoad(); if (v === 'rank') rkLoad(); if (v === 'ai') aiLoad();
+  view = v; if (v === 'chart') { requestAnimationFrame(() => requestAnimationFrame(drawLive)); void tkRender(); } if (v === 'test') fillBtStrats(); if (v === 'k') kLoad(); if (v === 'rank') rkLoad(); if (v === 'ai') aiLoad(); if (v === 'conn') dcLoad();
   for (const k of Object.keys(TITLES)) $('v-' + k).hidden = k !== v;
   document.querySelectorAll('#nav button').forEach(b => { if (b.dataset.go === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   $('title').textContent = v === 'dash' ? greeting() : TITLES[v];
@@ -550,7 +550,7 @@ function lwPriceLines(lines) {
 $('cSym').onchange = () => { chartSym = $('cSym').value; drawLive(); };
 document.querySelectorAll('#cTf button').forEach(b => { b.onclick = () => { chartTf = b.dataset.tf; document.querySelectorAll('#cTf button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); drawLive(); }; });
 // ---------- trading from the chart ----------
-let tkSel = null;
+let tkSel = null, tkCan = false;
 async function tkRender() {
   const r = await window.keel.chartAccounts(); if (!r) return;
   const box = $('tkAccts'), keep = tkSel; box.replaceChildren();
@@ -561,12 +561,14 @@ async function tkRender() {
     cb.onchange = () => { tkSel = new Set([...document.querySelectorAll('#tkAccts input:checked')].map(x => x.value)); };
     l.append(cb, document.createTextNode(' ' + a.label)); box.append(l);
   }
-  ['tkBuy', 'tkSell', 'tkFlat'].forEach(id => { $(id).disabled = !r.running || !r.accounts.length; });
+  tkCan = r.running && r.accounts.length > 0;
+  ['tkBuy', 'tkSell', 'tkFlat'].forEach(id => { $(id).disabled = !tkCan || (id !== 'tkFlat' && lwStale); });
 }
 const tkAccounts = () => [...document.querySelectorAll('#tkAccts input:checked')].map(x => x.value);
 const tkReport = res => { if (!res || !res.ok) { $('tkMsg').textContent = res ? res.error : 'Something went wrong.'; return; }
   $('tkMsg').textContent = res.results.map(x => `${x.account}: ${x.ok ? 'sent' : 'not sent (' + x.why + ')'}`).join(' · '); };
 async function tkSend(dir) {
+  if (lwStale) { $('tkMsg').textContent = 'The chart is not live right now (no price for 20 seconds), so chart trading is paused.'; return; }
   const px = $('tkPx').value.trim(), qty = Number($('tkQty').value), ids = tkAccounts();
   if (!ids.length) { $('tkMsg').textContent = 'Tick at least one account.'; return; }
   const what = `${dir === 'long' ? 'BUY' : 'SELL'} ${qty} ${chartSym} ${px ? 'limit @ ' + px : 'at market'}${Number($('tkStop').value) ? ', stop ' + $('tkStop').value + ' pts' : ', NO stop'}${Number($('tkTgt').value) ? ', target ' + $('tkTgt').value + ' pts' : ''}`;
@@ -585,12 +587,28 @@ $('tkFlat').onclick = async () => {
 
 $('cFit').onclick = () => { if (lw && lwN) lw.timeScale().setVisibleLogicalRange({ from: Math.max(0, lwN - 150), to: lwN + 8 }); };
 
+// Live prices: the forming candle follows each tick; a chart without a tick for 20 s is STALE and can't be traded from.
+let lwTick = null, lwStale = true;
+const TF_MS = { min1: 60e3, min5: 3e5, min15: 9e5, hour: 36e5, hour4: 144e5, day: 864e5 };
+function lwLiveUpdate(tick, now) {
+  const age = tick ? Math.max(0, (now - tick.ts) / 1000) : null; lwStale = age === null || age > 20;
+  const pill = $('cLive'); pill.className = 'livepill ' + (lwStale ? 'off' : 'on');
+  pill.textContent = age === null ? '● NO LIVE PRICES' : lwStale ? `● STALE · last tick ${age < 120 ? Math.round(age) + 's' : Math.round(age / 60) + 'm'} ago` : `● LIVE · ${age < 1 ? 'now' : Math.round(age) + 's ago'}`;
+  pill.title = lwStale ? 'No new price for 20 seconds (market closed, or the price feed stopped). Trading from the chart is paused.' : 'Prices are streaming.';
+  for (const id of ['tkBuy', 'tkSell']) { const b = $(id); b.disabled = lwStale || !tkCan; b.title = lwStale ? 'The chart is not live, so trading from it is paused.' : ''; }
+  if (!tick || lwStale || !lwSeries) return;
+  const data = lwSeries.data(); if (!data.length) return;
+  const lastBar = data[data.length - 1], period = (TF_MS[chartTf] || 3e5) / 1000, tSec = nySec(tick.ts);
+  if (chartTf !== 'day' && tSec >= lastBar.time + period) lwSeries.update({ time: lastBar.time + Math.floor((tSec - lastBar.time) / period) * period, open: tick.price, high: tick.price, low: tick.price, close: tick.price });
+  else if (tSec >= lastBar.time || chartTf === 'day') lwSeries.update({ ...lastBar, high: Math.max(lastBar.high, tick.price), low: Math.min(lastBar.low, tick.price), close: tick.price });
+  $('cLast').textContent = `${chartSym}  ${tick.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 async function drawLive() {
   if (!cat || lwBusy) return;
   chartSymbols(); if (!chartSym) return;
   lwEnsure(); if (!lw) return;
   const key = chartSym + '|' + chartTf, full = key !== lwKey;
-  if (!full && Date.now() - lwLast < 3000) return;          // newest bars every 3 s
+  if (!full && Date.now() - lwLast < 5000) { const t = await window.keel.chartTick(chartSym); if (t) lwLiveUpdate(t.tick, t.now); return; }   // ticks every refresh, bars every 5 s
   lwBusy = true;
   try {
     const r = await window.keel.chartHist(chartSym, chartTf, full ? (chartTf === 'day' ? 600 : 2000) : 3);
@@ -609,7 +627,7 @@ async function drawLive() {
     lwLast = Date.now();
     const lastBar = data[data.length - 1];
     $('cLast').textContent = lastBar ? `${chartSym}  ${lastBar.close.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : chartSym;
-    lwPriceLines(r.lines || []);
+    lwPriceLines(r.lines || []); lwLiveUpdate(r.tick, Date.now());
   } catch (err) { $('cLegend').replaceChildren(el('p', 'empty', String(err.message || err))); }
   finally { lwBusy = false; }
 }
@@ -884,6 +902,12 @@ document.querySelectorAll('#kMode button').forEach(b => {
     kDraft = { ...kReadForm(), mode }; await kSave(true);
   };
 });
+
+// ---------- Discord ----------
+async function dcLoad() { const r = await window.keel.discordGet(); if (r) { $('dcUrl').placeholder = r.saved ? 'Saved (paste a new one to replace it)' : 'https://discord.com/api/webhooks/...'; $('dcDel').hidden = !r.saved; } }
+$('dcSave').onclick = async () => { const u = $('dcUrl').value.trim(); if (!u) return; $('dcMsg').textContent = 'Sending a test message…';
+  const r = await window.keel.discordSave(u); $('dcUrl').value = ''; $('dcMsg').textContent = r.ok ? 'Saved. Check Discord for the test message.' : r.error; dcLoad(); };
+$('dcDel').onclick = async () => { await window.keel.discordRemove(); $('dcMsg').textContent = 'Discord pings turned off.'; dcLoad(); };
 
 // ---------- Claude ----------
 let aiData = null, aiFormDirty = false;

@@ -67,7 +67,7 @@
                 <div class="seg small" id="cTf" role="group" aria-label="Timeframe"><button type="button" data-tf="min1">1m</button><button type="button" data-tf="min5" aria-pressed="true">5m</button><button type="button" data-tf="min15">15m</button><button type="button" data-tf="hour">1h</button><button type="button" data-tf="hour4">4h</button><button type="button" data-tf="day">1D</button></div>
                 <button type="button" id="cFit" class="ghost small">Latest</button>
               </div>
-              <p id="cLast" class="clast"></p>
+              <div class="liverow"><span id="cLive" class="livepill">…</span><p id="cLast" class="clast"></p></div>
             </div>
             <div id="cBox" class="cbox lw"></div>
             <p class="hint">Drag to move, scroll or pinch to zoom, drag the price or time axis to stretch it. Times are New York time. Chart by TradingView Lightweight Charts.</p>
@@ -326,6 +326,12 @@
         <section id="v-conn" class="view" hidden>
           <p class="say">Save your prop firm logins here. They’re encrypted by Windows and never leave this computer.</p>
           <div id="logins" class="logins"></div>
+          <div class="panel">
+            <h2>Discord pings</h2>
+            <p class="hint">Get a Discord message whenever Keel enters or closes a trade on any account. In Discord: Server Settings &rarr; Integrations &rarr; Webhooks &rarr; New Webhook &rarr; pick the channel &rarr; Copy Webhook URL, and paste it here. Keel sends a test message when you save.</p>
+            <div class="mixrow"><input id="dcUrl" type="password" placeholder="https://discord.com/api/webhooks/..." autocomplete="off" aria-label="Discord webhook URL"><button id="dcSave" type="button">Save and test</button><button id="dcDel" type="button" class="ghost">Remove</button></div>
+            <p id="dcMsg" class="hint" role="status" aria-live="polite"></p>
+          </div>
         </section>
 
         <section id="v-risk" class="view" hidden>

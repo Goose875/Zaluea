@@ -258,6 +258,8 @@ button.ghost { background:transparent; color:var(--chalk); border:1px solid var(
 .mixrow input[type=text], .mixrow input[type=password] { flex:1; min-width:240px; }
 button.buy { background:#2f9e83; color:#04140f; min-width:110px; } button.sell { background:#e2645a; color:#1a0503; min-width:110px; }
 .tkaccts { display:flex; flex-wrap:wrap; gap:8px 18px; margin:6px 0 12px; }
+.liverow { display:flex; align-items:center; gap:12px; } .livepill { font:600 12px var(--gauge); padding:3px 9px; border-radius:20px; border:1px solid var(--line2); color:var(--fog); }
+.livepill.on { color:#6fd3b8; border-color:#2f6f61; } .livepill.off { color:#ff7b70; border-color:#7a3530; }
 .navsep { margin:14px 12px 4px; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--fog); opacity:.7; }
 .mixrow { display:flex; gap:10px; flex-wrap:wrap; align-items:center; } .mixrow select { flex:1; min-width:280px; }
 details.more { margin-top:10px; } details.more summary { cursor:pointer; color:var(--fog); font-size:13px; margin-bottom:8px; }
