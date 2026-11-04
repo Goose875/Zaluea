@@ -221,7 +221,7 @@ function renderAccounts() {
     if (accts.length > 1) { const b = el('button', 'ghost small', 'Edit all'); b.onclick = () => openDrawer('bulk', accts.map(a => a.id), b); head.append(b); }
     g.append(head);
     const wrap = el('div', 'tscroll'), t = el('table'), hr = el('tr');
-    for (const h of ['Account', 'Type', 'Plan', 'Size', 'Drawdown', 'Max loss', 'Daily loss', 'Consistency', 'Target', 'Contracts', '']) hr.append(Object.assign(el('th', ['Size', 'Max loss', 'Daily loss', 'Consistency', 'Target', 'Contracts'].includes(h) ? 'r' : '', h), { scope: 'col' }));
+    for (const h of ['Trade', 'Account', 'Type', 'Plan', 'Size', 'Drawdown', 'Max loss', 'Daily loss', 'Consistency', 'Target', 'Contracts', '']) hr.append(Object.assign(el('th', ['Size', 'Max loss', 'Daily loss', 'Consistency', 'Target', 'Contracts'].includes(h) ? 'r' : '', h), { scope: 'col' }));
     t.append(hr);
     for (const a of accts) {
       const r = el('tr'), name = el('td'), conn = cat.brokers.find(b => b.id === a.connection);
@@ -229,6 +229,10 @@ function renderAccounts() {
       if (a.id === store.selected) top.append(el('span', 'tag sel', 'In use'));
       name.append(top, el('div', 'asub', conn ? conn.name : a.connection));
       const caps = a.maxMini || a.maxMicro ? `${a.maxMini || '\u2014'} mini / ${a.maxMicro || '\u2014'} micro` : '\u2014';
+      const tw = el('td'), lab = el('label', 'switch'), cb = el('input'); cb.type = 'checkbox'; cb.checked = a.trade !== false;
+      cb.setAttribute('aria-label', `Keel may trade ${a.label}`); cb.disabled = running; cb.title = running ? 'Stop the bot to change which accounts trade.' : '';
+      cb.onchange = async () => { const res = await window.keel.updateAccounts([a.id], { trade: cb.checked }); if (res.ok) { store = res.store; renderAccounts(); } else { notice(res.error); cb.checked = !cb.checked; } };
+      lab.append(cb, el('span')); tw.append(lab); r.append(tw);
       r.append(name, el('td', '', STAGE[a.stage][0]), el('td', '', a.plan || '\u2014'), el('td', 'r', a.size ? k$(a.size) : '\u2014'), el('td', '', DD[a.drawdown]),
         el('td', 'r', a.maxLoss ? plain(a.maxLoss) : '\u2014'), el('td', 'r', a.dailyLoss ? plain(a.dailyLoss) : '\u2014'), el('td', 'r', a.consistencyPct ? a.consistencyPct + '%' : '\u2014'),
         el('td', 'r', a.profitTarget ? plain(a.profitTarget) : '\u2014'), el('td', 'r', caps));
@@ -241,6 +245,34 @@ function renderAccounts() {
   }
 }
 $('acctSearch').oninput = renderAccounts;
+let found = [];
+$('findAccts').onclick = async () => {
+  const b = $('findAccts'); b.disabled = true; b.textContent = 'Asking your logins…'; $('findMsg').textContent = '';
+  try {
+    const r = await window.keel.discoverAccounts();
+    if (!r || !r.ok) { $('findMsg').textContent = r ? r.error : 'Something went wrong.'; return; }
+    found = r.accounts; const t = $('foundTable'); t.replaceChildren();
+    $('findMsg').textContent = `${found.length} account${found.length === 1 ? '' : 's'} found.` + (r.errors.length ? ' ' + r.errors.join(' ') : '');
+    if (!found.length) { $('importAccts').hidden = true; return; }
+    const hr = el('tr'); for (const h of ['', 'Account', 'Login', 'Balance', 'Status']) hr.append(el('th', '', h)); t.append(hr);
+    found.forEach((x, i) => {
+      const row = el('tr'), c = el('td'), cb = el('input'); cb.type = 'checkbox'; cb.dataset.i = String(i); cb.disabled = !!x.added; cb.checked = !x.added && x.canTrade;
+      cb.setAttribute('aria-label', `Add ${x.name}`); c.append(cb);
+      row.append(c, el('td', '', x.name), el('td', '', x.login), el('td', '', typeof x.balance === 'number' && isFinite(x.balance) ? usd0(x.balance) : '—'),
+        el('td', x.added ? 'pos' : '', x.added ? 'Already added' : !x.canTrade ? "Can't trade (closed or blocked)" : x.simulated ? 'New (practice / evaluation)' : 'New'));
+      t.append(row);
+    });
+    $('importAccts').hidden = false;
+  } finally { b.disabled = false; b.textContent = 'Find my accounts'; }
+};
+$('importAccts').onclick = async () => {
+  const items = [...document.querySelectorAll('#foundTable input[type=checkbox]:checked:not(:disabled)')].map(cb => found[Number(cb.dataset.i)]);
+  if (!items.length) { $('findMsg').textContent = 'Tick at least one account.'; return; }
+  const r = await window.keel.importAccounts(items);
+  if (!r.ok) { $('findMsg').textContent = r.error; return; }
+  store = r.store; renderAccounts(); renderPicker(); $('findMsg').textContent = `Added ${items.length}. They are switched off for trading: check their rules, then switch on the ones Keel should trade.`;
+  $('findAccts').click();
+};
 $('addAcct').onclick = () => openDrawer('add', [], $('addAcct'));
 $('sampleAccts').onclick = async () => { const r = await window.keel.addSampleAccounts(); if (r.ok) { store = r.store; renderAccounts(); renderPicker(); } else notice(r.error); };
 
@@ -690,6 +722,7 @@ function kRender() {
   $('kStatus').textContent = !d.running ? 'The bot is stopped. K1-K7 run while the bot runs.'
     : !st ? (d.cfg.mode === 'off' ? 'The K system is off.' : 'Starting…')
     : `Last hourly check ${st.lastRun ? nyTime(st.lastRun) : '—'} (bar ${st.lastBarUtc ? nyTime(st.lastBarUtc) : '—'}). Risk per trade now ${usd0(st.riskNow)}.${st.error ? ' Problem: ' + st.error : ''}`;
+  if (d.followers && d.followers.length) $('kStatus').textContent += ` Also trading: ${d.followers.map(f => `${f.label} (${f.open} open${f.working ? `, ${f.working} working` : ''}${f.paper !== null ? `, paper ${usd0(f.paper)}` : ''})`).join('; ')}.`;
   const t = $('kTable'); t.replaceChildren();
   const head = el('tr'); for (const h of ['On', 'Strategy', 'Market', 'Alone on 50K', 'Now']) head.append(el('th', '', h)); t.append(head);
   const R = d.rankings, risk = nearestRisk(c.riskUsd);

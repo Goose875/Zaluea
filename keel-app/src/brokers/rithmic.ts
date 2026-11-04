@@ -115,92 +115,116 @@ class Plant {
   }
 }
 
-interface ROrder { basketId: string; symbol: string; root: string; exchange: string; side: 'buy' | 'sell'; qty: number; type: WorkingOrder['type']; price: number | null; status: string; working: boolean }
+interface ROrder { basketId: string; accountId: string; symbol: string; root: string; exchange: string; side: 'buy' | 'sell'; qty: number; type: WorkingOrder['type']; price: number | null; status: string; working: boolean }
+
+/** One Rithmic login = one set of 4 plants, shared by every Keel account on that login (Rithmic limits sessions per login). */
+interface Session {
+  refs: number; plants: Record<keyof typeof INFRA, Plant>; fcmId: string; ibId: string; accounts: { id: string; name: string }[];
+  routes: Map<string, string>; front: Map<string, { symbol: string; exchange: string }>; last: Map<string, number>; subscribed: Set<string>;
+  quoteCbs: Set<(q: Quote) => void>; orderCbs: Set<(n: string, m: any) => void>; pnlCbs: Set<(n: string, m: any) => void>;
+  markerIsEnd: boolean | null; error: string;
+}
+const SESSIONS = new Map<string, Promise<Session>>();
+
+async function openSession(c: { user: string; password: string; system: string }, gateway: string): Promise<Session> {
+  const order = new Plant(INFRA.ORDER, gateway);
+  await order.open(c);
+  const fcmId = order.login.fcmId || '', ibId = order.login.ibId || '';
+  const rows = await order.request('RequestAccountList', { templateId: 302, fcmId, ibId, userType: 3 });
+  const accounts = rows.filter(r => r.accountId).map(r => ({ id: r.accountId, name: r.accountName || r.accountId }));
+  if (!accounts.length) { await order.close(); throw new Error('This Rithmic login has no trading accounts.'); }
+  const routes = new Map<string, string>();
+  for (const r of await order.request('RequestTradeRoutes', { templateId: 310, subscribeForUpdates: false }))
+    if (r.exchange && r.tradeRoute && r.fcmId === fcmId && r.ibId === ibId && (!routes.has(r.exchange) || r.isDefault)) routes.set(r.exchange, r.tradeRoute);
+  const [tick, hist, pnl] = [new Plant(INFRA.TICKER, gateway), new Plant(INFRA.HISTORY, gateway), new Plant(INFRA.PNL, gateway)];
+  try { await Promise.all([tick.open(c), hist.open(c), pnl.open(c)]); } catch (e) { await Promise.all([order, tick, hist, pnl].map(p => p.close())); throw e; }
+  const s: Session = { refs: 0, plants: { ORDER: order, TICKER: tick, HISTORY: hist, PNL: pnl }, fcmId, ibId, accounts, routes, front: new Map(), last: new Map(), subscribed: new Set(),
+    quoteCbs: new Set(), orderCbs: new Set(), pnlCbs: new Set(), markerIsEnd: null, error: '' };
+  order.onPush = (n, m) => { if (n === 'ForcedLogout') s.error = 'Rithmic logged Keel out (this login may be in use elsewhere).'; for (const cb of s.orderCbs) cb(n, m); };
+  pnl.onPush = (n, m) => { for (const cb of s.pnlCbs) cb(n, m); };
+  tick.onPush = (n, m) => { if (n === 'LastTrade' && Number.isFinite(m.tradePrice)) { const r = rootOf(m.symbol); s.last.set(r, m.tradePrice); for (const cb of s.quoteCbs) cb({ symbol: r, price: m.tradePrice, ts: Date.now() }); } };
+  for (const p of [order, tick, hist, pnl]) p.onClose = why => { s.error = `Rithmic disconnected (${why}).`; };
+  return s;
+}
 
 export class RithmicBroker implements BrokerAdapter {
   readonly id = 'rithmic'; readonly name = 'Rithmic';
-  private plants: Partial<Record<keyof typeof INFRA, Plant>> = {};
-  private fcmId = ''; private ibId = ''; private accountId = ''; private accountName = '';
-  private routes = new Map<string, string>();                 // exchange -> trade route
-  private front = new Map<string, { symbol: string; exchange: string }>();
-  private last = new Map<string, number>();                   // root -> last trade price
+  private s: Session | null = null; private key = '';
+  private accountId = ''; private accountName = '';
   private orders = new Map<string, ROrder>();
   private positions = new Map<string, { qty: number; avg: number; open: number; closed: number }>();
   private acct: { balance: number; dayPnl: number; open: number; closed: number } | null = null;
+  private onOrder = (n: string, m: any) => this.onOrderPush(n, m);
+  private onPnlCb = (n: string, m: any) => this.onPnl(n, m);
   private quoteCbs: ((q: Quote) => void)[] = [];
-  private markerIsEnd: boolean | null = null;
-  accounts: { id: string; name: string }[] = [];
-  error = '';
+  private onQuoteCb = (q: Quote) => { for (const cb of this.quoteCbs) cb(q); };
+  get accounts() { return this.s?.accounts ?? []; }
+  get error() { return this.s?.error ?? ''; }
 
   constructor(private acctRec?: AccountRecord) {}
+
+  private get P() { if (!this.s) throw new Error('Rithmic is not connected.'); return this.s.plants; }
+  private ids() { return { fcmId: this.s!.fcmId, ibId: this.s!.ibId, accountId: this.accountId }; }
 
   async connect(creds: Record<string, string>) {
     const user = (creds.user || '').trim(), password = creds.password || '';
     if (!user || !password) throw new Error('Enter your Rithmic username and password under Logins.');
     const gateway = (creds.gateway || '').trim() || DEFAULT_GATEWAY, system = (creds.system || '').trim() || DEFAULT_SYSTEM;
     if (!/^wss:\/\/[a-z0-9.-]+(:\d+)?\/?$/i.test(gateway)) throw new Error('The Rithmic gateway must look like wss://name.rithmic.com:443');
-    const c = { user, password, system };
-    const order = new Plant(INFRA.ORDER, gateway);
-    await order.open(c);
-    this.plants.ORDER = order;
-    this.fcmId = order.login.fcmId || ''; this.ibId = order.login.ibId || '';
-    // accounts: pick the one this Keel account is linked to (brokerRef), else the first
-    const rows = await order.request('RequestAccountList', { templateId: 302, fcmId: this.fcmId, ibId: this.ibId, userType: 3 });
-    this.accounts = rows.filter(r => r.accountId).map(r => ({ id: r.accountId, name: r.accountName || r.accountId }));
-    if (!this.accounts.length) throw new Error('This Rithmic login has no trading accounts.');
+    this.key = `${gateway}|${system}|${user}`;
+    let p = SESSIONS.get(this.key);
+    if (!p) { p = openSession({ user, password, system }, gateway); SESSIONS.set(this.key, p); p.catch(() => SESSIONS.delete(this.key)); }
+    const s = await p; s.refs++; this.s = s;
     const want = creds.accountId || this.acctRec?.brokerRef || '';
-    const a = this.accounts.find(x => x.id === want) ?? this.accounts[0];
+    const a = want ? s.accounts.find(x => x.id === want) : s.accounts[0];
+    if (!a) { await this.disconnect(); throw new Error(`Rithmic account ${want} is not on this login.`); }
     this.accountId = a.id; this.accountName = a.name;
-    for (const r of await order.request('RequestTradeRoutes', { templateId: 310, subscribeForUpdates: false }))
-      if (r.exchange && r.tradeRoute && r.fcmId === this.fcmId && r.ibId === this.ibId && (!this.routes.has(r.exchange) || r.isDefault)) this.routes.set(r.exchange, r.tradeRoute);
-    order.onPush = (n, m) => this.onOrderPush(n, m);
-    await order.request('RequestSubscribeForOrderUpdates', { templateId: 308, fcmId: this.fcmId, ibId: this.ibId, accountId: this.accountId });
-    // the other three plants
-    const [tick, hist, pnl] = [new Plant(INFRA.TICKER, gateway), new Plant(INFRA.HISTORY, gateway), new Plant(INFRA.PNL, gateway)];
-    await Promise.all([tick.open(c), hist.open(c), pnl.open(c)]);
-    this.plants.TICKER = tick; this.plants.HISTORY = hist; this.plants.PNL = pnl;
-    tick.onPush = (n, m) => { if (n === 'LastTrade' && Number.isFinite(m.tradePrice)) { const r = rootOf(m.symbol); this.last.set(r, m.tradePrice); for (const cb of this.quoteCbs) cb({ symbol: r, price: m.tradePrice, ts: Date.now() }); } };
-    pnl.onPush = (n, m) => this.onPnl(n, m);
-    for (const p of Object.values(this.plants)) p!.onClose = why => { this.error = `Rithmic disconnected (${why}).`; };
-    await pnl.request('RequestPnLPositionUpdates', { templateId: 400, request: 1, fcmId: this.fcmId, ibId: this.ibId, accountId: this.accountId });
-    for (const m of await pnl.request('RequestPnLPositionSnapshot', { templateId: 402, fcmId: this.fcmId, ibId: this.ibId, accountId: this.accountId })) void m;
-    for (const m of await order.request('RequestShowOrders', { templateId: 320, fcmId: this.fcmId, ibId: this.ibId, accountId: this.accountId })) void m;   // replays working orders
+    s.orderCbs.add(this.onOrder); s.pnlCbs.add(this.onPnlCb); s.quoteCbs.add(this.onQuoteCb);
+    await this.P.ORDER.request('RequestSubscribeForOrderUpdates', { templateId: 308, ...this.ids() });
+    await this.P.PNL.request('RequestPnLPositionUpdates', { templateId: 400, request: 1, ...this.ids() });
+    await this.P.PNL.request('RequestPnLPositionSnapshot', { templateId: 402, ...this.ids() });
+    await this.P.ORDER.request('RequestShowOrders', { templateId: 320, ...this.ids() });   // replays this account's working orders
   }
 
-  async disconnect() { await Promise.all(Object.values(this.plants).map(p => p!.close())); this.plants = {}; }
+  async disconnect() {
+    const s = this.s; if (!s) return;
+    s.orderCbs.delete(this.onOrder); s.pnlCbs.delete(this.onPnlCb); s.quoteCbs.delete(this.onQuoteCb); this.s = null;
+    if (--s.refs <= 0) { SESSIONS.delete(this.key); await Promise.all(Object.values(s.plants).map(p => p.close())); }
+  }
 
   // ---------- symbols and prices ----------
   private async contract(sym: string): Promise<{ symbol: string; exchange: string }> {
-    const hit = this.front.get(sym); if (hit) return hit;
+    const hit = this.s!.front.get(sym); if (hit) return hit;
     const exchange = EXCHANGE[sym]; if (!exchange) throw new Error(`Keel doesn't know which exchange ${sym} trades on.`);
-    const r = (await this.plants.TICKER!.request('RequestFrontMonthContract', { templateId: 113, symbol: sym, exchange, needUpdates: false })).slice(-1)[0];
+    const r = (await this.P.TICKER.request('RequestFrontMonthContract', { templateId: 113, symbol: sym, exchange, needUpdates: false })).slice(-1)[0];
     const c = { symbol: r.tradingSymbol || r.symbol, exchange: r.tradingExchange || r.exchange || exchange };
     if (!c.symbol) throw new Error(`Rithmic has no front-month contract for ${sym}.`);
-    this.front.set(sym, c); return c;
+    this.s!.front.set(sym, c); return c;
   }
   async subscribe(symbols: string[]) {
-    for (const s of symbols) {
-      if (!EXCHANGE[s]) continue;
-      const c = await this.contract(s);
-      await this.plants.TICKER!.request('RequestMarketDataUpdate', { templateId: 100, symbol: c.symbol, exchange: c.exchange, request: 1, updateBits: 1 });
+    for (const sym of symbols) {
+      if (!EXCHANGE[sym] || this.s!.subscribed.has(sym)) continue;
+      const c = await this.contract(sym);
+      await this.P.TICKER.request('RequestMarketDataUpdate', { templateId: 100, symbol: c.symbol, exchange: c.exchange, request: 1, updateBits: 1 });
+      this.s!.subscribed.add(sym);
     }
   }
   onQuote(cb: (q: Quote) => void) { this.quoteCbs.push(cb); }
-  lastPrice(sym: string) { return this.last.get(sym); }
+  lastPrice(sym: string) { return this.s?.last.get(sym); }
 
   // ---------- history ----------
   async getHistory(sym: string, unit: HistUnit, count: number, partial = false): Promise<HistBar[]> {
     const P: Record<HistUnit, [number, number, number]> = { min1: [2, 1, 60], min5: [2, 5, 300], min15: [2, 15, 900], hour: [2, 60, 3600], hour4: [2, 240, 14400], day: [3, 1, 86400] };
     const [barType, period, sec] = P[unit], c = await this.contract(sym), now = Math.floor(Date.now() / 1000);
     const span = unit === 'day' ? count * 1.6 * 86400 : (count / (unit === 'hour4' ? 6 : 23 * 3600 / sec)) * 86400 * 1.45 + 4 * 86400;
-    const rows = await this.plants.HISTORY!.request('RequestTimeBarReplay', { templateId: 202, symbol: c.symbol, exchange: c.exchange, barType, barTypePeriod: period,
+    const rows = await this.P.HISTORY.request('RequestTimeBarReplay', { templateId: 202, symbol: c.symbol, exchange: c.exchange, barType, barTypePeriod: period,
       startIndex: Math.floor(now - span), finishIndex: now, userMaxCount: Math.min(10_000, count + 5), direction: 2, timeOrder: 1 }, 60_000);
     const raw = rows.filter(r => Number.isFinite(r.marker) && r.marker > 0 && Number.isFinite(r.openPrice));
-    if (this.markerIsEnd === null && raw.length && unit !== 'day') {
-      // Is a bar stamped with its start or its end? The newest completed 1-period bar tells us.
-      const m = raw[raw.length - 1].marker; this.markerIsEnd = m % sec === 0 && m > now - sec && m <= now + 2 ? true : false;
+    if (this.s!.markerIsEnd === null && raw.length && unit !== 'day') {
+      // Is a bar stamped with its start or its end? The newest completed bar tells us: an end stamp is on the boundary just passed.
+      const m = raw[raw.length - 1].marker; this.s!.markerIsEnd = m % sec === 0 && m > now - sec && m <= now + 2;
     }
-    const shift = unit !== 'day' && this.markerIsEnd ? sec : 0;
+    const shift = unit !== 'day' && this.s!.markerIsEnd ? sec : 0;
     const bars = raw.map(r => ({ t: (r.marker - shift) * 1000, o: r.openPrice, h: r.highPrice, l: r.lowPrice, c: r.closePrice, v: Number(r.volume ?? 0) }))
       .filter(b => partial || b.t + sec * 1000 <= Date.now()).sort((a, b) => a.t - b.t);
     return bars.filter((b, i) => i === 0 || b.t !== bars[i - 1].t).slice(-count);
@@ -209,16 +233,16 @@ export class RithmicBroker implements BrokerAdapter {
   // ---------- orders ----------
   async placeOrder(o: Order): Promise<string> {
     if (!Number.isInteger(o.qty) || o.qty < 1) throw new Error('Order size must be a whole number.');
-    const c = await this.contract(o.symbol), route = this.routes.get(c.exchange);
-    if (!route) throw new Error(`No Rithmic trade route for ${c.exchange} on this account.`);
+    const c = await this.contract(o.symbol), route = this.s!.routes.get(c.exchange);
+    if (!route) throw new Error(`No Rithmic trade route for ${c.exchange} on this login.`);
     const priceType = o.type === 'market' ? 2 : o.type === 'limit' ? 1 : 4;
     if (o.type !== 'market' && !(Number.isFinite(o.price) && (o.price as number) > 0)) throw new Error(`A ${o.type} order needs a price.`);
-    const r = (await this.plants.ORDER!.request('RequestNewOrder', { templateId: 312, fcmId: this.fcmId, ibId: this.ibId, accountId: this.accountId,
-      symbol: c.symbol, exchange: c.exchange, quantity_64: o.qty, transactionType: o.side === 'buy' ? 1 : 2, duration: 1, priceType, tradeRoute: route, manualOrAuto: 2,
+    const r = (await this.P.ORDER.request('RequestNewOrder', { templateId: 312, ...this.ids(), symbol: c.symbol, exchange: c.exchange, quantity_64: o.qty,
+      transactionType: o.side === 'buy' ? 1 : 2, duration: 1, priceType, tradeRoute: route, manualOrAuto: 2,
       ...(o.type === 'limit' ? { price: o.price } : o.type === 'stop' ? { triggerPrice: o.price } : {}) })).find(m => m.basketId);
     if (!r?.basketId) throw new Error('Rithmic accepted the order but returned no order id.');
-    this.orders.set(r.basketId, { basketId: r.basketId, symbol: c.symbol, root: o.symbol, exchange: c.exchange, side: o.side, qty: o.qty, type: o.type,
-      price: o.type === 'market' ? null : (o.price as number), status: 'sent', working: o.type !== 'market' });
+    if (!this.orders.has(r.basketId)) this.orders.set(r.basketId, { basketId: r.basketId, accountId: this.accountId, symbol: c.symbol, root: o.symbol, exchange: c.exchange, side: o.side,
+      qty: o.qty, type: o.type, price: o.type === 'market' ? null : (o.price as number), status: 'sent', working: o.type !== 'market' });
     return r.basketId;
   }
   async getOpenOrders(): Promise<WorkingOrder[]> {
@@ -226,25 +250,21 @@ export class RithmicBroker implements BrokerAdapter {
   }
   async modifyOrder(id: string, change: { price: number }) {
     const o = this.orders.get(id); if (!o || !o.working) throw new Error('That order is no longer working.');
-    await this.plants.ORDER!.request('RequestModifyOrder', { templateId: 314, fcmId: this.fcmId, ibId: this.ibId, accountId: this.accountId, basketId: id, symbol: o.symbol, exchange: o.exchange,
+    await this.P.ORDER.request('RequestModifyOrder', { templateId: 314, ...this.ids(), basketId: id, symbol: o.symbol, exchange: o.exchange,
       quantity_64: o.qty, priceType: o.type === 'limit' ? 1 : 4, manualOrAuto: 2, ...(o.type === 'limit' ? { price: change.price } : { triggerPrice: change.price }) });
     o.price = change.price;
   }
-  async cancelOrder(id: string) {
-    await this.plants.ORDER!.request('RequestCancelOrder', { templateId: 316, fcmId: this.fcmId, ibId: this.ibId, accountId: this.accountId, basketId: id, manualOrAuto: 2 });
-  }
+  async cancelOrder(id: string) { await this.P.ORDER.request('RequestCancelOrder', { templateId: 316, ...this.ids(), basketId: id, manualOrAuto: 2 }); }
   async closeAll() {
-    await this.plants.ORDER!.request('RequestCancelAllOrders', { templateId: 346, fcmId: this.fcmId, ibId: this.ibId, accountId: this.accountId }).catch(() => {});
-    await this.plants.ORDER!.request('RequestExitPosition', { templateId: 3504, fcmId: this.fcmId, ibId: this.ibId, accountId: this.accountId, manualOrAuto: 2 });
+    await this.P.ORDER.request('RequestCancelAllOrders', { templateId: 346, ...this.ids() }).catch(() => {});
+    await this.P.ORDER.request('RequestExitPosition', { templateId: 3504, ...this.ids(), manualOrAuto: 2 });
   }
   private onOrderPush(name: string, m: any) {
-    if (name === 'ForcedLogout') { this.error = 'Rithmic logged Keel out (this login may be in use elsewhere).'; return; }
-    if (name !== 'RithmicOrderNotification' || !m.basketId || (m.accountId && m.accountId !== this.accountId)) return;
+    if (name !== 'RithmicOrderNotification' || !m.basketId || m.accountId !== this.accountId) return;
     const status = String(m.status || '').toLowerCase(), done = m.notifyType === 15 || /complete|cancel|reject|filled/.test(status);
     const pt = m.priceType === 1 ? 'limit' : m.priceType === 4 || m.priceType === 3 ? 'stop' : m.priceType === 2 ? 'market' : 'other';
-    const cur = this.orders.get(m.basketId);
-    const o: ROrder = cur ?? { basketId: m.basketId, symbol: m.symbol, root: rootOf(m.symbol || ''), exchange: m.exchange, side: m.transactionType === 1 ? 'buy' : 'sell',
-      qty: num(m.quantity_64 ?? m.quantity) || 0, type: pt, price: null, status, working: false };
+    const o: ROrder = this.orders.get(m.basketId) ?? { basketId: m.basketId, accountId: this.accountId, symbol: m.symbol, root: rootOf(m.symbol || ''), exchange: m.exchange,
+      side: m.transactionType === 1 ? 'buy' : 'sell', qty: num(m.quantity_64 ?? m.quantity) || 0, type: pt, price: null, status, working: false };
     o.status = status || o.status;
     const px = pt === 'stop' ? num(m.triggerPrice) : num(m.price); if (Number.isFinite(px) && px > 0) o.price = px;
     o.working = !done && pt !== 'market' && (m.notifyType === 13 || m.notifyType === 14 || m.notifyType === 18 || /open|trigger|pending/.test(status));
@@ -254,7 +274,7 @@ export class RithmicBroker implements BrokerAdapter {
 
   // ---------- positions, P&L, account ----------
   private onPnl(name: string, m: any) {
-    if (m.accountId && m.accountId !== this.accountId) return;
+    if (m.accountId !== this.accountId) return;
     if (name === 'InstrumentPnLPositionUpdate' && m.symbol) {
       this.positions.set(rootOf(m.symbol), { qty: num(m.netQuantity ?? (num(m.buyQty) - num(m.sellQty))) || 0, avg: num(m.avgOpenFillPrice),
         open: num(m.openPositionPnl) || 0, closed: num(m.closedPositionPnl) || 0 });

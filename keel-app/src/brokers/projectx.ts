@@ -65,6 +65,14 @@ export class ProjectXBroker implements BrokerAdapter {
     this.accountId = acct.id;
   }
 
+  /** Every active account on this login (for the Accounts list). */
+  async listAccounts(creds: Record<string, string>): Promise<{ id: string; name: string; balance: number; canTrade: boolean; simulated: boolean }[]> {
+    if (!creds.userName || !creds.apiKey) throw new Error('Save your TopstepX username and API key first.');
+    this.creds = creds; await this.login();
+    const j = await this.call('/api/Account/search', { onlyActiveAccounts: true });
+    return (j.accounts || []).map((a: any) => ({ id: String(a.id), name: String(a.name ?? a.id), balance: Number(a.balance), canTrade: !!a.canTrade, simulated: !!a.simulated }));
+  }
+
   async disconnect() { this.market?.stop(); this.market = undefined; this.token = ''; }
   onQuote(cb: (q: Quote) => void) { this.cb = cb; }
 

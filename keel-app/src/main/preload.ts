@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('keel', {
   removeAccount: (id: string) => ipcRenderer.invoke('accounts:remove', id),
   selectAccount: (id: string) => ipcRenderer.invoke('accounts:select', id),
   addSampleAccounts: () => ipcRenderer.invoke('accounts:samples'),
+  discoverAccounts: () => ipcRenderer.invoke('accounts:discover'),
+  importAccounts: (items: unknown) => ipcRenderer.invoke('accounts:import', items),
   setRisk: (risk: unknown) => ipcRenderer.invoke('risk:set', risk),
   start: () => ipcRenderer.invoke('engine:start'),
   stop: () => ipcRenderer.invoke('engine:stop'),

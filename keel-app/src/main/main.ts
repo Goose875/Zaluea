@@ -27,6 +27,9 @@ import { PaperOrders } from '../ksys/paperOrders';
 import { loadKConfig, saveKConfig, kTradeStore, xTradeStore } from './kstore';
 import RANKINGS from '../ksys/rankings.json';
 import { KeelAI, parseAIConfig } from './ai';
+import { listRithmicAccounts } from '../brokers/rithmic';
+import type { AccountRecord } from '../core/accounts';
+import { ProjectXBroker } from '../brokers/projectx';
 import type { EntryContext } from '../ksys/live';
 import { parseHourly, buildSeries, DailyClose } from '../ksys/series';
 import { simulate, VALIDATION, STRATEGIES, INSTRUMENTS } from '../ksys/sim';
@@ -40,6 +43,9 @@ let ai: KeelAI | null = null;
 let aiTimer: ReturnType<typeof setInterval> | undefined;
 let kBroker: any = null;
 let runBroker: any = null;   // the running bot's connection (also serves chart history)
+/** Other accounts trading at the same time (Accounts page "Trade with Keel"). */
+interface Follower { acct: AccountRecord; broker: any; k: KLive; x: XLive; paper: PaperOrders | null; error: string; stop: () => Promise<void>; flatten: () => Promise<void> }
+let followers: Follower[] = [];
 // The bot journal: every K / PO3 / Claude note with its New York time (today's notes feed the daily review and the chat).
 const journal: string[] = [];
 const nyStamp = (t = Date.now()) => new Date(wallOf(t)).toISOString().slice(0, 16).replace('T', ' ');
@@ -116,7 +122,7 @@ function webhookSecret(): string {
   return secret;
 }
 
-function stopK() { clearInterval(aiTimer); kBroker = null; kLive?.stop(); kLive = null; xLive?.stop(); xLive = null; kPaper = null; clearInterval(kAcctTimer); kAcct = null; }
+function stopK() { for (const f of followers) void f.stop(); followers = []; clearInterval(aiTimer); kBroker = null; kLive?.stop(); kLive = null; xLive?.stop(); xLive = null; kPaper = null; clearInterval(kAcctTimer); kAcct = null; }
 async function stopTrading() {
   stopK(); runBroker = null;
   await engine?.shutdown();
@@ -136,6 +142,38 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', e => e.preventDefault());
   win.loadFile(path.join(__dirname, '../renderer/index.html'));
+}
+
+/** Starts K1-K9 / P1-P3 on more accounts, each with its own connection, risk guard, paper desk and trade records. */
+async function startFollowers(list: AccountRecord[], kc: ReturnType<typeof loadKConfig>, say: (m: string) => void) {
+  for (const a of list) {
+    const tag = (m: string) => { const line = `[${a.label}] ${m}`; jot(line); say(line); };
+    try {
+      const def = BROKERS.find(b => b.id === a.connection), creds = vault.get(`broker:${a.connection}`);
+      if (!def || (def.fields.length && !creds)) { tag(`not started: save your ${def?.name ?? a.connection} login first.`); continue; }
+      const b: any = ADAPTERS[a.connection](a);
+      await b.connect({ ...(creds ?? {}), ...(a.brokerRef ? { accountId: a.brokerRef } : {}) });
+      if (!b.getHistory || (kc.mode === 'live' && !(b.getOpenOrders && b.modifyOrder && b.cancelOrder))) { tag('not started: this connection cannot run the strategies.'); await b.disconnect(); continue; }
+      await b.subscribe?.(K_SYMBOLS).catch(() => {});
+      const g = loadRisk(), guard = new RiskGuard({ ...g, maxDailyLoss: a.dailyLoss > 0 ? Math.min(g.maxDailyLoss, a.dailyLoss) : g.maxDailyLoss, maxMini: a.maxMini || 0, maxMicro: a.maxMicro || 0 });
+      const paper = kc.mode === 'paper' ? new PaperOrders(b) : null; b.onQuote((q: any) => paper?.onQuote(q));
+      const desk: OrderDesk = paper ?? (b as OrderDesk);
+      const dailyPnL = async () => (paper ? paper.realized + paper.unrealized() : b.getDailyPnL());
+      let info: { equity: number; floor: number } | null = null;
+      const poll = async () => { try { const i = b.getAccount ? await b.getAccount() : null; if (i) info = { equity: i.balance, floor: i.floor ?? (a.size - a.maxLoss) }; } catch { /* keep last */ } };
+      void poll(); const timer = setInterval(() => void poll(), 60_000); (timer as any).unref?.();
+      let x: XLive | null = null;
+      const k = new KLive(kc, { data: b, desk, risk: guard, store: kTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, account: () => info, note: tag,
+        xHolds: sym => !!x?.holds(sym), gate: ctx => aiGate(ctx, kc.mode) });
+      x = new XLive(kc, { data: b, desk, risk: guard, store: xTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, note: tag,
+        kHolds: sym => k.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode) });
+      k.start(); x.start();
+      const f: Follower = { acct: a, broker: b, k, x, paper, error: '',
+        stop: async () => { k.stop(); x!.stop(); clearInterval(timer); await b.disconnect().catch(() => {}); },
+        flatten: async () => { k.stop(); k.forgetAll(); x!.stop(); x!.forgetAll(); if (paper) await paper.closeAll(); else await b.closeAll().catch(() => tag('could not flatten. Check your platform now.')); } };
+      followers.push(f); tag(`trading in ${kc.mode} mode.`);
+    } catch (err) { tag(`not started: ${(err as Error).message}`); }
+  }
 }
 
 /** Before any entry is sent: the news pause, then (if switched on for this mode) Claude's entry check. */
@@ -279,6 +317,7 @@ app.whenReady().then(async () => {
     stopWatch();   // one connection at a time
     const st = loadAccounts(conns());
     const acct = st.accounts.find(a => a.id === st.selected) ?? null;
+    if (acct && acct.trade === false) return { ok: false, error: `${acct.label} is switched off for trading (Accounts, Trade with Keel). Switch it on or pick another account.` };
     const brokerId = acct ? acct.connection : 'paper';
     const def = BROKERS.find(b => b.id === brokerId);
     if (!def || !(brokerId in ADAPTERS) || (def.dev && app.isPackaged)) return { ok: false, error: 'That connection is not available.' };
@@ -322,7 +361,7 @@ app.whenReady().then(async () => {
         try { const i = broker.getAccount ? await broker.getAccount() : null; if (i) kAcct = { equity: i.balance, floor: i.floor ?? ((acct?.size || i.size) - (acct?.maxLoss || i.maxLoss)) }; } catch { /* keep the last value */ }
       };
       void pollAcct(); kAcctTimer = setInterval(() => void pollAcct(), 60_000); (kAcctTimer as any).unref?.();
-      engine.onHalt = () => { kLive?.stop(); kLive?.forgetAll(); xLive?.stop(); xLive?.forgetAll(); void kPaper?.closeAll(); };
+      engine.onHalt = () => { kLive?.stop(); kLive?.forgetAll(); xLive?.stop(); xLive?.forgetAll(); void kPaper?.closeAll(); for (const f of followers) void f.flatten(); };
     }
     engine.onTick = q => { bars.add(q); kPaper?.onQuote(q); };
     await seedBars(broker);
@@ -333,6 +372,9 @@ app.whenReady().then(async () => {
       if (miss.length) engine.say(`K system: add ${miss.join(' and ')} to your allowed symbols under Risk limits, or its trades there will be blocked.`);
       engine.say(`K system started in ${kc.mode} mode. It checks for signals a few seconds after every hour.`);
       kLive.start(); xLive?.start();
+      // every other account switched on under Accounts trades too (own connection, risk limits and trade records)
+      const others = st.accounts.filter(a => a.trade !== false && a.id !== acct?.id && a.connection in ADAPTERS && a.connection !== 'paper');
+      if (others.length) { engine.say(`Also trading ${others.length} more account${others.length === 1 ? '' : 's'}: ${others.map(a => a.label).join(', ')}.`); void startFollowers(others, kc, m => engine?.say(m)); }
       kBroker = broker; const eng = engine!; aiTimer = setInterval(() => void aiTick(kc.mode, eng), 30_000); (aiTimer as any).unref?.(); void aiTick(kc.mode, eng);
       const xOn = XSTRATEGIES.filter(S => kc.enabled[S.id]).map(S => S.id);
       if (xOn.length) engine.say(`PO3/Fractal strategies on: ${xOn.join(', ')}. PO3 entries are resting limit orders at the exact level; stops go in as soon as they fill.`);
@@ -406,6 +448,33 @@ app.whenReady().then(async () => {
   ipcMain.handle('engine:kill', async e => { if (allowed(e)) await engine?.halt(); });
 
   // ---------- K system ----------
+  // ---------- accounts on your logins ----------
+  ipcMain.handle('accounts:discover', async e => {
+    if (!allowed(e)) return { ok: false, error: 'Not allowed.' };
+    const st = loadAccounts(conns()), out: any[] = [], errors: string[] = [];
+    const known = (c: string, id: string) => st.accounts.find(a => a.connection === c && a.brokerRef === id)?.id ?? null;
+    const px = vault.get('broker:projectx');
+    if (px) { try { for (const a of await new ProjectXBroker().listAccounts(px)) out.push({ connection: 'projectx', login: 'TopstepX', firm: 'Topstep', ...a, added: known('projectx', a.id) }); } catch (err) { errors.push(`TopstepX: ${(err as Error).message}`); } }
+    const rc = vault.get('broker:rithmic');
+    if (rc) { try { for (const a of await listRithmicAccounts(rc)) out.push({ connection: 'rithmic', login: 'Rithmic', firm: 'Lucid Trading', ...a, balance: null, canTrade: true, simulated: false, added: known('rithmic', a.id) }); } catch (err) { errors.push(`Rithmic: ${(err as Error).message}`); } }
+    if (!px && !rc) errors.push('Save your TopstepX or Rithmic login under Logins first.');
+    return { ok: true, accounts: out, errors };
+  });
+  ipcMain.handle('accounts:import', (e, items: unknown) => {
+    if (!allowed(e) || !Array.isArray(items) || !items.length || items.length > 200) return { ok: false, error: 'Pick at least one account.' };
+    return commitAccounts(st0 => {
+      let st = st0;
+      for (const it of items as any[]) {
+        if (!it || !['projectx', 'rithmic'].includes(it.connection) || typeof it.id !== 'string') continue;
+        if (st.accounts.some(a => a.connection === it.connection && a.brokerRef === it.id)) continue;
+        const name = String(it.name || it.id).slice(0, 60), k = /(\d{2,3})\s?k/i.exec(name), size = k ? Number(k[1]) * 1000 : 50000;
+        st = addAccount(st, { ...BLANK, label: name, firm: it.connection === 'rithmic' ? 'Lucid Trading' : 'Topstep', connection: it.connection, brokerRef: it.id,
+          size, maxLoss: size <= 50000 ? 2000 : size <= 100000 ? 3000 : 4500, trade: false }, conns());
+      }
+      return st;
+    });
+  });
+
   // ---------- Claude ----------
   ipcMain.handle('ai:get', e => allowed(e) && ai ? { cfg: ai.cfg, hasKey: ai.hasKey(), preflight: ai.state.preflight, review: ai.state.review, chat: ai.state.chat,
     newsNow: ai.newsBlock(), aiTrade: xLive?.aiTrade() ?? null, journal: todayJournal().slice(-60) } : null);
@@ -434,6 +503,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('k:get', e => {
     if (!allowed(e)) return null;
     return { cfg: loadKConfig(), status: kLive ? kLive.status() : null, running: !!engine, x: xLive ? xLive.view() : null, rankings: RANKINGS,
+      followers: followers.map(f => ({ id: f.acct.id, label: f.acct.label, open: f.k.trades.length + f.x.trades.filter(t => t.state === 'open').length, working: f.x.trades.filter(t => t.state === 'working').length, paper: f.paper ? f.paper.realized + f.paper.unrealized() : null })),
       xmeta: XSTRATEGIES.map(S => ({ id: S.id, name: S.name, symbol: S.symbol, orderSymbol: S.symbol === 'NQ' ? 'MNQ' : 'MGC', paperOnly: S.paperOnly, evidence: S.evidence })),
       paper: kPaper ? { realized: kPaper.realized, unrealized: kPaper.unrealized(), fills: kPaper.fills.slice(-50) } : null,
       meta: STRATEGIES.map(S => ({ id: S.id, name: S.name, symbol: S.symbol, orderSymbol: INSTRUMENTS[S.symbol].micro, direction: S.direction,

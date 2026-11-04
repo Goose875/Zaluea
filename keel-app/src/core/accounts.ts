@@ -8,6 +8,8 @@ export interface AccountRecord {
   profitTarget: number; consistencyPct: number; consistencyBasis: 'target' | 'total'; minDays: number;
   maxMini: number; maxMicro: number; dailyGoal: number; pauseAtGoal: boolean;
   cost: number; purchaseDate: string; notes: string;
+  /** Keel may trade this account when the bot runs (Accounts page switch). */
+  trade: boolean;
 }
 export interface AccountStore { selected: string; accounts: AccountRecord[] }
 export const MAX_ACCOUNTS = 200;
@@ -15,7 +17,7 @@ export const MAX_ACCOUNTS = 200;
 export const BLANK: Omit<AccountRecord, 'id'> = {
   label: '', firm: 'Topstep', connection: 'projectx', brokerRef: '', stage: 'evaluation', plan: '', size: 50000, drawdown: 'eod', maxLoss: 2000,
   dailyLoss: 0, profitTarget: 3000, consistencyPct: 0, consistencyBasis: 'target', minDays: 0, maxMini: 0, maxMicro: 0, dailyGoal: 0, pauseAtGoal: true,
-  cost: 0, purchaseDate: '', notes: ''
+  cost: 0, purchaseDate: '', notes: '', trade: true
 };
 
 export function parseAccount(x: any, connections: string[]): Omit<AccountRecord, 'id'> {
@@ -43,7 +45,7 @@ export function parseAccount(x: any, connections: string[]): Omit<AccountRecord,
     consistencyPct: num(x.consistencyPct, 100, 'Consistency'), consistencyBasis: x.consistencyBasis === 'total' ? 'total' : 'target',
     minDays: num(x.minDays, 365, 'Minimum trading days', true), maxMini: num(x.maxMini, 1000, 'Max mini contracts', true),
     maxMicro: num(x.maxMicro, 10000, 'Max micro contracts', true), dailyGoal: num(x.dailyGoal, 1_000_000, 'Daily goal'),
-    pauseAtGoal: x.pauseAtGoal !== false, cost: num(x.cost, 1_000_000, 'Cost'), purchaseDate: date, notes: text(x.notes, 500, 'Notes')
+    pauseAtGoal: x.pauseAtGoal !== false, cost: num(x.cost, 1_000_000, 'Cost'), purchaseDate: date, notes: text(x.notes, 500, 'Notes'), trade: x.trade !== false
   };
 }
 

@@ -104,6 +104,17 @@
         </section>
 
         <section id="v-accts" class="view" hidden>
+          <div class="panel">
+            <h2>Accounts on your logins</h2>
+            <p class="hint">Keel asks your saved TopstepX and Rithmic logins for every account they hold. Tick the ones to add; they come in switched <b>off</b> for trading, so nothing trades until you turn an account on below. Check each account's rules (size, max loss, daily loss) after adding.</p>
+            <div class="mixrow"><button id="findAccts" type="button">Find my accounts</button><button id="importAccts" type="button" class="ghost" hidden>Add selected</button></div>
+            <p id="findMsg" class="hint" role="status" aria-live="polite"></p>
+            <div class="tscroll plainscroll"><table id="foundTable"></table></div>
+          </div>
+          <div class="panel">
+            <h2>Which accounts Keel trades</h2>
+            <p class="hint"><b>Start bot</b> trades the account picked at the top <i>and</i> every account with <b>Trade</b> switched on, each with its own risk limits and trade records. Turn an account off and Keel never touches it. <b>Stop all trading</b> flattens every one of them.</p>
+          </div>
           <div class="toolbar">
             <input id="acctSearch" type="search" placeholder="Search accounts" aria-label="Search accounts" autocomplete="off">
             <div class="btns0"><button id="sampleAccts" class="ghost" hidden>Add sample accounts</button><button id="addAcct">Add account</button></div>
