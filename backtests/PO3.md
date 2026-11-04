@@ -15,3 +15,17 @@ Scripts: `po3.py` (all markets), `po3_gc.py` (gold deep tests), `po3_gc_controls
 - **B2**: the PO3 direction matters (with the 4h EMA20), but the rejection-block level is no better than a random pullback level. Positive in 9 of 11 quarters; the losing quarters were 2024 Q2–Q3. On a Topstep 150K ($750 risk per trade, about 6–7 MGC): 70% pass, 30% fail, median 20 trading days.
 - **B1 is rejected**: buying or selling a pullback in the last hour and exiting at the candle close made money in both directions on hourly bars, so its result isn't PO3.
 - The 22:00 candle is flat or negative in every candidate, and the 14:00 candle is too thin to judge.
+
+## GC futures, 15-minute model: all 112 versions of the two "89% profitable" families (`po3_gc_family.py`)
+| | Rejection block | FVG midpoint |
+|---|---|---|
+| Versions profitable | 89% | 89% |
+| ...with doubled costs | 86% | 88% |
+| Flipped direction loses | **100%** | 70% |
+| Beat random entry prices (>=90% of 20 runs) | **64%** | 38% |
+| Median avg R per trade | +0.27 | +0.21 |
+| Best direction filter (median R) | vs 18:00 open (+0.56) | 4h EMA20 (+0.37) |
+| 1-minute fills vs 5-minute fills (last 4 weeks) | same (correlation 0.99) | same |
+| Topstep 50K ($500 risk): pass rate / median days | 61% / 5 | 60% / 5.5 |
+| Topstep 150K ($750 risk): pass rate / median days | 66% / 13 | 45% / 7 |
+Only 10 weeks of data: evaluation start days overlap heavily, so the pass rates are rough.
