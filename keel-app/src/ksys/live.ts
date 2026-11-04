@@ -60,7 +60,7 @@ export interface KDeps {
 }
 
 const H = 3_600_000;
-const HOURLY_BARS = 1500, DAILY_BARS = 150, ENTRY_WINDOW = 10 * 60_000;
+const HOURLY_BARS = 1500, DAILY_BARS = 150, ENTRY_WINDOW = 10 * 60_000, SETTLE_MS = 60_000;
 
 /**
  * Runs K1-K7 live. Every hour, right after a bar closes, it rebuilds the indicators from broker history and re-runs the same
@@ -79,6 +79,7 @@ export class KLive {
   lastBarUtc = 0; lastRun = 0; nextCheck = 0; lastError = '';
   private busy = false; private timer?: ReturnType<typeof setInterval>;
   private staleWarned = 0;
+  private stopMissing = new Map<LiveTrade, number>();
 
   constructor(private cfg: KConfig, private d: KDeps) { this.trades = d.store.load(); }
 
@@ -246,13 +247,18 @@ export class KLive {
     const [positions, working] = await Promise.all([this.d.desk.getPositions(), this.d.desk.getOpenOrders()]);
     const ids = new Set(working.map(o => o.id));
     for (const t of [...this.trades]) {
+      // Brokers take a moment to show a new position and its new orders: leave a fresh trade alone for a minute,
+      // so a lagging report is never read as "closed" (which would cancel its stop) or "stop missing" (a duplicate stop).
+      if (this.now() - t.opened < SETTLE_MS) continue;
       const pos = positions.find(p => p.symbol === t.orderSym), d = t.dir === 'long' ? 1 : -1;
       const open = pos ? pos.qty * d : 0;
       if (open > 0) {
-        if (!t.stopOrder || !ids.has(t.stopOrder)) {
-          // The stop is gone while the position is still open (rejected, expired or cancelled by hand): put it back.
+        const missing = !t.stopOrder || !ids.has(t.stopOrder);
+        this.stopMissing.set(t, missing ? (this.stopMissing.get(t) ?? 0) + 1 : 0);
+        if (missing && (this.stopMissing.get(t) ?? 0) >= 2) {
+          // Gone on two checks in a row while the position is still open (rejected, expired or cancelled by hand): put it back.
           this.d.note(`K system: ${t.id} had no working stop, placing it again.`, 'warn');
-          t.stopOrder = null; await this.moveStop(t, t.stop);
+          t.stopOrder = null; this.stopMissing.set(t, 0); await this.moveStop(t, t.stop);
         }
         continue;
       }

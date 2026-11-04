@@ -125,7 +125,14 @@ export class ProjectXBroker implements BrokerAdapter {
 
   async getPositions(): Promise<Position[]> {
     const j = await this.call('/api/Position/searchOpen', { accountId: this.accountId });
-    return (j.positions || []).map((p: any) => ({ symbol: String(p.contractId), qty: p.type === 2 ? -p.size : p.size, avgPrice: Number(p.averagePrice) }));
+    // Report positions by Keel's symbol (e.g. MNQ), not ProjectX's contract id, so they match orders and strategies.
+    // Position type: 1 = long, 2 = short.
+    const out: Position[] = [];
+    for (const p of j.positions || []) {
+      const c = await this.contractById(String(p.contractId));
+      out.push({ symbol: c.symbol, qty: p.type === 2 ? -Number(p.size) : Number(p.size), avgPrice: Number(p.averagePrice) });
+    }
+    return out;
   }
 
   async closeAll() {
