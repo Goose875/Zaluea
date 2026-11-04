@@ -10,7 +10,10 @@ R = R.merge(O, on=["strategies", "risk"], how="left")
 cols = ["strategies", "n_strats", "risk", "pass_pct", "median_days_to_pass", "pass_within_20d", "xfa_first_payout_pct", "median_days_pass_to_1st_payout",
         "xfa_blown_before_payout_pct", "median_cash_first60d", "trades_per_week", "score", "oos_pass_pct", "oos_days_to_pass", "oos_payout_pct"]
 singles = R[R.n_strats == 1][cols]
-mixes = pd.concat([R[R.n_strats > 1].sort_values(["score", "median_days_to_pass"], ascending=[False, True]).head(80), R[R.n_strats > 1].sort_values("median_days_to_pass").query("pass_pct >= 0.8").head(20)]).drop_duplicates(["strategies", "risk"])[cols]
+M = R[R.n_strats > 1]
+mixes = pd.concat([M.sort_values(["score", "median_days_to_pass"], ascending=[False, True]).groupby("risk").head(40),
+                   M.sort_values("median_days_to_pass").query("pass_pct >= 0.8").groupby("risk").head(10),
+                   M[M.strategies == "K1 + K3 + K4 + K5 + K6 + K7"]]).drop_duplicates(["strategies", "risk"])[cols]
 E5 = pd.read_csv("results/po3_gc_eval50.csv")
 pick = {"P1": ("FVG CE", "none", "below open", "none", "candle close"), "P2": ("RB", "vs 18:00 open", "below open", "3R", "candle close")}
 paper = []

@@ -5,7 +5,7 @@ const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls)
 const NAMES = { projectx: 'TopstepX', rithmic: 'Rithmic', cqg: 'CQG', tradovate: 'Tradovate', ninjatrader: 'NinjaTrader' };
 const nm = v => NAMES[v] || v;
 const STATUS = { ready: '', beta: ' (beta)', 'needs-approval': ' (needs approval)' };
-const TITLES = { rank: 'Rankings', dash: 'Today', chart: 'Chart', acct: 'Progress', accts: 'Accounts', k: 'K system', kval: 'Validate the K system', strat: 'Strategies', test: 'Backtest', conn: 'Logins', risk: 'Risk limits', alerts: 'TradingView alerts' };
+const TITLES = { rank: 'Compare mixes', dash: 'Today', chart: 'Chart', acct: 'Progress', accts: 'Accounts', k: 'Strategies', kval: 'Validate the K system', strat: 'Custom strategies', test: 'Backtest', conn: 'Logins', risk: 'Risk limits', alerts: 'TradingView alerts' };
 const STAGE = { evaluation: ['Evaluation', 'Profit target'], funded: ['Funded', 'Payout target'], live: ['Live', 'Payout target'], practice: ['Practice', 'Practice goal'] };
 const DD = { eod: 'EOD trailing', intraday: 'Intraday trailing', static: 'Static' };
 const MULT = { ES: 50, NQ: 20, MES: 5, MNQ: 2, YM: 5, MYM: 0.5, RTY: 50, M2K: 5, CL: 1000, MCL: 100, GC: 100, MGC: 10 };
@@ -654,9 +654,9 @@ let kData = null, kDraft = null, kBusy = false;
 const usd0 = n => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
 const nyTime = t => new Date(t).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET';
 const MODE_HINT = {
-  off: 'Off. K1-K7 do not run.',
-  paper: 'Paper: real prices from your login, pretend orders. Nothing reaches your account. Start the bot to run it.',
-  live: 'LIVE: real orders on the selected account, with stops resting at the broker. Every entry still passes your risk limits.'
+  off: 'Off: no strategy trades.',
+  paper: 'Paper: real prices from your login, pretend orders. Nothing reaches your account. Press Start bot to run it.',
+  live: 'LIVE: real orders on the account selected at the top, with stops resting at the broker. Every entry still passes your risk limits.'
 };
 async function kLoad() {
   if (kBusy) return; kBusy = true;
@@ -679,36 +679,40 @@ function kRender() {
     : !st ? (d.cfg.mode === 'off' ? 'The K system is off.' : 'Starting…')
     : `Last hourly check ${st.lastRun ? nyTime(st.lastRun) : '—'} (bar ${st.lastBarUtc ? nyTime(st.lastBarUtc) : '—'}). Risk per trade now ${usd0(st.riskNow)}.${st.error ? ' Problem: ' + st.error : ''}`;
   const t = $('kTable'); t.replaceChildren();
-  const head = el('tr'); for (const h of ['On', 'Strategy', 'Market', 'Backtest test year', 'Now', 'Last 30 trades']) head.append(el('th', '', h)); t.append(head);
-  for (const m of d.meta) {
-    const row = el('tr'), s = st ? st.strategies.find(x => x.id === m.id) : null;
-    const cb = el('input'); cb.type = 'checkbox'; cb.checked = !!c.enabled[m.id]; cb.setAttribute('aria-label', `Run ${m.id}`);
+  const head = el('tr'); for (const h of ['On', 'Strategy', 'Market', 'Alone on 50K', 'Now']) head.append(el('th', '', h)); t.append(head);
+  const R = d.rankings, risk = nearestRisk(c.riskUsd);
+  const alone = id => { const r = R && ([...(R.singles || []), ...(R.paper || [])]).find(x => x.strategies === id && x.risk === risk);
+    if (!r) return '—';
+    if (!r.pass_pct) return 'Never passed alone (use it in a mix)';
+    const slow = r.median_days_to_pass > 63 ? ' — too slow alone for a 90-day Combine' : '';
+    return `${pct(r.pass_pct)} pass, ~${num(r.median_days_to_pass)} trading days${slow}${R.paper.includes(r) ? ' (10 weeks of data)' : ''}`; };
+  const all = [...d.meta.map(m => ({ ...m, kind: 'k' })), ...(d.xmeta || []).map(m => ({ ...m, kind: 'x' }))];
+  for (const m of all) {
+    const row = el('tr');
+    const lab = el('label', 'switch'), cb = el('input'); cb.type = 'checkbox'; cb.checked = !!c.enabled[m.id]; cb.setAttribute('aria-label', `${m.id} on or off`);
     cb.onchange = () => { kDraft.enabled[m.id] = cb.checked; kSave(true); };
-    const tcell = el('td'); tcell.append(cb);
-    const e = m.expected.test;
-    let now = !c.enabled[m.id] ? 'Off' : !s ? '—' : s.paused ? `Paused ${nyTime(s.paused)} (rolling average below -0.2R)` : '';
-    if (s && s.live) now = `${s.live.dir === 'long' ? 'Long' : 'Short'} ${s.live.qty} ${s.live.orderSym} @ ${s.live.entry.toFixed(2)}, stop ${s.live.stop.toFixed(2)}${s.live.target !== null ? `, target ${s.live.target.toFixed(2)}` : ''}`;
-    else if (s && s.pending && !s.paused) now = s.pending.kind === 'confirm' ? `Signal ${s.pending.dir}, waiting for a confirming close` : `Entry ${s.pending.dir} at the next open`;
-    else if (s && !now) now = 'Waiting for a signal';
-    row.append(tcell, el('td', '', `${m.id} · ${m.name}`), el('td', '', `${m.symbol} → ${m.orderSymbol}`),
-      el('td', '', `${e[0]} trades, ${e[2] >= 0 ? '+' : ''}${e[2].toFixed(2)}R, PF ${e[3].toFixed(2)}`), el('td', '', now),
-      el('td', '', s && s.rollingN ? `${s.rollingR >= 0 ? '+' : ''}${s.rollingR.toFixed(2)}R (${s.rollingN})` : '—'));
+    lab.append(cb, el('span')); const tcell = el('td'); tcell.append(lab);
+    let now = '';
+    if (!c.enabled[m.id]) now = 'Off';
+    else if (m.paperOnly && c.mode === 'live') now = 'Paper only: skipped in live mode';
+    else if (!d.running) now = 'On (bot stopped)';
+    else if (m.kind === 'k') {
+      const s = st ? st.strategies.find(x => x.id === m.id) : null;
+      now = !s ? '—' : s.paused ? `Paused ${nyTime(s.paused)} (last 30 trades below -0.2R)` : 'Waiting for a signal';
+      if (s && s.live) now = `${s.live.dir === 'long' ? 'Long' : 'Short'} ${s.live.qty} ${s.live.orderSym} @ ${s.live.entry.toFixed(2)}, stop ${s.live.stop.toFixed(2)}${s.live.target !== null ? `, target ${s.live.target.toFixed(2)}` : ''}`;
+      else if (s && s.pending && !s.paused) now = s.pending.kind === 'confirm' ? `Signal ${s.pending.dir}, waiting for a confirming close` : `Entry ${s.pending.dir} at the next open`;
+    } else {
+      const s = d.x ? d.x.find(x => x.id === m.id) : null; now = !s ? '—' : s.note || 'Waiting for a setup';
+      if (s && s.trade) { const q = s.trade; now = q.state === 'working' ? `Limit ${q.dir} ${q.qty} ${q.orderSym} @ ${q.limitPx.toFixed(2)} until ${nyTime(q.liveUntil)}`
+        : `${q.dir === 'long' ? 'Long' : 'Short'} ${q.qty} ${q.orderSym} @ ${q.entry.toFixed(2)}, stop ${q.stop.toFixed(2)}${q.target !== null ? `, target ${q.target.toFixed(2)}` : ''}${q.endAt ? `, out by ${nyTime(q.endAt)}` : ''}`; }
+    }
+    const nm = el('td'); nm.append(el('b', '', m.id), document.createTextNode(' ' + (DESC[m.id] ? DESC[m.id][0] : m.name)));
+    if (m.paperOnly) nm.append(el('span', 'tag', 'paper only')); if (m.id === 'K2') nm.append(el('span', 'tag', 'not for flat-daily accounts'));
+    nm.append(el('span', 'sdesc', DESC[m.id] ? DESC[m.id][1] : ''));
+    row.append(tcell, nm, el('td', '', `${m.symbol} → ${m.orderSymbol}`), el('td', '', alone(m.id)), el('td', '', now));
     t.append(row);
   }
-  const xt = $('xTable'); xt.replaceChildren();
-  const xh = el('tr'); for (const h of ['On', 'Strategy', 'Market', 'Evidence', 'Now']) xh.append(el('th', '', h)); xt.append(xh);
-  for (const m of d.xmeta || []) {
-    const row = el('tr'), s = d.x ? d.x.find(x => x.id === m.id) : null;
-    const cb = el('input'); cb.type = 'checkbox'; cb.checked = !!c.enabled[m.id]; cb.setAttribute('aria-label', `Run ${m.id}`);
-    cb.onchange = () => { kDraft.enabled[m.id] = cb.checked; kSave(true); };
-    const tcell = el('td'); tcell.append(cb);
-    let now = !c.enabled[m.id] ? 'Off' : m.paperOnly && c.mode === 'live' ? 'Paper only: not traded in live mode' : !s ? '—' : 'Waiting for a setup';
-    if (s && s.trade) { const t = s.trade; now = t.state === 'working' ? `Limit ${t.dir} ${t.qty} ${t.orderSym} @ ${t.limitPx.toFixed(2)} working until ${nyTime(t.liveUntil)}`
-      : `${t.dir === 'long' ? 'Long' : 'Short'} ${t.qty} ${t.orderSym} @ ${t.entry.toFixed(2)}, stop ${t.stop.toFixed(2)}${t.target !== null ? `, target ${t.target.toFixed(2)}` : ''}${t.endAt ? `, out by ${nyTime(t.endAt)}` : ''}`; }
-    else if (s && s.note) now = s.note;
-    row.append(tcell, el('td', '', `${m.id} · ${m.name}${m.paperOnly ? ' (paper only)' : ''}`), el('td', '', `${m.symbol} → ${m.orderSymbol}`), el('td', '', m.evidence), el('td', '', now));
-    xt.append(row);
-  }
+  mixRender();
   $('kPaperBox').hidden = !d.paper;
   if (d.paper) {
     $('kPaperText').textContent = `Paper P&L ${usd0(d.paper.realized + d.paper.unrealized)} (closed ${usd0(d.paper.realized)}, open ${usd0(d.paper.unrealized)})`;
@@ -720,6 +724,51 @@ function kRender() {
     }
   }
 }
+const DESC = {
+  K1: ["NQ break of yesterday's POC", "Trades a break of yesterday's busiest price (point of control), both ways, 5R target."],
+  K2: ['NQ narrow-range swing', 'Needs overnight holds; about breakeven when you must be flat every day.'],
+  K3: ['NQ NR7 breakout with the trend', 'Breakout of the narrowest hourly bar of the last 7, with the EMA20/50 trend.'],
+  K4: ['NQ VWAP +1σ retest short', 'Sells a failed retest of VWAP +1 standard deviation in the New York morning.'],
+  K5: ["Gold break below yesterday's value-area low", "Sells when gold breaks yesterday's value-area low, 2R target."],
+  K6: ['Gold Asia NR7 long', 'Buys a narrow-range breakout in the Asia session when volatility is low, 5R target.'],
+  K7: ['Gold value-area low break', "Trades a break of yesterday's value-area low either way, 1.5R target."],
+  K8: ['Gold Fractal breakout (day trade)', 'Daily fractal breakout; market entry at the 6 PM reopen, 3R target, flat by the cut-off.'],
+  K9: ['Gold PO3, 1h rejection block', '4h Power of Three: after the fake move, a limit order at the 1h rejection block; out at the 4h close.'],
+  P1: ['Gold PO3, 15m FVG midpoint', '4h Power of Three: limit at the 15-minute fair value gap midpoint; out at the 4h close.'],
+  P2: ['Gold PO3, 15m rejection block', '4h Power of Three: limit at the 15-minute rejection block, 3R target.'],
+  P3: ['NQ PO3, 15m FVG midpoint', '4h Power of Three on NQ: limit at the 15-minute fair value gap midpoint.']
+};
+const nearestRisk = r => [150, 250, 350, 500].reduce((a, b) => (Math.abs(b - r) < Math.abs(a - r) ? b : a), 350);
+const idsOf = str => str.split(' + ');
+function mixList() {
+  const R = kData && kData.rankings; if (!R || !kDraft) return [];
+  const risk = nearestRisk(kDraft.riskUsd);
+  const rows = [...R.mixes, ...R.singles].filter(r => r.risk === risk).sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || (a.median_days_to_pass ?? 99) - (b.median_days_to_pass ?? 99));
+  const recRow = R.mixes.find(r => r.strategies === R.recommended.strategies && r.risk === risk) || { strategies: R.recommended.strategies, risk };
+  const out = [{ ...recRow, label: 'Recommended' }];
+  const fastest = rows.filter(r => r.pass_pct >= 0.85 && r.xfa_first_payout_pct >= 0.8).sort((a, b) => a.median_days_to_pass - b.median_days_to_pass)[0];
+  if (fastest && fastest.strategies !== recRow.strategies) out.push({ ...fastest, label: 'Fastest pass' });
+  for (const r of rows.slice(0, 15)) if (!out.some(o => o.strategies === r.strategies)) out.push({ ...r, label: '' });
+  return out;
+}
+function mixRender() {
+  const sel = $('mixSel'); if (!sel || document.activeElement === sel) return;
+  const list = mixList(), on = Object.keys(kDraft.enabled).filter(k => kDraft.enabled[k]).sort().join(',');
+  const prev = sel.value; sel.replaceChildren();
+  list.forEach((r, i) => { const o = el('option', '', `${r.label ? r.label + ': ' : ''}${r.strategies}  ·  pass ${pct(r.pass_pct)}, ~${num(r.median_days_to_pass)} days, payout ${pct(r.xfa_first_payout_pct)}`); o.value = String(i); sel.append(o); });
+  const match = list.findIndex(r => idsOf(r.strategies).sort().join(',') === on);
+  sel.value = prev && Number(prev) < list.length ? prev : String(Math.max(0, match));
+  const cur = list[Number(sel.value)];
+  $('mixInfo').textContent = (match >= 0 ? `You are running: ${list[match].strategies}. ` : 'You are running your own selection. ')
+    + (cur ? `Selected mix at $${cur.risk} risk: passed ${pct(cur.pass_pct)} of the time in ~${num(cur.median_days_to_pass)} trading days; ${pct(cur.xfa_first_payout_pct)} reached a first payout ~${num(cur.median_days_pass_to_1st_payout)} days later.` : '');
+}
+$('mixSel').onchange = () => { $('mixSel').blur(); mixRender(); };
+$('mixUse').onclick = async () => {
+  const r = mixList()[Number($('mixSel').value)]; if (!r) return;
+  const want = idsOf(r.strategies);
+  kDraft.enabled = Object.fromEntries(Object.keys(kDraft.enabled).map(id => [id, want.includes(id)]));
+  await kSave(true); flash($('kMsg'), `Turned on: ${r.strategies}.`);
+};
 function kReadForm() {
   const f = $('kFlat').value;
   return { ...kDraft, sizing: $('kSizing').value, riskUsd: Number($('kRisk').value), divisor: Number($('kDiv').value), capMult: Number($('kCap').value),
@@ -736,7 +785,7 @@ $('kSave').onclick = () => kSave(false);
 document.querySelectorAll('#kMode button').forEach(b => {
   b.onclick = async () => {
     const mode = b.dataset.mode;
-    if (mode === 'live' && !confirm('Turn on LIVE trading for K1-K7?\n\nKeel will place real orders on the account selected at the top whenever the bot runs. Run paper mode first, and check the Validate page.')) return;
+    if (mode === 'live' && !confirm('Turn on LIVE trading?\n\nKeel will place real orders on the account selected at the top whenever the bot runs. Run paper mode first, and check the Validate page.')) return;
     kDraft = { ...kReadForm(), mode }; await kSave(true);
   };
 });

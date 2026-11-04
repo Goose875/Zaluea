@@ -11,16 +11,17 @@
       <div class="logo"><svg width="30" height="30" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#1d3036"/><line x1="8" y1="32" x2="56" y2="32" stroke="#7fd6c4" stroke-width="2"/><path d="M9 26 C16 20 20 27 27 22 S40 14 55 12" fill="none" stroke="#f0a43a" stroke-width="3.5" stroke-linecap="round"/><path d="M22 32 L32 54 L42 32 Z" fill="#7fd6c4"/></svg><span>Keel</span></div>
       <nav id="nav" aria-label="Main">
         <button data-go="dash">Today</button>
+        <button data-go="k">Strategies</button>
         <button data-go="chart">Chart</button>
         <button data-go="acct">Progress</button>
         <button data-go="accts">Accounts</button>
-        <button data-go="k">K system</button>
-        <button data-go="rank">Rankings</button>
-        <button data-go="kval">Validate K</button>
-        <button data-go="strat">Strategies</button>
-        <button data-go="test">Backtest</button>
+        <button data-go="rank">Compare mixes</button>
         <button data-go="conn">Logins</button>
         <button data-go="risk">Risk limits</button>
+        <p class="navsep">Advanced</p>
+        <button data-go="kval">Validate</button>
+        <button data-go="strat">Custom strategies</button>
+        <button data-go="test">Backtest</button>
         <button data-go="alerts">TradingView</button>
       </nav>
       <p id="version" class="ver"></p>
@@ -109,34 +110,38 @@
 
         <section id="v-k" class="view" hidden>
           <div class="panel">
-            <h2>K system</h2>
-            <p class="hint">Seven hourly strategies from the research (K1&ndash;K7). Signals come from NQ and GC prices; orders go in MNQ and MGC micros. Keel checks a few seconds after every hour, places each entry with its stop resting at the broker, and moves or closes it by the rules.</p>
-            <div id="kMode" class="seg" role="group" aria-label="K system mode">
+            <h2>1. Mode and risk</h2>
+            <div id="kMode" class="seg" role="group" aria-label="Trading mode">
               <button type="button" data-mode="off" aria-pressed="false">Off</button>
               <button type="button" data-mode="paper" aria-pressed="false">Paper</button>
               <button type="button" data-mode="live" aria-pressed="false">Live</button>
             </div>
             <p id="kModeHint" class="hint"></p>
             <div class="fgrid4">
-              <div><label for="kSizing">Size each trade by</label><select id="kSizing"><option value="fixed">A fixed $ risk</option><option value="cushion">Room above the drawdown floor</option></select></div>
               <div id="kRiskWrap"><label for="kRisk">Risk per trade ($)</label><input id="kRisk" type="number" min="50" max="5000" step="25"></div>
-              <div id="kDivWrap" hidden><label for="kDiv">Risk = room &divide;</label><input id="kDiv" type="number" min="4" max="40" step="1"></div>
-              <div><label for="kCap">Max open risk (&times; one trade)</label><input id="kCap" type="number" min="1" max="10" step="0.5"></div>
               <div><label for="kFlat">Be flat by (New York time)</label><select id="kFlat"><option value="16">4:00 PM (Topstep)</option><option value="15">3:00 PM</option><option value="17">5:00 PM (closes 4:57 PM)</option><option value="none">No cut-off: allow overnight holds</option></select></div>
-              <div class="full"><label class="check"><input id="kPause" type="checkbox"> Pause a strategy when its last 30 trades average below &minus;0.2R</label></div>
-              <div class="full"><button id="kSave" type="button">Save settings</button><p id="kMsg" class="saved" role="status" aria-live="polite"></p></div>
+              <div class="full"><button id="kSave" type="button">Save</button><p id="kMsg" class="saved" role="status" aria-live="polite"></p></div>
             </div>
+            <details class="more"><summary>More settings</summary>
+              <div class="fgrid4">
+                <div><label for="kSizing">Size each trade by</label><select id="kSizing"><option value="fixed">A fixed $ risk</option><option value="cushion">Room above the drawdown floor</option></select></div>
+                <div id="kDivWrap" hidden><label for="kDiv">Risk = room &divide;</label><input id="kDiv" type="number" min="4" max="40" step="1"></div>
+                <div><label for="kCap">Max open risk (&times; one trade)</label><input id="kCap" type="number" min="1" max="10" step="0.5"></div>
+                <div class="full"><label class="check"><input id="kPause" type="checkbox"> Pause a strategy when its last 30 trades average below &minus;0.2R</label></div>
+              </div>
+            </details>
           </div>
           <div class="panel">
-            <h2>Strategies</h2>
+            <h2>2. Pick a mix <span class="hint">(optional)</span></h2>
+            <p class="hint">Ready-made mixes from the Topstep 50K Static test, for your risk per trade. Turning one on switches every strategy in it on and every other one off. You can still flip single strategies below.</p>
+            <div class="mixrow"><select id="mixSel" aria-label="Mix"></select><button id="mixUse" type="button">Turn on this mix</button></div>
+            <p id="mixInfo" class="hint"></p>
+          </div>
+          <div class="panel">
+            <h2>3. Strategies</h2>
             <p id="kStatus" class="hint"></p>
             <div class="tscroll plainscroll"><table id="kTable"></table></div>
-            <p class="hint">Backtest column: the untouched test year (Dec 2025 &ndash; Nov 2026), one mini contract, from the research. Past results don't promise future ones.</p>
-          </div>
-          <div class="panel">
-            <h2>PO3 and Fractal (K8, K9, P1&ndash;P3)</h2>
-            <p class="hint">PO3 entries are resting <b>limit orders at the exact level</b> (fair value gap midpoint or rejection-block body); the stop goes to the broker the moment the entry fills, measured from your real fill. They exit at the stop, the target, the 4-hour candle's close, or the flat-by time. K8 enters at the 18:00 reopen. One position per market across every Keel strategy. P1&ndash;P3 only have 10 weeks of evidence, so they run in paper mode only.</p>
-            <div class="tscroll plainscroll"><table id="xTable"></table></div>
+            <p class="hint">"Alone on 50K" = that strategy by itself in the Topstep 50K Static test at your risk: how often it passed and the typical trading days to pass. Orders go in MNQ / MGC micros, every entry has its stop at the broker, and only one position per market is held at a time. Past results don't promise future ones.</p>
           </div>
           <div id="kPaperBox" class="panel" hidden>
             <h2>Paper account</h2>
