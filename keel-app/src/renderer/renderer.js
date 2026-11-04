@@ -32,7 +32,7 @@ const selAcct = () => store.accounts.find(a => a.id === store.selected) || null;
 // ---------- navigation ----------
 let view = 'dash';
 function go(v) {
-  view = v; if (v === 'chart') drawLive(); if (v === 'test') fillBtStrats(); if (v === 'k') kLoad(); if (v === 'rank') rkLoad(); if (v === 'ai') aiLoad();
+  view = v; if (v === 'chart') requestAnimationFrame(() => requestAnimationFrame(drawLive)); if (v === 'test') fillBtStrats(); if (v === 'k') kLoad(); if (v === 'rank') rkLoad(); if (v === 'ai') aiLoad();
   for (const k of Object.keys(TITLES)) $('v-' + k).hidden = k !== v;
   document.querySelectorAll('#nav button').forEach(b => { if (b.dataset.go === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   $('title').textContent = v === 'dash' ? greeting() : TITLES[v];
@@ -512,14 +512,23 @@ function chartSymbols(extra) {
 }
 function lwEnsure() {
   if (lw || !window.LightweightCharts) return;
-  const box = $('cBox'); box.replaceChildren();
+  const box = $('cBox');
+  if (!box.clientWidth || !box.clientHeight) return;            // page not visible yet: try again on the next refresh
+  box.replaceChildren();
   lw = LightweightCharts.createChart(box, {
-    autoSize: true, layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#9fb3b7', fontFamily: getComputedStyle(document.body).fontFamily },
+    width: Math.floor(box.clientWidth), height: Math.floor(box.clientHeight),
+    layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#9fb3b7', fontFamily: getComputedStyle(document.body).fontFamily },
     grid: { vertLines: { color: 'rgba(120,150,155,0.10)' }, horzLines: { color: 'rgba(120,150,155,0.10)' } },
     rightPriceScale: { borderColor: '#2a3a3f' }, timeScale: { borderColor: '#2a3a3f', timeVisible: true, secondsVisible: false, rightOffset: 8 },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal }, handleScroll: true, handleScale: true
   });
   lwSeries = lw.addCandlestickSeries({ upColor: '#6fd3b8', downColor: '#ff7b70', borderVisible: false, wickUpColor: '#6fd3b8', wickDownColor: '#ff7b70' });
+  // Size it ourselves (not autoSize): whenever the box, the window or the zoom / display scaling changes, resize and repaint.
+  const fit = () => { if (lw && box.clientWidth && box.clientHeight) lw.resize(Math.floor(box.clientWidth), Math.floor(box.clientHeight), true); };
+  new ResizeObserver(() => requestAnimationFrame(fit)).observe(box);
+  window.addEventListener('resize', () => requestAnimationFrame(fit));
+  const watchDpr = () => { const mq = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`); mq.addEventListener('change', () => { fit(); watchDpr(); }, { once: true }); };
+  watchDpr();
 }
 function lwPriceLines(lines) {
   for (const p of lwLines) lwSeries.removePriceLine(p); lwLines = [];
@@ -540,7 +549,7 @@ $('cFit').onclick = () => { if (lw && lwN) lw.timeScale().setVisibleLogicalRange
 async function drawLive() {
   if (!cat || lwBusy) return;
   chartSymbols(); if (!chartSym) return;
-  lwEnsure(); if (!lw) { $('cLegend').replaceChildren(el('p', 'empty', 'The chart library did not load.')); return; }
+  lwEnsure(); if (!lw) { if (!window.LightweightCharts) $('cLegend').replaceChildren(el('p', 'empty', 'The chart library did not load.')); return; }
   const key = chartSym + '|' + chartTf, full = key !== lwKey;
   if (!full && Date.now() - lwLast < 3000) return;          // newest bars every 3 s
   lwBusy = true;
