@@ -14,10 +14,11 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.2",
     "electron": "^38.0.0",
     "electron-builder": "^25.0.0",
-    "typescript": "^5.6.0",
-    "lightweight-charts": "^4.2.3"
+    "lightweight-charts": "^4.2.3",
+    "typescript": "^5.6.0"
   },
   "build": {
     "appId": "com.keel.personal",
@@ -52,6 +53,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.4.0",
-    "electron-updater": "^6.3.9"
+    "electron-updater": "^6.3.9",
+    "https-proxy-agent": "^9.1.0",
+    "protobufjs": "^7.4.0",
+    "ws": "^8.18.0"
   }
 }

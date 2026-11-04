@@ -2,3 +2,6 @@ node_modules/
 dist/
 dist-installer/
 *.log
+
+# Rithmic dev kit: licensed to you, never commit it
+vendor/rithmic/
