@@ -11,3 +11,5 @@ fs.copyFileSync('node_modules/lightweight-charts/LICENSE', 'dist/renderer/vendor
 
 // auto-update key (git-ignored secret)
 if (fs.existsSync('.secrets/update-key.json')) fs.copyFileSync('.secrets/update-key.json', 'dist/main/update-key.json');
+else if (process.env.KEEL_UPDATE_KEY) fs.writeFileSync('dist/main/update-key.json', JSON.stringify({ key: process.env.KEEL_UPDATE_KEY }));
+else console.warn('No update key (.secrets/update-key.json or KEEL_UPDATE_KEY): this build will not auto-update.');
