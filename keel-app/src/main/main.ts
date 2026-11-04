@@ -53,7 +53,7 @@ let runData: any = null;
 let chartData: Promise<any> | null = null;
 const chartTicks = new Map<string, { price: number; ts: number }>();   // TopstepX prices for the chart when the account is on Rithmic Test     // a separate price connection when the account's own has no data   // the running bot's connection (also serves chart history)
 /** Other accounts trading at the same time (Accounts page "Trade with Keel"). */
-interface Follower { acct: AccountRecord; broker: any; k: KLive; x: XLive; paper: PaperOrders | null; error: string; stop: () => Promise<void>; flatten: () => Promise<void> }
+interface Follower { acct: AccountRecord; broker: any; k: KLive; x: XLive; paper: PaperOrders | null; error: string; goalHit: boolean; stop: () => Promise<void>; flatten: () => Promise<void> }
 let followers: Follower[] = [];
 // The bot journal: every K / PO3 / Claude note with its New York time (today's notes feed the daily review and the chat).
 const journal: string[] = [];
@@ -180,10 +180,28 @@ async function startFollowers(list: AccountRecord[], kc: ReturnType<typeof loadK
       x = new XLive(fc, { data, desk, risk: guard, store: xTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, note: tag,
         kHolds: sym => k.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode), record });
       k.start(); x.start();
-      const f: Follower = { acct: a, broker: b, k, x, paper, error: '',
-        stop: async () => { k.stop(); x!.stop(); clearInterval(timer); await b.disconnect().catch(() => {}); if (data !== b) await data.disconnect().catch(() => {}); },
+      const f: Follower = { acct: a, broker: b, k, x, paper, error: '', goalHit: false,
+        stop: async () => { k.stop(); x!.stop(); clearInterval(timer); clearInterval(goalTimer); await b.disconnect().catch(() => {}); if (data !== b) await data.disconnect().catch(() => {}); },
         flatten: async () => { k.stop(); k.forgetAll(); x!.stop(); x!.forgetAll(); if (paper) await paper.closeAll(); else await b.closeAll().catch(() => tag('could not flatten. Check your platform now.')); } };
+      // this account's own daily profit target: close everything on it and stop trading it (the other accounts keep going)
+      let goalBusy = false;
+      const goalCheck = async () => {
+        const goal = f.acct.dailyGoal;
+        if (f.goalHit || goalBusy || !(goal > 0) || f.acct.pauseAtGoal === false) return;
+        goalBusy = true;
+        try {
+          const pnl = await dailyPnL();
+          if (!(pnl >= goal)) return;
+          f.goalHit = true; clearInterval(goalTimer);
+          guard.halt('Your daily profit target is reached, so this account is stopped for today.');
+          goalPing(a.label);
+          await f.flatten();
+          tag(`Daily profit target of $${goal.toLocaleString('en-US')} reached ($${Math.round(pnl).toLocaleString('en-US')} today). Closed all positions and orders, and stopped trading this account for today.`);
+        } catch { /* P&L unreadable: try again on the next check */ } finally { goalBusy = false; }
+      };
+      const goalTimer = setInterval(() => void goalCheck(), 3000); (goalTimer as any).unref?.();
       followers.push(f); tag(`trading in ${kc.mode} mode.`);
+      void goalCheck();
     } catch (err) { tag(`not started: ${(err as Error).message}`); }
   }
 }
@@ -216,6 +234,7 @@ function applyConfigs() {
   const main = acctCfg(kc, find(activeAccount)); kLive?.setConfig(main); xLive?.setConfig(main);
   for (const f of followers) { const c = acctCfg(kc, find(f.acct.id) ?? f.acct); f.k.setConfig(c); f.x.setConfig(c); }
 }
+const goalPing = (label: string) => ping(`[${label}] Daily profit target reached: closing everything and stopping this account for today.`);
 const mainLabel = () => loadAccounts(conns()).accounts.find(a => a.id === activeAccount)?.label ?? 'Paper account';
 /** Trade journal hook for one account's trading systems. */
 const recorder = (id: string, label: () => string, mode: 'paper' | 'live') => (r: CloseReport) => {
@@ -335,6 +354,7 @@ app.whenReady().then(async () => {
       const st = fn(loadAccounts(conns())); saveAccounts(st);
       const live = st.accounts.find(a => a.id === activeAccount);
       if (engine && live) engine.setGoals(goalsFor(live));
+      for (const f of followers) { const now = st.accounts.find(a => a.id === f.acct.id); if (now) { f.acct.dailyGoal = now.dailyGoal; f.acct.pauseAtGoal = now.pauseAtGoal; } }
       if (!engine && (!watch || watch.id !== st.selected || fn.length >= 0)) void startWatch();
       return { ok: true, store: st };
     } catch (err) { return { ok: false, error: (err as Error).message }; }
@@ -420,6 +440,9 @@ app.whenReady().then(async () => {
       };
       void pollAcct(); kAcctTimer = setInterval(() => void pollAcct(), 60_000); (kAcctTimer as any).unref?.();
       engine.onHalt = () => { kLive?.stop(); kLive?.forgetAll(); xLive?.stop(); xLive?.forgetAll(); void kPaper?.closeAll(); for (const f of followers) void f.flatten(); };
+      // daily profit target on this account: stop and close it here only (followers watch their own targets)
+      engine.onGoal = () => { kLive?.stop(); kLive?.forgetAll(); xLive?.stop(); xLive?.forgetAll(); void kPaper?.closeAll(); goalPing(mainLabel()); };
+      if (kPaper) { const p = kPaper; engine.goalPnl = async () => p.realized + p.unrealized(); }
     }
     engine.onTick = q => { if (runData) return; bars.add(q); kPaper?.onQuote(q); };   // with a separate price source, that source feeds both
     await seedBars(broker);
@@ -446,7 +469,8 @@ app.whenReady().then(async () => {
       engine.say(`Strategies are off, so the bot is in chart-trading mode: orders you place from the chart are REAL orders on ${1 + others.length} account${others.length ? 's' : ''}.`);
       if (others.length) void startFollowers(others, mc, m => engine?.say(m));
       engine.onHalt = () => { xLive?.stop(); xLive?.forgetAll(); for (const f of followers) void f.flatten(); };
-    }
+      engine.onGoal = () => { xLive?.stop(); xLive?.forgetAll(); goalPing(mainLabel()); };
+    } else engine.onGoal = () => goalPing(mainLabel());
     activeBroker = brokerId; activeAccount = acct?.id ?? '';
     hook = startWebhook(8787, webhookSecret(), s => void engine?.handleSignal(s));
     return { ok: true };
@@ -706,7 +730,7 @@ app.whenReady().then(async () => {
     if (!allowed(e)) return null;
     return { cfg: loadKConfig(), status: kLive ? kLive.status() : null, running: !!engine, x: xLive ? xLive.view() : null, rankings: RANKINGS,
       main: kLive ? { risk: kLive.riskNow(), on: Object.keys((kLive as any).cfg.enabled).filter(k => (kLive as any).cfg.enabled[k]) } : null,
-      followers: followers.map(f => ({ id: f.acct.id, label: f.acct.label, risk: f.k.riskNow(), on: Object.keys((f.k as any).cfg.enabled).filter(k => (f.k as any).cfg.enabled[k]), open: f.k.trades.length + f.x.trades.filter(t => t.state === 'open').length, working: f.x.trades.filter(t => t.state === 'working').length, paper: f.paper ? f.paper.realized + f.paper.unrealized() : null })),
+      followers: followers.map(f => ({ id: f.acct.id, label: f.acct.label, risk: f.k.riskNow(), on: Object.keys((f.k as any).cfg.enabled).filter(k => (f.k as any).cfg.enabled[k]), open: f.k.trades.length + f.x.trades.filter(t => t.state === 'open').length, working: f.x.trades.filter(t => t.state === 'working').length, paper: f.paper ? f.paper.realized + f.paper.unrealized() : null, goalHit: f.goalHit })),
       xmeta: XSTRATEGIES.map(S => ({ id: S.id, name: S.name, symbol: S.symbol, orderSymbol: S.symbol === 'NQ' ? 'MNQ' : 'MGC', paperOnly: S.paperOnly, evidence: S.evidence })),
       paper: kPaper ? { realized: kPaper.realized, unrealized: kPaper.unrealized(), fills: kPaper.fills.slice(-50) } : null,
       meta: STRATEGIES.map(S => ({ id: S.id, name: S.name, symbol: S.symbol, orderSymbol: INSTRUMENTS[S.symbol].micro, direction: S.direction,

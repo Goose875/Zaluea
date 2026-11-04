@@ -75,7 +75,7 @@ function sayToday(s, n) {
   if (!n) return s.watch && s.watch.error ? s.watch.error : store.selected ? 'Connecting to your account\u2026' : "The bot is stopped. Pick an account at the top, then press Start bot when you're ready.";
   const t = n.today;
   let line = Math.abs(t) < 0.005 ? "You're flat so far today." : t > 0 ? `You're up ${cents(t)} today.` : `You're down ${cents(t)} today.`;
-  if (s.running && st.paused) line += ' You reached your daily goal, so new trades are paused.';
+  if (s.running && st.paused) line += ' You reached your daily goal, so Keel closed everything and stopped trading this account for today.';
   else if (n.progress && n.progress.dailyTarget > 0 && t > 0) line += ` That's ${Math.round(n.progress.dailyPct)}% of your ${plain(n.progress.dailyTarget)} daily goal.`;
   if (s.running && t < 0) line += ` You have ${plain(st.limit + t)} left before your daily loss limit.`;
   if (!s.running) line += ' The bot is stopped.';
@@ -181,7 +181,7 @@ function renderProgress(s, n) {
     setBar($('cBar'), p.consistencyUsedPct, p.consistencyOk ? (p.consistencyUsedPct > 80 ? '' : 'ok') : 'bad');
     $('cSub').textContent = p.consistencyOk ? (p.consistencyUsedPct > 80 ? "You're within the rule, but close to the limit." : "You're within the rule.") : `Your best day is ${plain(p.bestDay - p.consistencyLimit)} over. More profit on other days brings it back in line.`;
   }
-  if (p.dailyTarget > 0) { $('dText').textContent = `${money(p.todayPnl)} of ${plain(p.dailyTarget)}`; setBar($('dBar'), p.dailyPct, p.dailyHit ? 'ok' : ''); $('dSub').textContent = p.dailyHit ? (s.stats && s.stats.paused ? 'Reached. New trades are paused for the rest of the session.' : 'Reached. Nice work.') : `${plain(p.dailyTarget - p.todayPnl)} to go today.`; }
+  if (p.dailyTarget > 0) { $('dText').textContent = `${money(p.todayPnl)} of ${plain(p.dailyTarget)}`; setBar($('dBar'), p.dailyPct, p.dailyHit ? 'ok' : ''); $('dSub').textContent = p.dailyHit ? (s.stats && s.stats.paused ? 'Reached. Everything is closed and this account is stopped for today.' : 'Reached. Nice work.') : `${plain(p.dailyTarget - p.todayPnl)} to go today.`; }
   else { $('dText').textContent = 'Off'; setBar($('dBar'), 0); $('dSub').textContent = 'Set a daily goal with Edit rules.'; }
   if (p.floor !== null) {
     $('fText').textContent = `${plain(p.cushion)} of room`;

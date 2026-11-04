@@ -7,7 +7,7 @@ export interface Goals {
   stage: Stage;
   profitTarget: number;          // total profit to pass (evaluation) or to reach a payout (funded, live). 0 = off
   dailyProfitTarget: number;     // 0 = off
-  pauseAtDailyTarget: boolean;   // stop opening new trades once the daily target is hit
+  pauseAtDailyTarget: boolean;   // once the daily target is hit: close everything on the account and stop trading it for the day
   consistencyPct: number;        // 0 = off
   consistencyBasis: 'target' | 'total'; // best day measured against the profit target, or against total profit
   drawdown?: 'eod' | 'intraday' | 'static';

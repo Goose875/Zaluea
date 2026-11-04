@@ -16,7 +16,7 @@ export class RiskGuard {
   constructor(readonly limits: RiskLimits) {}
 
   check(s: Signal, ctx: { dailyPnL: number; openPositions: number; positions?: Position[] }): { ok: boolean; reason?: string } {
-    if (this.halted) return { ok: false, reason: 'Trading is halted.' };
+    if (this.halted) return { ok: false, reason: this.haltReason };
     if (ctx.dailyPnL <= -Math.abs(this.limits.maxDailyLoss)) {
       this.halted = true;
       return { ok: false, reason: 'Daily loss limit reached. Trading halted.' };
@@ -33,7 +33,8 @@ export class RiskGuard {
     return { ok: true };
   }
 
-  halt() { this.halted = true; }
+  private haltReason = 'Trading is halted.';
+  halt(reason?: string) { if (!this.halted && reason) this.haltReason = reason; this.halted = true; }
 }
 
 export const DEFAULT_RISK: RiskLimits = { maxDailyLoss: 500, maxQtyPerOrder: 2, maxOpenPositions: 2, allowedSymbols: ['ES', 'NQ', 'MES', 'MNQ'] };

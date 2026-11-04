@@ -16,6 +16,10 @@ export class Engine {
   onTick?: (q: { symbol: string; price: number; ts: number }) => void;
   /** Called first when the kill switch or a daily-loss stop fires (the K system stops and forgets its trades). */
   onHalt?: () => void;
+  /** Called when THIS account reaches its daily profit target: stop the K system here and close its paper trades (other accounts keep going). */
+  onGoal?: () => void;
+  /** Today's P&L from the K system's paper desk (paper mode), so paper trades count toward the daily target too. */
+  goalPnl?: () => Promise<number>;
   log: string[] = [];
   events: { t: number; msg: string; kind: 'trade' | 'warn' | 'info' }[] = [];
   private stats = { realized: 0, unrealized: 0, total: 0, positions: [] as Position[], updated: 0 };
@@ -80,7 +84,7 @@ export class Engine {
   }
 
   private async watch() {
-    if (this.busy || this.risk.halted) return;
+    if (this.busy || (this.risk.halted && !this.latched)) return;   // after a daily-target stop the dashboard keeps updating
     this.busy = true;
     try {
       const b = this.broker.getPnLBreakdown
@@ -92,12 +96,12 @@ export class Engine {
       const acct = this.broker.getAccount ? await this.broker.getAccount() : null;
       this.account = acct ? { name: acct.name, size: acct.size, startBalance: acct.startBalance } : null;
       this.progress = evaluate(this.goals, acct, pnl, Math.max(pnl, ...this.history.map(h => h[1])));
-      if (!this.latched && this.goals.pauseAtDailyTarget && this.progress.dailyHit) {
-        this.latched = true;
-        this.note('Daily profit target reached. New trades are paused for this session.');
+      if (!this.latched && this.goals.pauseAtDailyTarget && this.goals.dailyProfitTarget > 0) {
+        const paper = this.goalPnl ? await this.goalPnl().catch(() => -Infinity) : -Infinity;
+        if (this.progress.dailyHit || paper >= this.goals.dailyProfitTarget) await this.stopForDay(Math.max(pnl, paper));
       }
       this.bad = 0;
-      if (pnl <= -Math.abs(this.risk.limits.maxDailyLoss)) {
+      if (!this.risk.halted && pnl <= -Math.abs(this.risk.limits.maxDailyLoss)) {
         this.note('Daily loss limit reached. Stopping and closing positions.');
         await this.halt();
       }
@@ -178,6 +182,27 @@ export class Engine {
       this.note('Kill switch used. All positions closed.');
     } catch {
       this.note('Kill switch used, but closing positions failed. Check your trading platform right now.');
+    }
+  }
+
+  /**
+   * Daily profit target reached: close everything on THIS account and stop all trading on it until the bot is started again.
+   * Unlike halt(), other accounts keep trading. Halting this account's risk guard blocks every new order on it
+   * (rule strategies, TradingView alerts, the K system and chart orders).
+   */
+  async stopForDay(pnl: number) {
+    if (this.latched) return;
+    this.latched = true;
+    this.risk.halt('Your daily profit target is reached, so this account is stopped for today.');
+    try { this.onGoal?.(); } catch { /* keep going: closing positions matters more */ }
+    this.open.clear();
+    for (const r of this.running.values()) r.s.reset?.();
+    const at = `Daily profit target of $${this.goals.dailyProfitTarget.toLocaleString('en-US')} reached ($${Math.round(pnl).toLocaleString('en-US')} today).`;
+    try {
+      await this.broker.closeAll();
+      this.note(`${at} Closed all positions and orders, and stopped trading this account for today.`);
+    } catch {
+      this.note(`${at} Trading on this account is stopped, but closing positions failed. Check your trading platform right now.`);
     }
   }
 
