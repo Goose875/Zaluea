@@ -42,7 +42,8 @@ let xLive: XLive | null = null;
 let ai: KeelAI | null = null;
 let aiTimer: ReturnType<typeof setInterval> | undefined;
 let kBroker: any = null;
-let runBroker: any = null;   // the running bot's connection (also serves chart history)
+let runBroker: any = null;
+let runData: any = null;     // a separate price connection when the account's own has no data   // the running bot's connection (also serves chart history)
 /** Other accounts trading at the same time (Accounts page "Trade with Keel"). */
 interface Follower { acct: AccountRecord; broker: any; k: KLive; x: XLive; paper: PaperOrders | null; error: string; stop: () => Promise<void>; flatten: () => Promise<void> }
 let followers: Follower[] = [];
@@ -122,7 +123,7 @@ function webhookSecret(): string {
   return secret;
 }
 
-function stopK() { for (const f of followers) void f.stop(); followers = []; clearInterval(aiTimer); kBroker = null; kLive?.stop(); kLive = null; xLive?.stop(); xLive = null; kPaper = null; clearInterval(kAcctTimer); kAcct = null; }
+function stopK() { if (runData) { void runData.disconnect().catch(() => {}); runData = null; } for (const f of followers) void f.stop(); followers = []; clearInterval(aiTimer); kBroker = null; kLive?.stop(); kLive = null; xLive?.stop(); xLive = null; kPaper = null; clearInterval(kAcctTimer); kAcct = null; }
 async function stopTrading() {
   stopK(); runBroker = null;
   await engine?.shutdown();
@@ -155,25 +156,39 @@ async function startFollowers(list: AccountRecord[], kc: ReturnType<typeof loadK
       await b.connect({ ...(creds ?? {}), ...(a.brokerRef ? { accountId: a.brokerRef } : {}) });
       if (!b.getHistory || (kc.mode === 'live' && !(b.getOpenOrders && b.modifyOrder && b.cancelOrder))) { tag('not started: this connection cannot run the strategies.'); await b.disconnect(); continue; }
       await b.subscribe?.(K_SYMBOLS).catch(() => {});
+      const data: any = await dataFor(b, tag);
       const g = loadRisk(), guard = new RiskGuard({ ...g, maxDailyLoss: a.dailyLoss > 0 ? Math.min(g.maxDailyLoss, a.dailyLoss) : g.maxDailyLoss, maxMini: a.maxMini || 0, maxMicro: a.maxMicro || 0 });
-      const paper = kc.mode === 'paper' ? new PaperOrders(b) : null; b.onQuote((q: any) => paper?.onQuote(q));
+      const paper = kc.mode === 'paper' ? new PaperOrders(data) : null; data.onQuote((q: any) => paper?.onQuote(q));
       const desk: OrderDesk = paper ?? (b as OrderDesk);
       const dailyPnL = async () => (paper ? paper.realized + paper.unrealized() : b.getDailyPnL());
       let info: { equity: number; floor: number } | null = null;
       const poll = async () => { try { const i = b.getAccount ? await b.getAccount() : null; if (i) info = { equity: i.balance, floor: i.floor ?? (a.size - a.maxLoss) }; } catch { /* keep last */ } };
       void poll(); const timer = setInterval(() => void poll(), 60_000); (timer as any).unref?.();
       let x: XLive | null = null;
-      const k = new KLive(kc, { data: b, desk, risk: guard, store: kTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, account: () => info, note: tag,
+      const k = new KLive(kc, { data, desk, risk: guard, store: kTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, account: () => info, note: tag,
         xHolds: sym => !!x?.holds(sym), gate: ctx => aiGate(ctx, kc.mode) });
-      x = new XLive(kc, { data: b, desk, risk: guard, store: xTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, note: tag,
+      x = new XLive(kc, { data, desk, risk: guard, store: xTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, note: tag,
         kHolds: sym => k.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode) });
       k.start(); x.start();
       const f: Follower = { acct: a, broker: b, k, x, paper, error: '',
-        stop: async () => { k.stop(); x!.stop(); clearInterval(timer); await b.disconnect().catch(() => {}); },
+        stop: async () => { k.stop(); x!.stop(); clearInterval(timer); await b.disconnect().catch(() => {}); if (data !== b) await data.disconnect().catch(() => {}); },
         flatten: async () => { k.stop(); k.forgetAll(); x!.stop(); x!.forgetAll(); if (paper) await paper.closeAll(); else await b.closeAll().catch(() => tag('could not flatten. Check your platform now.')); } };
       followers.push(f); tag(`trading in ${kc.mode} mode.`);
     } catch (err) { tag(`not started: ${(err as Error).message}`); }
   }
+}
+
+/** Prices and history for the strategies: the account's own connection, or (when it has none, e.g. Rithmic Test without
+ *  market data) the saved TopstepX login. Orders always go to the account's own connection. */
+async function dataFor(broker: any, say: (m: string) => void): Promise<any> {
+  try { const h = broker.getHistory ? await broker.getHistory('NQ', 'hour', 3) : []; if (h.length) return broker; } catch { /* fall through */ }
+  const px = vault.get('broker:projectx');
+  if (!px || broker.id === 'projectx') return broker;
+  try {
+    const d: any = ADAPTERS.projectx(); await d.connect(px); await d.subscribe?.(K_SYMBOLS).catch(() => {});
+    say('This account has no price data from its own connection, so prices and history come from your TopstepX login. Orders still go to this account.');
+    return d;
+  } catch (err) { say(`No price data on this account, and TopstepX prices failed too (${(err as Error).message}).`); return broker; }
 }
 
 /** Before any entry is sent: the news pause, then (if switched on for this mode) Claude's entry check. */
@@ -343,18 +358,21 @@ app.whenReady().then(async () => {
       if (!broker.getHistory) kErr = `${def.name} has no price history, so the K system can't run on it.`;
       else if (kc.mode === 'live' && !(broker.getOpenOrders && broker.modifyOrder && broker.cancelOrder)) kErr = `${def.name} can't hold stop orders yet, so the K system can't trade live on it. Use paper mode.`;
     }
+    let dataSrc: any = broker;
     if (kc.mode !== 'off' && !kErr) {
-      kPaper = kc.mode === 'paper' ? new PaperOrders(broker) : null;
+      dataSrc = await dataFor(broker, m => engine?.say(m));
+      if (dataSrc !== broker) { dataSrc.onQuote((q: any) => { bars.add(q); kPaper?.onQuote(q); }); runData = dataSrc; }
+      kPaper = kc.mode === 'paper' ? new PaperOrders(dataSrc) : null;
       const desk: OrderDesk = kPaper ?? (broker as unknown as OrderDesk);
       const e = engine;
       kLive = new KLive(kc, {
-        data: broker, desk, risk: guard, store: kTradeStore(kc.mode),
+        data: dataSrc, desk, risk: guard, store: kTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
         account: () => kAcct, note: m => { jot(m); e.say(m); }, xHolds: sym => !!xLive?.holds(sym), gate: ctx => aiGate(ctx, kc.mode)
       });
       // K8, K9, P1-P3: same order desk, same risk limits, one position per market shared with K1-K7.
       xLive = new XLive(kc, {
-        data: broker, desk, risk: guard, store: xTradeStore(kc.mode),
+        data: dataSrc, desk, risk: guard, store: xTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
         note: m => { jot(m); e.say(m); }, kHolds: sym => !!kLive?.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode)
       });
@@ -376,7 +394,7 @@ app.whenReady().then(async () => {
       // every other account switched on under Accounts trades too (own connection, risk limits and trade records)
       const others = st.accounts.filter(a => a.trade !== false && a.id !== acct?.id && a.connection in ADAPTERS && a.connection !== 'paper');
       if (others.length) { engine.say(`Also trading ${others.length} more account${others.length === 1 ? '' : 's'}: ${others.map(a => a.label).join(', ')}.`); void startFollowers(others, kc, m => engine?.say(m)); }
-      kBroker = broker; const eng = engine!; aiTimer = setInterval(() => void aiTick(kc.mode, eng), 30_000); (aiTimer as any).unref?.(); void aiTick(kc.mode, eng);
+      kBroker = dataSrc; const eng = engine!; aiTimer = setInterval(() => void aiTick(kc.mode, eng), 30_000); (aiTimer as any).unref?.(); void aiTick(kc.mode, eng);
       const xOn = XSTRATEGIES.filter(S => kc.enabled[S.id]).map(S => S.id);
       if (xOn.length) engine.say(`PO3/Fractal strategies on: ${xOn.join(', ')}. PO3 entries are resting limit orders at the exact level; stops go in as soon as they fill.`);
     }
@@ -412,7 +430,7 @@ app.whenReady().then(async () => {
   const HIST_UNITS = ['min1', 'min5', 'min15', 'hour', 'hour4', 'day'];
   ipcMain.handle('chart:hist', async (e, symbol: unknown, unit: unknown, count: unknown) => {
     if (!allowed(e) || typeof symbol !== 'string' || !HIST_UNITS.includes(unit as string)) return { ok: false, error: 'Not allowed.' };
-    const b: any = runBroker ?? watch?.broker;
+    const b: any = runData ?? runBroker ?? watch?.broker;
     if (!b?.getHistory) return { ok: false, error: 'Start the bot (or pick an account) to load chart history.' };
     try {
       const n = Math.max(3, Math.min(5000, Number(count) || 1500));

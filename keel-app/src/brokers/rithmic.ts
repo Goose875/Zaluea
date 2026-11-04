@@ -17,7 +17,7 @@ import * as protobuf from 'protobufjs';
 import { AccountInfo, BrokerAdapter, HistBar, HistUnit, Order, Position, Quote, WorkingOrder } from '../core/types';
 import type { AccountRecord } from '../core/accounts';
 
-const APP = { name: 'Keel', version: '0.6.2' };
+const APP = { name: 'Keel', version: '0.6.3' };
 const TEMPLATE_VERSION = '5.55';
 const DEFAULT_GATEWAY = 'wss://rituz00100.rithmic.com:443', DEFAULT_SYSTEM = 'Rithmic Test';
 const EXCHANGE: Record<string, string> = { NQ: 'CME', MNQ: 'CME', ES: 'CME', MES: 'CME', RTY: 'CME', M2K: 'CME', YM: 'CBOT', MYM: 'CBOT', GC: 'COMEX', MGC: 'COMEX', SI: 'COMEX', CL: 'NYMEX', MCL: 'NYMEX' };
@@ -57,6 +57,21 @@ function proxyAgent(): any {
 const ok = (m: any) => Array.isArray(m.rpCode) && m.rpCode.length > 0 && m.rpCode[0] === '0';
 const errText = (m: any) => (m.rpCode?.length > 1 ? `${m.rpCode[1]} (code ${m.rpCode[0]})` : `code ${m.rpCode?.[0] ?? '?'}`);
 const num = (x: unknown) => (x === undefined || x === null || x === '' ? NaN : Number(x));
+/** The usual front-month contract when Rithmic's lookup has no answer: equity index quarterly (H M U Z), rolled 8 days
+ *  before expiry month's 3rd Friday; gold G J M Q Z, rolled on the 25th of the month before delivery. Year = one digit (MNQZ6). */
+export function guessFront(sym: string, now = new Date()): string | null {
+  const code = 'FGHJKMNQUVXZ';
+  const thirdFriday = (yy: number, mm: number) => { const first = new Date(Date.UTC(yy, mm - 1, 1)).getUTCDay(); return Date.UTC(yy, mm - 1, 1 + ((5 - first + 7) % 7) + 14); };
+  let months: number[], roll: (yy: number, mm: number) => number;
+  if (/^(M?NQ|M?ES|RTY|M2K|M?YM)$/.test(sym)) { months = [3, 6, 9, 12]; roll = (yy, mm) => thirdFriday(yy, mm) - 8 * 86_400_000; }
+  else if (/^M?GC$/.test(sym)) { months = [2, 4, 6, 8, 12]; roll = (yy, mm) => Date.UTC(mm === 1 ? yy - 1 : yy, (mm === 1 ? 12 : mm - 1) - 1, 25); }
+  else return null;
+  for (let k = 0; k < 18; k++) {
+    const yy = now.getUTCFullYear() + Math.floor((now.getUTCMonth() + k) / 12), mm = ((now.getUTCMonth() + k) % 12) + 1;
+    if (months.includes(mm) && now.getTime() < roll(yy, mm)) return sym + code[mm - 1] + String(yy % 10);
+  }
+  return null;
+}
 /** Keel's symbol for a Rithmic contract: MNQZ6 -> MNQ, GCG7 -> GC. */
 const rootOf = (sym: string) => sym.replace(/[FGHJKMNQUVXZ]\d{1,2}$/, '');
 
@@ -196,9 +211,12 @@ export class RithmicBroker implements BrokerAdapter {
   private async contract(sym: string): Promise<{ symbol: string; exchange: string }> {
     const hit = this.s!.front.get(sym); if (hit) return hit;
     const exchange = EXCHANGE[sym]; if (!exchange) throw new Error(`Keel doesn't know which exchange ${sym} trades on.`);
-    const r = (await this.P.TICKER.request('RequestFrontMonthContract', { templateId: 113, symbol: sym, exchange, needUpdates: false })).slice(-1)[0];
-    const c = { symbol: r.tradingSymbol || r.symbol, exchange: r.tradingExchange || r.exchange || exchange };
-    if (!c.symbol) throw new Error(`Rithmic has no front-month contract for ${sym}.`);
+    let c: { symbol: string; exchange: string } | null = null;
+    try {
+      const r = (await this.P.TICKER.request('RequestFrontMonthContract', { templateId: 113, symbol: sym, exchange, needUpdates: false })).slice(-1)[0];
+      if (r && (r.tradingSymbol || r.symbol) && /\d$/.test(r.tradingSymbol || r.symbol)) c = { symbol: r.tradingSymbol || r.symbol, exchange: r.tradingExchange || r.exchange || exchange };
+    } catch { /* some systems (e.g. Rithmic Test) answer "no data": work it out below */ }
+    if (!c) { const g = guessFront(sym); if (!g) throw new Error(`Rithmic has no front-month contract for ${sym}.`); c = { symbol: g, exchange }; }
     this.s!.front.set(sym, c); return c;
   }
   async subscribe(symbols: string[]) {
