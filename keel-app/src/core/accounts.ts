@@ -10,6 +10,10 @@ export interface AccountRecord {
   cost: number; purchaseDate: string; notes: string;
   /** Keel may trade this account when the bot runs (Accounts page switch). */
   trade: boolean;
+  /** Risk per trade for this account in $ (0 = the Strategies page setting). */
+  riskUsd: number;
+  /** Strategies for this account, e.g. "K1 + K3 + K4" ('' = the Strategies page switches). */
+  mix: string;
 }
 export interface AccountStore { selected: string; accounts: AccountRecord[] }
 export const MAX_ACCOUNTS = 200;
@@ -17,7 +21,7 @@ export const MAX_ACCOUNTS = 200;
 export const BLANK: Omit<AccountRecord, 'id'> = {
   label: '', firm: 'Topstep', connection: 'projectx', brokerRef: '', stage: 'evaluation', plan: '', size: 50000, drawdown: 'eod', maxLoss: 2000,
   dailyLoss: 0, profitTarget: 3000, consistencyPct: 0, consistencyBasis: 'target', minDays: 0, maxMini: 0, maxMicro: 0, dailyGoal: 0, pauseAtGoal: true,
-  cost: 0, purchaseDate: '', notes: '', trade: true
+  cost: 0, purchaseDate: '', notes: '', trade: true, riskUsd: 0, mix: ''
 };
 
 export function parseAccount(x: any, connections: string[]): Omit<AccountRecord, 'id'> {
@@ -45,7 +49,9 @@ export function parseAccount(x: any, connections: string[]): Omit<AccountRecord,
     consistencyPct: num(x.consistencyPct, 100, 'Consistency'), consistencyBasis: x.consistencyBasis === 'total' ? 'total' : 'target',
     minDays: num(x.minDays, 365, 'Minimum trading days', true), maxMini: num(x.maxMini, 1000, 'Max mini contracts', true),
     maxMicro: num(x.maxMicro, 10000, 'Max micro contracts', true), dailyGoal: num(x.dailyGoal, 1_000_000, 'Daily goal'),
-    pauseAtGoal: x.pauseAtGoal !== false, cost: num(x.cost, 1_000_000, 'Cost'), purchaseDate: date, notes: text(x.notes, 500, 'Notes'), trade: x.trade !== false
+    pauseAtGoal: x.pauseAtGoal !== false, cost: num(x.cost, 1_000_000, 'Cost'), purchaseDate: date, notes: text(x.notes, 500, 'Notes'), trade: x.trade !== false,
+    riskUsd: x.riskUsd === undefined || x.riskUsd === null || x.riskUsd === '' ? 0 : num(Number(x.riskUsd), 5000, 'Risk per trade'),
+    mix: (() => { const m = String(x.mix ?? '').trim(); if (m && !/^[KP]\d( \+ [KP]\d)*$/.test(m)) throw new Error('That strategy mix is not valid.'); return m; })()
   };
 }
 

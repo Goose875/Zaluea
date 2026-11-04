@@ -49,7 +49,7 @@ BROKERS.push({ id: 'replay', name: 'Replay', status: 'ready', note: '', fields: 
 // ---- accounts and settings on disk
 const acct = (id, label, trade) => ({ id, label, firm: 'Topstep', connection: 'replay', brokerRef: id, stage: 'evaluation', plan: '', size: 50000, drawdown: 'static', maxLoss: 2000,
   dailyLoss: 1000, profitTarget: 4000, consistencyPct: 55, consistencyBasis: 'target', minDays: 0, maxMini: 4, maxMicro: 40, dailyGoal: 0, pauseAtGoal: true, cost: 0, purchaseDate: '', notes: '', trade });
-fs.writeFileSync(path.join(tmp, 'accounts.json'), JSON.stringify({ selected: 'a-00000000000a', accounts: [acct('a-00000000000a', 'Account A', true), acct('a-00000000000b', 'Account B', true), acct('a-00000000000c', 'Account C', false)] }));
+fs.writeFileSync(path.join(tmp, 'accounts.json'), JSON.stringify({ selected: 'a-00000000000a', accounts: [{ ...acct('a-00000000000a', 'Account A', true), riskUsd: 250 }, { ...acct('a-00000000000b', 'Account B', true), riskUsd: 500, mix: 'K1 + K3 + K4 + K6 + K7' }, acct('a-00000000000c', 'Account C', false)] }));
 fs.writeFileSync(path.join(tmp, 'risk.json'), JSON.stringify({ maxDailyLoss: 1000, maxQtyPerOrder: 10, maxOpenPositions: 4, allowedSymbols: ['MNQ', 'MGC', 'NQ', 'GC'] }));
 const MODE = process.env.MODE || 'paper';
 fs.writeFileSync(path.join(tmp, 'ksystem.json'), JSON.stringify({ mode: MODE, riskUsd: 250, flatByHour: MODE === 'off' ? 23 : 16 }));
@@ -71,6 +71,14 @@ let fails = 0; const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'
   check(labels2.includes('Account A') && labels2.includes('Account B'), `both accounts running: ${JSON.stringify(labels2)}`);
   check(!labels.includes('Account C') && !made.some(b => b.accountId === 'a-00000000000c'), 'Account C (Trade off) never connected');
   check(made.filter(b => b.accountId === 'a-00000000000b').length === 1, 'Account B has its own connection');
+  if (MODE !== 'off') {
+    const kc1 = await handlers['k:get'](ev), fb = (kc1.followers || []).find(f => f.label === 'Account B');
+    check(kc1.main && kc1.main.risk === 250, `Account A uses its own risk: $${kc1.main && kc1.main.risk}`);
+    check(fb && fb.risk === 500 && fb.on.join(',') === 'K1,K3,K4,K6,K7', `Account B uses its own risk and mix: $${fb && fb.risk}, ${fb && fb.on.join(',')}`);
+    const up2 = await handlers['accounts:update'](ev, ['a-00000000000b'], { riskUsd: 350 }); await new Promise(r => setTimeout(r, 200));
+    const fb2 = ((await handlers['k:get'](ev)).followers || []).find(f => f.label === 'Account B');
+    check(up2.ok && fb2 && fb2.risk === 350, `changing B's risk while running applies at once: $${fb2 && fb2.risk}`);
+  }
   // trading from the chart on both accounts
   const ca = await handlers['chart:accounts'](ev), ids = ca.accounts.map(x => x.id);
   check(ca.accounts.length === 2, `chart order ticket sees both running accounts: ${ca.accounts.map(x => x.label).join(', ')}`);

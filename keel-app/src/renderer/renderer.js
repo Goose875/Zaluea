@@ -32,7 +32,7 @@ const selAcct = () => store.accounts.find(a => a.id === store.selected) || null;
 // ---------- navigation ----------
 let view = 'dash';
 function go(v) {
-  view = v; if (v === 'chart') { requestAnimationFrame(() => requestAnimationFrame(drawLive)); void tkRender(); } if (v === 'test') fillBtStrats(); if (v === 'k') kLoad(); if (v === 'rank') rkLoad(); if (v === 'ai') aiLoad(); if (v === 'conn') dcLoad();
+  view = v; if (v === 'chart') { requestAnimationFrame(() => requestAnimationFrame(drawLive)); void tkRender(); } if (v === 'test') fillBtStrats(); if (v === 'k') kLoad(); if (v === 'accts') loadAcctDefaults().then(renderAccounts); if (v === 'rank') rkLoad(); if (v === 'ai') aiLoad(); if (v === 'conn') dcLoad();
   for (const k of Object.keys(TITLES)) $('v-' + k).hidden = k !== v;
   document.querySelectorAll('#nav button').forEach(b => { if (b.dataset.go === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   $('title').textContent = v === 'dash' ? greeting() : TITLES[v];
@@ -207,6 +207,16 @@ document.querySelectorAll('#stageSeg button').forEach(b => {
 $('editRules').onclick = () => { const a = selAcct(); if (a) openDrawer('edit', [a.id], $('editRules')); };
 
 // ---------- accounts list ----------
+let acctDefaults = { risk: 0, mixes: [] };
+async function loadAcctDefaults() {
+  try {
+    const k = await window.keel.kGet(); if (!k) return;
+    const R = k.rankings, seen = new Set(), mixes = [];
+    for (const r of [...(R ? R.mixes : [])].sort((x, y) => (y.score ?? 0) - (x.score ?? 0))) { if (!seen.has(r.strategies)) { seen.add(r.strategies); mixes.push(r.strategies); } if (mixes.length >= 10) break; }
+    if (R && !seen.has(R.recommended.strategies)) mixes.unshift(R.recommended.strategies);
+    acctDefaults = { risk: k.cfg.riskUsd, mixes };
+  } catch { /* keep defaults */ }
+}
 function renderAccounts() {
   const q = $('acctSearch').value.trim().toLowerCase(), box = $('acctGroups'); box.replaceChildren();
   const list = store.accounts.filter(a => !q || [a.label, a.firm, a.plan].some(v => v.toLowerCase().includes(q)));
@@ -221,7 +231,7 @@ function renderAccounts() {
     if (accts.length > 1) { const b = el('button', 'ghost small', 'Edit all'); b.onclick = () => openDrawer('bulk', accts.map(a => a.id), b); head.append(b); }
     g.append(head);
     const wrap = el('div', 'tscroll'), t = el('table'), hr = el('tr');
-    for (const h of ['Trade', 'Account', 'Type', 'Plan', 'Size', 'Drawdown', 'Max loss', 'Daily loss', 'Consistency', 'Target', 'Contracts', '']) hr.append(Object.assign(el('th', ['Size', 'Max loss', 'Daily loss', 'Consistency', 'Target', 'Contracts'].includes(h) ? 'r' : '', h), { scope: 'col' }));
+    for (const h of ['Trade', 'Account', 'Risk / trade', 'Strategies', 'Type', 'Plan', 'Size', 'Drawdown', 'Max loss', 'Daily loss', 'Consistency', 'Target', 'Contracts', '']) hr.append(Object.assign(el('th', ['Size', 'Max loss', 'Daily loss', 'Consistency', 'Target', 'Contracts'].includes(h) ? 'r' : '', h), { scope: 'col' }));
     t.append(hr);
     for (const a of accts) {
       const r = el('tr'), name = el('td'), conn = cat.brokers.find(b => b.id === a.connection);
@@ -233,7 +243,17 @@ function renderAccounts() {
       cb.setAttribute('aria-label', `Keel may trade ${a.label}`); cb.disabled = running; cb.title = running ? 'Stop the bot to change which accounts trade.' : '';
       cb.onchange = async () => { const res = await window.keel.updateAccounts([a.id], { trade: cb.checked }); if (res.ok) { store = res.store; renderAccounts(); } else { notice(res.error); cb.checked = !cb.checked; } };
       lab.append(cb, el('span')); tw.append(lab); r.append(tw);
-      r.append(name, el('td', '', STAGE[a.stage][0]), el('td', '', a.plan || '\u2014'), el('td', 'r', a.size ? k$(a.size) : '\u2014'), el('td', '', DD[a.drawdown]),
+      // this account's risk per trade and strategy mix (empty = the Strategies page settings)
+      const rk = el('td'), ri = el('input'); ri.type = 'number'; ri.min = '50'; ri.max = '5000'; ri.step = '25'; ri.style.width = '96px';
+      ri.value = a.riskUsd > 0 ? String(a.riskUsd) : ''; ri.placeholder = acctDefaults.risk ? `$${acctDefaults.risk}` : 'default'; ri.setAttribute('aria-label', `Risk per trade for ${a.label}`);
+      ri.onchange = async () => { const v = ri.value.trim() === '' ? 0 : Number(ri.value); const res = await window.keel.updateAccounts([a.id], { riskUsd: v }); if (res.ok) { store = res.store; notice(`${a.label}: risk per trade ${v ? '$' + v : 'from the Strategies page'}.`, true); } else { notice(res.error); ri.value = a.riskUsd > 0 ? String(a.riskUsd) : ''; } };
+      rk.append(ri);
+      const mx = el('td'), ms = el('select'); ms.style.minWidth = '240px'; ms.style.maxWidth = '300px'; ms.setAttribute('aria-label', `Strategies for ${a.label}`);
+      const opts = [['', 'Strategies page switches'], ...acctDefaults.mixes.map(m => [m, m])]; if (a.mix && !opts.some(o => o[0] === a.mix)) opts.push([a.mix, a.mix]);
+      for (const [v, t] of opts) { const o = el('option', '', t); o.value = v; ms.append(o); } ms.value = a.mix || '';
+      ms.onchange = async () => { const res = await window.keel.updateAccounts([a.id], { mix: ms.value }); if (res.ok) { store = res.store; notice(`${a.label}: ${ms.value || 'uses the Strategies page switches'}.`, true); } else { notice(res.error); ms.value = a.mix || ''; } };
+      mx.append(ms);
+      r.append(name, rk, mx, el('td', '', STAGE[a.stage][0]), el('td', '', a.plan || '\u2014'), el('td', 'r', a.size ? k$(a.size) : '\u2014'), el('td', '', DD[a.drawdown]),
         el('td', 'r', a.maxLoss ? plain(a.maxLoss) : '\u2014'), el('td', 'r', a.dailyLoss ? plain(a.dailyLoss) : '\u2014'), el('td', 'r', a.consistencyPct ? a.consistencyPct + '%' : '\u2014'),
         el('td', 'r', a.profitTarget ? plain(a.profitTarget) : '\u2014'), el('td', 'r', caps));
       const acts = el('td', 'acts'), wrapA = el('span', 'rowacts');

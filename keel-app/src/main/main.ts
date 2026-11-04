@@ -168,9 +168,10 @@ async function startFollowers(list: AccountRecord[], kc: ReturnType<typeof loadK
       const poll = async () => { try { const i = b.getAccount ? await b.getAccount() : null; if (i) info = { equity: i.balance, floor: i.floor ?? (a.size - a.maxLoss) }; } catch { /* keep last */ } };
       void poll(); const timer = setInterval(() => void poll(), 60_000); (timer as any).unref?.();
       let x: XLive | null = null;
-      const k = new KLive(kc, { data, desk, risk: guard, store: kTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, account: () => info, note: tag,
+      const fc = acctCfg(kc, a);
+      const k = new KLive(fc, { data, desk, risk: guard, store: kTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, account: () => info, note: tag,
         xHolds: sym => !!x?.holds(sym), gate: ctx => aiGate(ctx, kc.mode) });
-      x = new XLive(kc, { data, desk, risk: guard, store: xTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, note: tag,
+      x = new XLive(fc, { data, desk, risk: guard, store: xTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, note: tag,
         kHolds: sym => k.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode) });
       k.start(); x.start();
       const f: Follower = { acct: a, broker: b, k, x, paper, error: '',
@@ -196,6 +197,19 @@ async function dataFor(broker: any, say: (m: string) => void): Promise<any> {
   } catch (err) { say(`No price data on this account, and TopstepX prices failed too (${(err as Error).message}).`); return broker; }
 }
 
+/** The bot's settings for one account: its own risk per trade and strategy mix when set, else the Strategies page. */
+function acctCfg(kc: ReturnType<typeof loadKConfig>, a: AccountRecord | null | undefined) {
+  if (!a) return kc;
+  const ids = a.mix ? a.mix.split(' + ') : null;
+  return { ...kc, riskUsd: a.riskUsd > 0 ? a.riskUsd : kc.riskUsd, enabled: ids ? Object.fromEntries(Object.keys(kc.enabled).map(id => [id, ids.includes(id)])) : kc.enabled };
+}
+/** After settings change: push each running account its own config (chart-trading-only mode keeps strategies off). */
+function applyConfigs() {
+  const kc = loadKConfig(), st = loadAccounts(conns()), find = (id: string) => st.accounts.find(a => a.id === id);
+  if (kc.mode === 'off') return;
+  const main = acctCfg(kc, find(activeAccount)); kLive?.setConfig(main); xLive?.setConfig(main);
+  for (const f of followers) { const c = acctCfg(kc, find(f.acct.id) ?? f.acct); f.k.setConfig(c); f.x.setConfig(c); }
+}
 const mainLabel = () => loadAccounts(conns()).accounts.find(a => a.id === activeAccount)?.label ?? 'Paper account';
 
 /** Before any entry is sent: the news pause, then (if switched on for this mode) Claude's entry check. */
@@ -314,7 +328,7 @@ app.whenReady().then(async () => {
     } catch (err) { return { ok: false, error: (err as Error).message }; }
   };
   ipcMain.handle('accounts:add', (e, x: unknown) => allowed(e) ? commitAccounts(st => addAccount(st, x, conns())) : { ok: false, error: 'Not allowed.' });
-  ipcMain.handle('accounts:update', (e, ids: unknown, patch: unknown) => allowed(e) ? commitAccounts(st => updateAccounts(st, ids, patch, conns())) : { ok: false, error: 'Not allowed.' });
+  ipcMain.handle('accounts:update', (e, ids: unknown, patch: unknown) => { if (!allowed(e)) return { ok: false, error: 'Not allowed.' }; const r = commitAccounts(st => updateAccounts(st, ids, patch, conns())); if (engine) applyConfigs(); return r; });
   ipcMain.handle('accounts:remove', (e, id: unknown) => {
     if (!allowed(e)) return { ok: false, error: 'Not allowed.' };
     if (engine && id === activeAccount) return { ok: false, error: 'Stop the bot before removing the account it is running on.' };
@@ -372,13 +386,14 @@ app.whenReady().then(async () => {
       kPaper = kc.mode === 'paper' ? new PaperOrders(dataSrc) : null;
       const desk: OrderDesk = kPaper ?? (broker as unknown as OrderDesk);
       const e = engine;
-      kLive = new KLive(kc, {
+      const pc = acctCfg(kc, acct);
+      kLive = new KLive(pc, {
         data: dataSrc, desk, risk: guard, store: kTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
         account: () => kAcct, note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, xHolds: sym => !!xLive?.holds(sym), gate: ctx => aiGate(ctx, kc.mode)
       });
       // K8, K9, P1-P3: same order desk, same risk limits, one position per market shared with K1-K7.
-      xLive = new XLive(kc, {
+      xLive = new XLive(pc, {
         data: dataSrc, desk, risk: guard, store: xTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
         note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, kHolds: sym => !!kLive?.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode)
@@ -586,7 +601,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('k:get', e => {
     if (!allowed(e)) return null;
     return { cfg: loadKConfig(), status: kLive ? kLive.status() : null, running: !!engine, x: xLive ? xLive.view() : null, rankings: RANKINGS,
-      followers: followers.map(f => ({ id: f.acct.id, label: f.acct.label, open: f.k.trades.length + f.x.trades.filter(t => t.state === 'open').length, working: f.x.trades.filter(t => t.state === 'working').length, paper: f.paper ? f.paper.realized + f.paper.unrealized() : null })),
+      main: kLive ? { risk: kLive.riskNow(), on: Object.keys((kLive as any).cfg.enabled).filter(k => (kLive as any).cfg.enabled[k]) } : null,
+      followers: followers.map(f => ({ id: f.acct.id, label: f.acct.label, risk: f.k.riskNow(), on: Object.keys((f.k as any).cfg.enabled).filter(k => (f.k as any).cfg.enabled[k]), open: f.k.trades.length + f.x.trades.filter(t => t.state === 'open').length, working: f.x.trades.filter(t => t.state === 'working').length, paper: f.paper ? f.paper.realized + f.paper.unrealized() : null })),
       xmeta: XSTRATEGIES.map(S => ({ id: S.id, name: S.name, symbol: S.symbol, orderSymbol: S.symbol === 'NQ' ? 'MNQ' : 'MGC', paperOnly: S.paperOnly, evidence: S.evidence })),
       paper: kPaper ? { realized: kPaper.realized, unrealized: kPaper.unrealized(), fills: kPaper.fills.slice(-50) } : null,
       meta: STRATEGIES.map(S => ({ id: S.id, name: S.name, symbol: S.symbol, orderSymbol: INSTRUMENTS[S.symbol].micro, direction: S.direction,
@@ -597,7 +613,7 @@ app.whenReady().then(async () => {
     const next = parseKConfig(x), cur = loadKConfig();
     if (engine && next.mode !== cur.mode) return { ok: false, error: 'Stop the bot before switching the K system between off, paper and live.' };
     if (next.mode === 'live' && cur.mode !== 'live' && !next.countFrom) next.countFrom = Date.now();
-    saveKConfig(next); kLive?.setConfig(next); xLive?.setConfig(next);
+    saveKConfig(next); applyConfigs();
     return { ok: true, cfg: next };
   });
   /** Validation: runs Keel's K engine on hourly CSVs (and optional daily CSVs) and compares with spec section 8. */
