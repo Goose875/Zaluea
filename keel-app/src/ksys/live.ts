@@ -63,7 +63,11 @@ export interface KDeps {
   note: (msg: string, kind?: 'trade' | 'warn' | 'info') => void;
   now?: () => number;                                          // for tests
   xHolds?: (sym: string) => boolean;                           // a K8/K9/P1-P3 trade (or working entry) holds this market
+  /** Last word before an entry is sent: news pause and the optional Claude entry check. */
+  gate?: (ctx: EntryContext) => Promise<{ ok: boolean; reason?: string }>;
 }
+export interface EntryContext { system: string; id: string; name: string; symbol: string; dir: 'long' | 'short'; price: number; stop: number; target: number | null; qty: number; orderSym: string;
+  bars: { t: string; o: number; h: number; l: number; c: number }[] }
 
 const H = 3_600_000;
 /** Dollars per point of the contract actually traded (the mini itself, or its micro). */
@@ -213,6 +217,11 @@ export class KLive {
     const positions = await this.d.desk.getPositions();
     const verdict = this.d.risk.check({ symbol: orderSym, side, qty: plan.qty, source: 'strategy', strategyId: S.id, from: S.id }, { dailyPnL: pnl, openPositions: positions.filter(p => p.qty !== 0).length, positions });
     if (!verdict.ok) { this.d.note(`K system: blocked ${S.id}: ${verdict.reason}`, 'warn'); return; }
+    if (this.d.gate) {
+      const g = await this.d.gate({ system: 'K', id: S.id, name: S.name, symbol: S.symbol, dir, price: px, stop: plan.stop, target: plan.target, qty: plan.qty, orderSym,
+        bars: X.bars.slice(-36).map(b => ({ t: new Date(b.utc).toISOString(), o: b.o, h: b.h, l: b.l, c: b.c })) });
+      if (!g.ok) { this.d.note(`K system: ${S.id} not entered: ${g.reason}`, 'warn'); return; }
+    }
 
     await this.d.desk.placeOrder({ symbol: orderSym, side, qty: plan.qty, type: 'market' });
     // Re-anchor stop and target on the real fill (average price), with the same rules.

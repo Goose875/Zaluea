@@ -249,6 +249,12 @@ progress.ok::-webkit-progress-value { background:var(--sea); } progress.bad::-we
 @media (prefers-reduced-motion:reduce) { * { transition:none !important; } }
 .events li.empty { display:block; border-top:0; }
 button.small { min-height:30px; padding:4px 12px; font-size:13px; }
+.prose { white-space:pre-wrap; line-height:1.55; margin:8px 0 12px; }
+.chat { max-height:420px; overflow:auto; display:flex; flex-direction:column; gap:8px; margin:8px 0 12px; }
+.chat .q { align-self:flex-end; background:var(--deck); padding:8px 12px; border-radius:10px; max-width:80%; white-space:pre-wrap; }
+.chat .a { align-self:flex-start; border:1px solid var(--line2); padding:8px 12px; border-radius:10px; max-width:90%; white-space:pre-wrap; line-height:1.5; }
+button.ghost { background:transparent; color:var(--chalk); border:1px solid var(--line2); }
+.mixrow input[type=text], .mixrow input[type=password] { flex:1; min-width:240px; }
 .navsep { margin:14px 12px 4px; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--fog); opacity:.7; }
 .mixrow { display:flex; gap:10px; flex-wrap:wrap; align-items:center; } .mixrow select { flex:1; min-width:280px; }
 details.more { margin-top:10px; } details.more summary { cursor:pointer; color:var(--fog); font-size:13px; margin-bottom:8px; }

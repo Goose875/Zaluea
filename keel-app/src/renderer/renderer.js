@@ -5,7 +5,7 @@ const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls)
 const NAMES = { projectx: 'TopstepX', rithmic: 'Rithmic', cqg: 'CQG', tradovate: 'Tradovate', ninjatrader: 'NinjaTrader' };
 const nm = v => NAMES[v] || v;
 const STATUS = { ready: '', beta: ' (beta)', 'needs-approval': ' (needs approval)' };
-const TITLES = { rank: 'Compare mixes', dash: 'Today', chart: 'Chart', acct: 'Progress', accts: 'Accounts', k: 'Strategies', kval: 'Validate the K system', strat: 'Custom strategies', test: 'Backtest', conn: 'Logins', risk: 'Risk limits', alerts: 'TradingView alerts' };
+const TITLES = { ai: 'Claude', rank: 'Compare mixes', dash: 'Today', chart: 'Chart', acct: 'Progress', accts: 'Accounts', k: 'Strategies', kval: 'Validate the K system', strat: 'Custom strategies', test: 'Backtest', conn: 'Logins', risk: 'Risk limits', alerts: 'TradingView alerts' };
 const STAGE = { evaluation: ['Evaluation', 'Profit target'], funded: ['Funded', 'Payout target'], live: ['Live', 'Payout target'], practice: ['Practice', 'Practice goal'] };
 const DD = { eod: 'EOD trailing', intraday: 'Intraday trailing', static: 'Static' };
 const MULT = { ES: 50, NQ: 20, MES: 5, MNQ: 2, YM: 5, MYM: 0.5, RTY: 50, M2K: 5, CL: 1000, MCL: 100, GC: 100, MGC: 10 };
@@ -32,7 +32,7 @@ const selAcct = () => store.accounts.find(a => a.id === store.selected) || null;
 // ---------- navigation ----------
 let view = 'dash';
 function go(v) {
-  view = v; if (v === 'chart') drawLive(); if (v === 'test') fillBtStrats(); if (v === 'k') kLoad(); if (v === 'rank') rkLoad();
+  view = v; if (v === 'chart') drawLive(); if (v === 'test') fillBtStrats(); if (v === 'k') kLoad(); if (v === 'rank') rkLoad(); if (v === 'ai') aiLoad();
   for (const k of Object.keys(TITLES)) $('v-' + k).hidden = k !== v;
   document.querySelectorAll('#nav button').forEach(b => { if (b.dataset.go === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   $('title').textContent = v === 'dash' ? greeting() : TITLES[v];
@@ -789,6 +789,52 @@ document.querySelectorAll('#kMode button').forEach(b => {
     kDraft = { ...kReadForm(), mode }; await kSave(true);
   };
 });
+
+// ---------- Claude ----------
+let aiData = null, aiFormDirty = false;
+async function aiLoad() {
+  aiData = await window.keel.aiGet(); if (!aiData) return;
+  const c = aiData.cfg;
+  if (!aiFormDirty) { $('aiPre').checked = c.autoPreflight; $('aiPause').checked = c.newsPause; $('aiPauseMin').value = c.pauseMin; $('aiCheck').value = c.entryCheck;
+    $('aiNews').value = c.newsTrades; $('aiVetoErr').checked = c.vetoOnError; $('aiRev').checked = c.autoReview; }
+  $('aiKey').placeholder = aiData.hasKey ? 'Key saved (type a new one to replace it)' : 'sk-ant-...';
+  const p = aiData.preflight;
+  $('aiNow').textContent = !aiData.hasKey ? 'Add your API key to start.' : aiData.newsNow ? `News pause on now: ${aiData.newsNow}.` : 'No news pause right now.';
+  $('aiPreText').textContent = p ? `${p.date}: ${p.summary}` : 'No pre-flight yet today.';
+  const t = $('aiEvents'); t.replaceChildren();
+  if (p && p.events.length) { const h = el('tr'); for (const x of ['Time (ET)', 'Event', 'Impact', 'Forecast', 'Previous']) h.append(el('th', '', x)); t.append(h);
+    for (const ev of p.events) { const r = el('tr'); r.append(el('td', '', ev.time), el('td', '', ev.name), el('td', ev.impact === 'high' ? 'neg' : '', ev.impact), el('td', '', ev.forecast || '—'), el('td', '', ev.previous || '—')); t.append(r); } }
+  $('aiRevWhen').textContent = aiData.review ? `Written ${nyTime(aiData.review.at)}.` : 'No review yet.';
+  $('aiRevText').textContent = aiData.review ? aiData.review.text : '';
+  const ch = $('aiChat'); ch.replaceChildren();
+  for (const m of aiData.chat) ch.append(el('div', m.role === 'user' ? 'q' : 'a', m.text));
+  ch.scrollTop = ch.scrollHeight;
+}
+['aiPre', 'aiPause', 'aiPauseMin', 'aiCheck', 'aiNews', 'aiVetoErr', 'aiRev'].forEach(id => { $(id).addEventListener('input', () => { aiFormDirty = true; }); $(id).addEventListener('change', () => { aiFormDirty = true; }); });
+$('aiSave').onclick = async () => {
+  const next = { autoPreflight: $('aiPre').checked, newsPause: $('aiPause').checked, pauseMin: Number($('aiPauseMin').value), entryCheck: $('aiCheck').value,
+    newsTrades: $('aiNews').value, vetoOnError: $('aiVetoErr').checked, autoReview: $('aiRev').checked };
+  const was = aiData ? aiData.cfg : {};
+  if ((next.entryCheck === 'live' && was.entryCheck !== 'live') || (next.newsTrades === 'live' && was.newsTrades !== 'live')) {
+    if (!confirm('Let Claude affect LIVE trading?\n\nThe entry check can block real entries and news trades place real orders. Neither was backtested. Run them in paper mode first.')) return;
+  }
+  const r = await window.keel.aiSet(next); aiFormDirty = false;
+  if (!r.ok) { flash($('aiMsg'), r.error, true); return; } flash($('aiMsg'), 'Saved.'); aiLoad();
+};
+$('aiKeySave').onclick = async () => { const k = $('aiKey').value.trim(); if (!k) return; const r = await window.keel.aiKey(k); $('aiKey').value = '';
+  flash($('aiKeyMsg'), r.ok ? 'Key saved on this computer.' : r.error, !r.ok); aiLoad(); };
+$('aiKeyDel').onclick = async () => { await window.keel.aiKey(null); flash($('aiKeyMsg'), 'Key removed.'); aiLoad(); };
+const aiBusy = async (btn, fn, label) => { const old = btn.textContent; btn.disabled = true; btn.textContent = label; try { const r = await fn(); if (r && !r.ok) notice(r.error); } finally { btn.disabled = false; btn.textContent = old; aiLoad(); } };
+$('aiPreRun').onclick = () => aiBusy($('aiPreRun'), () => window.keel.aiPreflight(), 'Searching the calendar…');
+$('aiRevRun').onclick = () => aiBusy($('aiRevRun'), () => window.keel.aiReview(), 'Writing…');
+$('aiClear').onclick = async () => { await window.keel.aiClearChat(); aiLoad(); };
+async function aiAsk() {
+  const q = $('aiQ').value.trim(); if (!q) return; $('aiQ').value = '';
+  $('aiChat').append(el('div', 'q', q), el('div', 'a', 'Thinking…')); $('aiChat').scrollTop = $('aiChat').scrollHeight;
+  await aiBusy($('aiAsk'), () => window.keel.aiChat(q), '…');
+}
+$('aiAsk').onclick = aiAsk;
+$('aiQ').addEventListener('keydown', ev => { if (ev.key === 'Enter') aiAsk(); });
 
 // ---------- Rankings ----------
 let rkData = null, rkTab = 'mixes', rkSort = { key: 'score', dir: -1 };

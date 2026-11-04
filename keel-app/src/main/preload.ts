@@ -25,5 +25,12 @@ contextBridge.exposeInMainWorld('keel', {
   kill: () => ipcRenderer.invoke('engine:kill'),
   kGet: () => ipcRenderer.invoke('k:get'),
   kSet: (cfg: unknown) => ipcRenderer.invoke('k:set', cfg),
-  kValidate: (files: unknown, flatBy: number | null) => ipcRenderer.invoke('k:validate', files, flatBy)
+  kValidate: (files: unknown, flatBy: number | null) => ipcRenderer.invoke('k:validate', files, flatBy),
+  aiGet: () => ipcRenderer.invoke('ai:get'),
+  aiSet: (cfg: unknown) => ipcRenderer.invoke('ai:set', cfg),
+  aiKey: (key: string | null) => ipcRenderer.invoke('ai:key', key),
+  aiPreflight: () => ipcRenderer.invoke('ai:preflight'),
+  aiReview: () => ipcRenderer.invoke('ai:review'),
+  aiChat: (q: string) => ipcRenderer.invoke('ai:chat', q),
+  aiClearChat: () => ipcRenderer.invoke('ai:clearChat')
 });

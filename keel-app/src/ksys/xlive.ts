@@ -1,6 +1,6 @@
 import { BrokerAdapter } from '../core/types';
 import { RiskGuard } from '../core/risk';
-import { OrderDesk, KConfig } from './live';
+import { OrderDesk, KConfig, EntryContext } from './live';
 import { XSTRATEGIES, XStrategy, XOrder, toXBars, xOrders, xSimulate, XTICK } from './extra';
 import { wallOf, utcOf, sessionKey } from './time';
 
@@ -20,6 +20,7 @@ export interface XDeps {
   store: XStore; note: (msg: string, kind?: 'trade' | 'warn' | 'info') => void;
   /** True when a K1-K7 trade holds this market (one position per market across all of Keel's systems). */
   kHolds: (sym: string) => boolean;
+  gate?: (ctx: EntryContext) => Promise<{ ok: boolean; reason?: string }>;
   now?: () => number;
 }
 const MICRO: Record<string, string> = { NQ: 'MNQ', GC: 'MGC' }, MICRO_PT: Record<string, number> = { NQ: 2, GC: 10 };
@@ -118,6 +119,12 @@ export class XLive {
     const verdict = this.d.risk.check({ symbol: orderSym, side: side > 0 ? 'buy' : 'sell', qty, source: 'strategy', strategyId: S.id, from: S.id },
       { dailyPnL: pnl, openPositions: positions.filter(p => p.qty !== 0).length, positions });
     if (!verdict.ok) return say(`blocked: ${verdict.reason}`, 'warn');
+    if (this.d.gate) {
+      const ref = o.type === 1 ? o.px : last.c, d = side;
+      const g = await this.d.gate({ system: 'PO3/Fractal', id: S.id, name: S.name, symbol: S.symbol, dir: d > 0 ? 'long' : 'short', price: ref, stop: ref - d * o.stop,
+        target: o.tgt ? ref + d * o.tgt : null, qty, orderSym, bars: X.slice(-36).map(b => ({ t: new Date(b.utc).toISOString(), o: b.o, h: b.h, l: b.l, c: b.c })) });
+      if (!g.ok) return say(`not entered: ${g.reason}`, 'warn');
+    }
     // Window: the research keeps the order live from bar o.i through bar o.i + o.exp; nothing new from 15:55 ET.
     const liveUntil = last.utc + (o.i + o.exp - (n - 1) + 1) * ms;
     let endAt: number | null = null;
@@ -141,6 +148,26 @@ export class XLive {
       say(`sent ${dir} market ${qty} ${orderSym}.`, 'info');
       await this.onFilled(t);
     }
+  }
+
+  /** Claude's news trade: one market entry with the same checks as every other entry, stop at the broker, out by endAt / flat-by. */
+  async manual(sym: 'NQ' | 'GC', dir: 'long' | 'short', stopPts: number, tgtPts: number, endAt: number, why: string): Promise<string> {
+    const now = this.now(), m = mins(now), orderSym = MICRO[sym];
+    if (this.cfg.flatByHour !== null && m >= this.cfg.flatByHour * 60 - 10 && m < 18 * 60) return 'too close to the flat-by time';
+    if (this.d.kHolds(sym) || this.holds(sym)) return `another Keel trade already holds ${sym}`;
+    const qty = Math.floor(this.cfg.riskUsd / (stopPts * MICRO_PT[sym]));
+    if (qty < 1) return `the ${stopPts}-point stop is too wide for $${this.cfg.riskUsd} risk`;
+    let pnl: number; try { pnl = await this.d.dailyPnL(); } catch { return "today's P&L can't be read"; }
+    const positions = await this.d.desk.getPositions();
+    if (positions.some(p => p.symbol === orderSym && p.qty !== 0)) return `there is already an open ${orderSym} position`;
+    const v = this.d.risk.check({ symbol: orderSym, side: dir === 'long' ? 'buy' : 'sell', qty, source: 'strategy', strategyId: 'AI', from: 'AI' },
+      { dailyPnL: pnl, openPositions: positions.filter(p => p.qty !== 0).length, positions });
+    if (!v.ok) return v.reason ?? 'blocked by your risk limits';
+    const t: XLiveTrade = { key: `AI:${new Date(wallOf(now)).toISOString().slice(0, 10)}`, id: 'AI', sym, orderSym, dir, qty, state: 'working', entryOrder: null, limitPx: null, liveUntil: now,
+      stopPts, tgtPts, endAt, entry: null, stop: null, target: null, stopOrder: null, targetOrder: null, placed: now };
+    await this.d.desk.placeOrder({ symbol: orderSym, side: dir === 'long' ? 'buy' : 'sell', qty, type: 'market' });
+    this.trades.push(t); this.save(); this.d.note(`AI news trade: sent ${dir} market ${qty} ${orderSym}. ${why}`, 'trade');
+    await this.onFilled(t); return '';
   }
 
   /** Entry filled: put the stop (and target) at the broker, measured from the real average fill price. */
@@ -215,6 +242,7 @@ export class XLive {
     }
   }
 
+  aiTrade() { return this.trades.find(t => t.id === 'AI') ?? null; }
   view() {
     return XSTRATEGIES.map(S => ({ id: S.id, name: S.name, symbol: S.symbol, orderSymbol: MICRO[S.symbol], enabled: !!this.cfg.enabled[S.id], paperOnly: S.paperOnly, evidence: S.evidence,
       trade: this.trades.find(t => t.id === S.id) ?? null, ...(this.status[S.id] ?? { lastScan: 0, working: null, note: '' }) }));

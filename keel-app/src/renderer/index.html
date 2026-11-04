@@ -12,6 +12,7 @@
       <nav id="nav" aria-label="Main">
         <button data-go="dash">Today</button>
         <button data-go="k">Strategies</button>
+        <button data-go="ai">Claude</button>
         <button data-go="chart">Chart</button>
         <button data-go="acct">Progress</button>
         <button data-go="accts">Accounts</button>
@@ -147,6 +148,47 @@
             <h2>Paper account</h2>
             <p id="kPaperText" class="big2"></p>
             <div id="kFills" class="tscroll plainscroll"></div>
+          </div>
+        </section>
+
+        <section id="v-ai" class="view" hidden>
+          <div class="panel">
+            <h2>Connect Claude</h2>
+            <p class="hint">Uses your own Anthropic API key (console.anthropic.com &rarr; API keys). It is encrypted on this computer like your Topstep login; Anthropic bills you per use. Model: Claude Opus 5.5.</p>
+            <div class="mixrow"><input id="aiKey" type="password" placeholder="sk-ant-..." autocomplete="off" aria-label="Anthropic API key"><button id="aiKeySave" type="button">Save key</button><button id="aiKeyDel" type="button" class="ghost">Remove</button></div>
+            <p id="aiKeyMsg" class="saved" role="status" aria-live="polite"></p>
+          </div>
+          <div class="panel">
+            <h2>What Claude may do</h2>
+            <div class="fgrid4">
+              <div class="full"><label class="check"><input id="aiPre" type="checkbox"> Morning pre-flight at 7:30 AM ET: today's economic calendar and what to watch</label></div>
+              <div class="full"><label class="check"><input id="aiPause" type="checkbox"> Pause new entries around high-impact news</label> <input id="aiPauseMin" type="number" min="1" max="30" step="1" style="width:70px" aria-label="Minutes either side"> minutes either side</div>
+              <div><label for="aiCheck">Check every entry (can veto)</label><select id="aiCheck"><option value="off">Off</option><option value="paper">Paper mode only</option><option value="live">Paper and LIVE</option></select></div>
+              <div><label for="aiNews">Trade high-impact news (1 a day max)</label><select id="aiNews"><option value="off">Off</option><option value="paper">Paper mode only</option><option value="live">Paper and LIVE</option></select></div>
+              <div class="full"><label class="check"><input id="aiVetoErr" type="checkbox"> If Claude can't be reached, skip the entry (otherwise the entry goes ahead)</label></div>
+              <div class="full"><label class="check"><input id="aiRev" type="checkbox"> Daily review after the flat-by, including why each losing trade lost</label></div>
+              <div class="full"><button id="aiSave" type="button">Save</button><p id="aiMsg" class="saved" role="status" aria-live="polite"></p></div>
+            </div>
+            <p class="hint">The entry check and news trades change what the bot trades and were never backtested, so they start in paper mode. News trades: at most one a day, 3&ndash;5 minutes after a high-impact release, sized at your risk per trade with the stop at the broker, out within an hour or at the flat-by, and every Keel risk limit still applies.</p>
+          </div>
+          <div class="panel">
+            <h2>Today</h2>
+            <p id="aiNow" class="hint"></p>
+            <p id="aiPreText"></p>
+            <div class="tscroll plainscroll"><table id="aiEvents"></table></div>
+            <button id="aiPreRun" type="button" class="ghost">Run pre-flight now</button>
+          </div>
+          <div class="panel">
+            <h2>Daily review</h2>
+            <p id="aiRevWhen" class="hint"></p>
+            <div id="aiRevText" class="prose"></div>
+            <button id="aiRevRun" type="button" class="ghost">Write today's review now</button>
+          </div>
+          <div class="panel">
+            <h2>Ask Keel</h2>
+            <p class="hint">Ask about your trades, strategies, settings or progress. Claude can see Keel's status and today's journal; it can't place or change trades.</p>
+            <div id="aiChat" class="chat"></div>
+            <div class="mixrow"><input id="aiQ" type="text" placeholder="e.g. Why did K9 skip this morning? How close am I to passing?" aria-label="Question"><button id="aiAsk" type="button">Ask</button><button id="aiClear" type="button" class="ghost">Clear</button></div>
           </div>
         </section>
 

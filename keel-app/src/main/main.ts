@@ -2,6 +2,7 @@ import { app, BrowserWindow, clipboard, ipcMain, Menu, session, IpcMainInvokeEve
 import { autoUpdater } from 'electron-updater';
 import * as http from 'http';
 import * as path from 'path';
+import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { vault } from './vault';
 import { startWebhook } from './webhook';
@@ -25,6 +26,8 @@ import { XSTRATEGIES } from '../ksys/extra';
 import { PaperOrders } from '../ksys/paperOrders';
 import { loadKConfig, saveKConfig, kTradeStore, xTradeStore } from './kstore';
 import RANKINGS from '../ksys/rankings.json';
+import { KeelAI, parseAIConfig } from './ai';
+import type { EntryContext } from '../ksys/live';
 import { parseHourly, buildSeries, DailyClose } from '../ksys/series';
 import { simulate, VALIDATION, STRATEGIES, INSTRUMENTS } from '../ksys/sim';
 import { compare, EXPECTED, stats as kStats } from '../ksys/validate';
@@ -33,6 +36,18 @@ import { wallOf } from '../ksys/time';
 let engine: Engine | null = null;
 let kLive: KLive | null = null;
 let xLive: XLive | null = null;
+let ai: KeelAI | null = null;
+let aiTimer: ReturnType<typeof setInterval> | undefined;
+let kBroker: any = null;
+// The bot journal: every K / PO3 / Claude note with its New York time (today's notes feed the daily review and the chat).
+const journal: string[] = [];
+const nyStamp = (t = Date.now()) => new Date(wallOf(t)).toISOString().slice(0, 16).replace('T', ' ');
+function jot(m: string) {
+  const line = `${nyStamp()} ${m}`; journal.push(line); if (journal.length > 1500) journal.splice(0, journal.length - 1500);
+  try { fs.appendFileSync(path.join(app.getPath('userData'), `journal_${line.slice(0, 10)}.txt`), line + '\n'); } catch { /* journal is best effort */ }
+}
+const todayJournal = () => { const d = nyStamp().slice(0, 10); return journal.filter(l => l.startsWith(d)); };
+
 let kPaper: PaperOrders | null = null;
 let kAcct: { equity: number; floor: number } | null = null;
 let kAcctTimer: ReturnType<typeof setInterval> | undefined;
@@ -100,7 +115,7 @@ function webhookSecret(): string {
   return secret;
 }
 
-function stopK() { kLive?.stop(); kLive = null; xLive?.stop(); xLive = null; kPaper = null; clearInterval(kAcctTimer); kAcct = null; }
+function stopK() { clearInterval(aiTimer); kBroker = null; kLive?.stop(); kLive = null; xLive?.stop(); xLive = null; kPaper = null; clearInterval(kAcctTimer); kAcct = null; }
 async function stopTrading() {
   stopK();
   await engine?.shutdown();
@@ -122,7 +137,52 @@ function createWindow() {
   win.loadFile(path.join(__dirname, '../renderer/index.html'));
 }
 
+/** Before any entry is sent: the news pause, then (if switched on for this mode) Claude's entry check. */
+async function aiGate(ctx: EntryContext, mode: string): Promise<{ ok: boolean; reason?: string }> {
+  if (!ai) return { ok: true };
+  const n = ai.newsBlock();
+  if (n) return { ok: false, reason: `news pause (${n})` };
+  if (!ai.hasKey() || !ai.gateOn(ai.cfg.entryCheck, mode)) return { ok: true };
+  try {
+    const r = await ai.entryCheck({ ...ctx, nowET: nyStamp() });
+    jot(`Claude entry check ${ctx.id} ${ctx.dir}: ${r.allow ? 'allowed' : 'VETOED'}. ${r.reason}`);
+    return r.allow ? { ok: true } : { ok: false, reason: `Claude vetoed it: ${r.reason}` };
+  } catch (err) {
+    jot(`Claude entry check failed (${(err as Error).message}); ${ai.cfg.vetoOnError ? 'entry skipped' : 'entry allowed'}.`);
+    return ai.cfg.vetoOnError ? { ok: false, reason: 'Claude check failed' } : { ok: true };
+  }
+}
+const bars5 = async (sym: string, n: number) => {
+  const b = kBroker?.getHistory ? await kBroker.getHistory(sym, 'min5', n) : [];
+  return b.map((x: any) => ({ t: nyStamp(x.t), o: x.o, h: x.h, l: x.l, c: x.c }));
+};
+async function aiTick(mode: string, e: { say: (m: string) => void }) {
+  if (!ai || !ai.hasKey()) return;
+  const say = (m: string) => { jot(m); e.say(m); }, w = new Date(wallOf(Date.now())), m = w.getUTCHours() * 60 + w.getUTCMinutes(), date = nyStamp().slice(0, 10);
+  const once = async (key: string, fn: () => Promise<void>) => { if (ai!.busy.has(key)) return; ai!.busy.add(key); try { await fn(); } catch (err) { say(`Claude: ${key} failed (${(err as Error).message}).`); } finally { ai!.busy.delete(key); } };
+  // 1. Morning pre-flight from 7:30 ET (or as soon as the bot starts later in the day)
+  if (ai.cfg.autoPreflight && m >= 7 * 60 + 30 && ai.state.preflight?.date !== date)
+    await once('pre-flight', async () => { const p = await ai!.preflight(); say(`Claude pre-flight: ${p.events.filter(x => x.impact === 'high').map(x => `${x.time} ${x.name}`).join(', ') || 'no high-impact releases today'}.`); });
+  // 2. News trade, 3-5 minutes after a high-impact release
+  const ev = ai.gateOn(ai.cfg.newsTrades, mode) ? ai.dueRelease() : null;
+  if (ev && xLive) await once('news trade', async () => {
+    const idea = await ai!.newsIdea(ev, { NQ: await bars5('NQ', 12), GC: await bars5('GC', 12) }, xLive!['cfg'].riskUsd);
+    if (!idea.trade) { say(`Claude news check (${ev.name}): no trade. ${idea.reason}`); return; }
+    const lim = idea.symbol === 'NQ' ? [15, 80] : [3, 20], stop = Math.min(lim[1], Math.max(lim[0], idea.stop_points)), r = Math.min(3, Math.max(1, idea.target_r));
+    const why = await xLive!.manual(idea.symbol, idea.direction, stop, stop * r, Date.now() + 60 * 60_000, idea.reason);
+    if (why) say(`Claude news trade (${ev.name}) not taken: ${why}.`);
+  });
+  // 3. Daily review after the flat-by
+  if (ai.cfg.autoReview && m >= 16 * 60 + 12 && m < 18 * 60 && ai.state.review?.date !== date) await once('daily review', async () => { await runReview(); say('Claude: the daily review is ready on the Claude page.'); });
+}
+async function runReview() {
+  const pnl = kPaper ? `paper ${(kPaper.realized + kPaper.unrealized()).toFixed(0)} USD` : kBroker?.getDailyPnL ? `${(await kBroker.getDailyPnL()).toFixed(0)} USD today` : 'unknown';
+  const acct = kAcct ? `; account equity ${kAcct.equity.toFixed(0)}, drawdown floor ${kAcct.floor.toFixed(0)}` : '';
+  return ai!.review(todayJournal(), { NQ: await bars5('NQ', 300).catch(() => []), GC: await bars5('GC', 300).catch(() => []) }, pnl + acct);
+}
+
 app.whenReady().then(async () => {
+  ai = new KeelAI();
   session.defaultSession.webRequest.onHeadersReceived((d, cb) => cb({
     responseHeaders: {
       ...d.responseHeaders,
@@ -248,13 +308,13 @@ app.whenReady().then(async () => {
       kLive = new KLive(kc, {
         data: broker, desk, risk: guard, store: kTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
-        account: () => kAcct, note: m => e.say(m), xHolds: sym => !!xLive?.holds(sym)
+        account: () => kAcct, note: m => { jot(m); e.say(m); }, xHolds: sym => !!xLive?.holds(sym), gate: ctx => aiGate(ctx, kc.mode)
       });
       // K8, K9, P1-P3: same order desk, same risk limits, one position per market shared with K1-K7.
       xLive = new XLive(kc, {
         data: broker, desk, risk: guard, store: xTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
-        note: m => e.say(m), kHolds: sym => !!kLive?.trades.some(t => t.sym === sym)
+        note: m => { jot(m); e.say(m); }, kHolds: sym => !!kLive?.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode)
       });
       const pollAcct = async () => {
         try { const i = broker.getAccount ? await broker.getAccount() : null; if (i) kAcct = { equity: i.balance, floor: i.floor ?? ((acct?.size || i.size) - (acct?.maxLoss || i.maxLoss)) }; } catch { /* keep the last value */ }
@@ -271,6 +331,7 @@ app.whenReady().then(async () => {
       if (miss.length) engine.say(`K system: add ${miss.join(' and ')} to your allowed symbols under Risk limits, or its trades there will be blocked.`);
       engine.say(`K system started in ${kc.mode} mode. It checks for signals a few seconds after every hour.`);
       kLive.start(); xLive?.start();
+      kBroker = broker; const eng = engine!; aiTimer = setInterval(() => void aiTick(kc.mode, eng), 30_000); (aiTimer as any).unref?.(); void aiTick(kc.mode, eng);
       const xOn = XSTRATEGIES.filter(S => kc.enabled[S.id]).map(S => S.id);
       if (xOn.length) engine.say(`PO3/Fractal strategies on: ${xOn.join(', ')}. PO3 entries are resting limit orders at the exact level; stops go in as soon as they fill.`);
     }
@@ -327,6 +388,31 @@ app.whenReady().then(async () => {
   ipcMain.handle('engine:kill', async e => { if (allowed(e)) await engine?.halt(); });
 
   // ---------- K system ----------
+  // ---------- Claude ----------
+  ipcMain.handle('ai:get', e => allowed(e) && ai ? { cfg: ai.cfg, hasKey: ai.hasKey(), preflight: ai.state.preflight, review: ai.state.review, chat: ai.state.chat,
+    newsNow: ai.newsBlock(), aiTrade: xLive?.aiTrade() ?? null, journal: todayJournal().slice(-60) } : null);
+  ipcMain.handle('ai:set', (e, x: unknown) => { if (!allowed(e) || !ai) return { ok: false, error: 'Not allowed.' }; const c = parseAIConfig(x); ai.setConfig(c); return { ok: true, cfg: c }; });
+  ipcMain.handle('ai:key', (e, key: unknown) => {
+    if (!allowed(e) || !ai) return { ok: false, error: 'Not allowed.' };
+    try { if (key === null) ai.removeKey(); else if (typeof key === 'string') ai.setKey(key); return { ok: true }; } catch (err) { return { ok: false, error: (err as Error).message }; }
+  });
+  const aiRun = (fn: () => Promise<unknown>) => async (e: Electron.IpcMainInvokeEvent) => {
+    if (!allowed(e) || !ai) return { ok: false, error: 'Not allowed.' };
+    try { return { ok: true, result: await fn() }; } catch (err) { return { ok: false, error: (err as Error).message }; }
+  };
+  ipcMain.handle('ai:preflight', aiRun(() => ai!.preflight(true)));
+  ipcMain.handle('ai:review', aiRun(() => runReview()));
+  ipcMain.handle('ai:clearChat', aiRun(async () => ai!.clearChat()));
+  ipcMain.handle('ai:chat', async (e, q: unknown) => {
+    if (!allowed(e) || !ai || typeof q !== 'string' || !q.trim() || q.length > 4000) return { ok: false, error: 'Type a question.' };
+    try {
+      const snap = { now: nyStamp(), running: !!engine, k: { cfg: loadKConfig(), status: kLive?.status() ?? null }, po3: xLive?.view() ?? null,
+        paper: kPaper ? { realized: kPaper.realized, unrealized: kPaper.unrealized(), fills: kPaper.fills.slice(-30) } : null, account: kAcct,
+        preflight: ai.state.preflight, recommended: (RANKINGS as any).recommended, journalToday: todayJournal().slice(-120) };
+      return { ok: true, answer: await ai.chat(q.trim(), snap) };
+    } catch (err) { return { ok: false, error: (err as Error).message }; }
+  });
+
   ipcMain.handle('k:get', e => {
     if (!allowed(e)) return null;
     return { cfg: loadKConfig(), status: kLive ? kLive.status() : null, running: !!engine, x: xLive ? xLive.view() : null, rankings: RANKINGS,
