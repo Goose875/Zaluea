@@ -80,6 +80,9 @@ export function po3Orders(S: XStrategy, X: XBar[], thr = 0.1, windowH = 3): XOrd
     if (last && last.start === start) { last.h = Math.max(last.h, b.h); last.l = Math.min(last.l, b.l); last.c = b.c; last.i = i; }
     else T.push({ start, startUtc: b.utc - (b.mod % tm) * 60_000, o: b.o, h: b.h, l: b.l, c: b.c, i, c4: c4[i] });
   }
+  // Live: the newest trigger bar may still be forming (e.g. only 2 of its 3 five-minute bars are in). Never act on it.
+  const lt = T[T.length - 1];
+  if (lt && tm > S.barMinutes && X[lt.i].mod % tm !== tm - S.barMinutes) T.pop();
   const byCandle = new Map<number, typeof T>();
   for (const t of T) { const a = byCandle.get(t.c4); if (a) a.push(t); else byCandle.set(t.c4, [t]); }
   const rows: XOrder[] = [];
@@ -87,7 +90,9 @@ export function po3Orders(S: XStrategy, X: XBar[], thr = 0.1, windowH = 3): XOrd
     const g = byCandle.get(k)!, cd = C[k];
     if (!(cd.atr > 0)) continue;
     const t0wall = wallOf(cd.t0), cutUtc = cd.t0 + windowH * 3_600_000;
-    let li = X.findIndex((b, j) => j >= cd.i0 && b.utc >= cutUtc); if (li < 0) li = n - 1;
+    // first bar at/after the cut; live, that bar is still in the future, so count the bars still to come
+    let li = X.findIndex((b, j) => j >= cd.i0 && b.utc >= cutUtc);
+    if (li < 0) li = n - 1 + Math.max(0, Math.ceil((cutUtc - X[n - 1].utc) / (S.barMinutes * 60_000)));
     const liveEnd = li;
     for (const side of [1, -1] as const) {
       if (S.bias === '4h EMA20' && ((cd.pc > cd.ema) !== (side === 1))) continue;   // NaN compares false, as in pandas
