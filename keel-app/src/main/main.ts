@@ -240,7 +240,7 @@ app.whenReady().then(async () => {
   session.defaultSession.webRequest.onHeadersReceived((d, cb) => cb({
     responseHeaders: {
       ...d.responseHeaders,
-      'Content-Security-Policy': ["default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:"]
+      'Content-Security-Policy': ["default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"]   // inline styles: the chart library builds its layout stylesheet at runtime
     }
   }));
   session.defaultSession.setPermissionRequestHandler((_w, _p, cb) => cb(false));
