@@ -31,15 +31,16 @@ def build(d, tf_trig):
     T = d.resample(tf_trig, label="left", closed="left").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last", "i": "last", "c4": "first"}).dropna()
     return d, C, T
 
-def orders_for(d, C, T, model, bias, edge, tick):
+def orders_for(d, C, T, model, bias, edge, tick, thr=0.1, window_h=3.0, hours=None, sides=(1, -1)):
     rows = []
     for k, g in T.groupby("c4"):
         if k not in C.index: continue
         cd = C.loc[k]
         if not cd.atr > 0: continue
+        if hours is not None and cd.t0.hour not in hours: continue
         o_ = cd.o; hi, lo, cl, op, ii = g.High.values, g.Low.values, g.Close.values, g.Open.values, g.i.values.astype(int)
-        cut = cd.t0 + pd.Timedelta(hours=3); live_end = int(d.i.values[min(len(d) - 1, d.index.searchsorted(cut))])
-        for side in (1, -1):
+        cut = cd.t0 + pd.Timedelta(hours=window_h); live_end = int(d.i.values[min(len(d) - 1, d.index.searchsorted(cut))])
+        for side in sides:
             if bias == "prev 4h colour" and (cd.pbull != (side == 1)): continue
             if bias == "4h EMA20" and ((cd.pc > cd.ema) != (side == 1)): continue
             if bias == "vs 18:00 open" and ((o_ > cd.sess_open) != (side == 1)): continue
@@ -49,7 +50,7 @@ def orders_for(d, C, T, model, bias, edge, tick):
             ext = np.minimum.accumulate(L)                                   # running manipulation low (mirrored)
             for n in range(len(g)):
                 if g.index[n] >= cut: break
-                manip = (ext[n] < O - 0.1 * cd.atr) if edge == "below open" else (ext[n] < PL)
+                manip = (ext[n] < O - thr * cd.atr) if edge == "below open" else (ext[n] < PL)
                 if not manip: continue
                 lb = int(np.argmin(L[: n + 1]))                              # bar of the manipulation low
                 if lb == n and model != "RB": continue
