@@ -29,3 +29,15 @@ Scripts: `po3.py` (all markets), `po3_gc.py` (gold deep tests), `po3_gc_controls
 | Topstep 50K ($500 risk): pass rate / median days | 61% / 5 | 60% / 5.5 |
 | Topstep 150K ($750 risk): pass rate / median days | 66% / 13 | 45% / 7 |
 Only 10 weeks of data: evaluation start days overlap heavily, so the pass rates are rough.
+
+## 50K static evaluation ($4k target, $2k static drawdown, soft $1k DLL, 55% consistency), MGC sizing (`po3_gc_eval50.py`)
+| Family (median of 56 versions) | Risk/trade | Pass (of finished) | Fail | Median trading days to pass |
+|---|---|---|---|---|
+| FVG midpoint | $250 | 100% | 0% | 33 |
+| FVG midpoint | **$500** | **89%** | 11% | **21** |
+| FVG midpoint | $750 | 75% | 25% | 14 |
+| Rejection block | $500 | 25% | 75% | 16 |
+| Rejection block | $750 | 28% | 72% | 8 |
+| A1 (RB, vs 18:00 open, below open, 3R, 4h close) | $500 | 81% | 19% | 22 (fastest 3) |
+| A1 | $750 | 55% | 45% | 10 (fastest 2) |
+Only 10 weeks of data: many later start days could not finish, so these favour faster outcomes and are rough.
