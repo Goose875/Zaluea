@@ -19,3 +19,14 @@ Logins are encrypted by Windows and never leave this PC.
 
 ## While developing
 `npm.cmd start` runs it from source with a pretend account and pretend prices for testing.
+
+## Building the Windows installer on Linux
+Needs Wine with 32-bit support (`dpkg --add-architecture i386 && apt-get install wine64 wine32:i386`, then `wineboot -i`).
+
+    npx tsc -p . && node scripts/copy.js
+    npx electron-builder --win dir --x64 --publish never -c.win.signAndEditExecutable=false
+    wine ~/.cache/electron-builder/winCodeSign/winCodeSign-2.6.0/rcedit-x64.exe dist-installer/win-unpacked/Keel.exe \
+      --set-version-string ProductName Keel --set-version-string FileDescription Keel --set-file-version <version> --set-icon build/icon.ico
+    npx electron-builder --win nsis --x64 --publish never --prepackaged dist-installer/win-unpacked -c.win.signAndEditExecutable=false
+
+The installer is `dist-installer/Keel-Setup-<version>.exe`. It is not code-signed, so Windows shows a warning the first time.
