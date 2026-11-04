@@ -48,17 +48,17 @@ if (!USER || !KEY || !env.ACCOUNT) { console.error('Set TOPSTEPX_USER, TOPSTEPX_
   if (env.CHECK_ONLY === '1') { await broker.disconnect(); await probe.disconnect(); log('Check only: nothing placed.'); process.exit(0); }
 
   // 3. engine + risk guard + K runner, exactly as the app wires them
-  const limits = { maxDailyLoss: Number(env.MAX_DAILY_LOSS || 1500), maxQtyPerOrder: 10, maxOpenPositions: 2, allowedSymbols: ['MNQ', 'MGC'] };
+  const limits = { maxDailyLoss: Number(env.MAX_DAILY_LOSS || 1500), maxQtyPerOrder: 10, maxOpenPositions: 2, allowedSymbols: env.ALLOW_MINIS === '1' ? ['MNQ', 'MGC', 'NQ', 'GC'] : ['MNQ', 'MGC'] };
   const guard = new RiskGuard(limits), engine = new Engine(broker, guard);
   const paper = MODE === 'paper' ? new PaperOrders(broker) : null;
-  const cfg = parseKConfig({ mode: MODE, riskUsd: RISK, sizing: 'fixed', capMult: 3, pauseOn: true, flatByHour: 16, countFrom: Date.now() });
+  const cfg = parseKConfig({ mode: MODE, riskUsd: RISK, sizing: 'fixed', capMult: 3, pauseOn: true, flatByHour: 16, countFrom: Date.now(), allowMinis: env.ALLOW_MINIS === '1' });
   const store = { load: () => { try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch { return []; } }, save: t => fs.writeFileSync(STATE, JSON.stringify(t, null, 1)) };
   const k = new KLive(cfg, { data: broker, desk: paper || broker, risk: guard, store, account: () => null, note: (m) => { log(m); engine.say(m); },
     dailyPnL: async () => (paper ? paper.realized + paper.unrealized() : broker.getDailyPnL()) });
   engine.onTick = q => { paper?.onQuote(q); };
   engine.onHalt = () => { k.stop(); k.forgetAll(); void paper?.closeAll(); };
   await engine.start([...new Set(STRATEGIES.flatMap(s => [s.symbol, INSTRUMENTS[s.symbol].micro]))]);
-  log(`K system running: ${STRATEGIES.filter(s => cfg.enabled[s.id]).map(s => s.id).join(', ')} on; flat by 4 PM ET; risk $${RISK}/trade; daily loss stop $${limits.maxDailyLoss}.`);
+  log(`K system running: ${STRATEGIES.filter(s => cfg.enabled[s.id]).map(s => s.id).join(', ')} on; flat by 4 PM ET; risk $${RISK}/trade; minis ${cfg.allowMinis ? 'allowed' : 'off'}; daily loss stop $${limits.maxDailyLoss}.`);
   k.start();
 
   // status every 10 minutes

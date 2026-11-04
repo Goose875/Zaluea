@@ -17,9 +17,12 @@ export interface KConfig {
    *  included, is closed 3 minutes before it and nothing opens until the 18:00 reopen. null = no cut-off: session-end
    *  strategies are still closed at 16:57 because the market halts at 17:00. */
   flatByHour: number | null;
+  /** Use the full-size contract (NQ, GC) instead of micros when the risk budget covers at least one; micros otherwise. */
+  allowMinis: boolean;
 }
 export const DEFAULT_KCONFIG: KConfig = {
   mode: 'off', enabled: Object.fromEntries(STRATEGIES.map(s => [s.id, s.id !== 'K2'])), sizing: 'fixed', riskUsd: 300, divisor: 12, capMult: 3, pauseOn: true, countFrom: 0,
+  allowMinis: false,
   flatByHour: 16   // K2's edge needs overnight holds; with a 4 PM flat-by its test year was ~breakeven, so it starts switched off
 };
 export function parseKConfig(x: any): KConfig {
@@ -31,6 +34,7 @@ export function parseKConfig(x: any): KConfig {
   const num = (v: unknown, lo: number, hi: number, d: number) => (typeof v === 'number' && v >= lo && v <= hi ? v : d);
   c.riskUsd = num(x.riskUsd, 50, 5000, c.riskUsd); c.divisor = num(x.divisor, 4, 40, c.divisor); c.capMult = num(x.capMult, 1, 10, c.capMult);
   c.pauseOn = x.pauseOn !== false; c.countFrom = num(x.countFrom, 0, 1e15, 0);
+  c.allowMinis = x.allowMinis === true;
   c.flatByHour = x.flatByHour === null ? null : num(x.flatByHour, 12, 17, DEFAULT_KCONFIG.flatByHour as number);
   return c;
 }
@@ -60,6 +64,8 @@ export interface KDeps {
 }
 
 const H = 3_600_000;
+/** Dollars per point of the contract actually traded (the mini itself, or its micro). */
+const pointValue = (sym: string, orderSym: string) => (orderSym === sym ? INSTRUMENTS[sym].usd_per_point_mini : INSTRUMENTS[sym].usd_per_point_micro);
 const HOURLY_BARS = 1500, DAILY_BARS = 150, ENTRY_WINDOW = 10 * 60_000, SETTLE_MS = 60_000;
 
 /**
@@ -187,14 +193,18 @@ export class KLive {
   }
 
   private async enter(S: KStrategy, dir: Dir, signalUtc: number, risk: number) {
-    const X = this.series[S.symbol], sig = X.bars.findIndex(b => b.utc === signalUtc), I = INSTRUMENTS[S.symbol], orderSym = I.micro;
+    const X = this.series[S.symbol], sig = X.bars.findIndex(b => b.utc === signalUtc), I = INSTRUMENTS[S.symbol];
+    let orderSym = I.micro;
     const d = dir === 'long' ? 1 : -1, side = dir === 'long' ? 'buy' as const : 'sell' as const, exitSide = dir === 'long' ? 'sell' as const : 'buy' as const;
     const px = this.d.data.lastPrice?.(orderSym) ?? this.d.data.lastPrice?.(S.symbol);
     if (sig < 0 || px === undefined) { this.d.note(`K system: skipped ${S.id}, no live price for ${orderSym}.`, 'warn'); return; }
     const plan = planEntry(S, X, sig, dir, px + d * I.tick, risk, I.usd_per_point_micro);
     if ('skip' in plan) { this.d.note(`K system: skipped ${S.id} ${dir}: ${plan.skip}.`, 'info'); return; }
-    const openRisk = this.trades.reduce((a, t) => a + Math.abs(t.entry - t.stop) * INSTRUMENTS[t.sym].usd_per_point_micro * t.qty, 0);
-    if (openRisk + plan.R * I.usd_per_point_micro * plan.qty > this.cfg.capMult * risk) { this.d.note(`K system: skipped ${S.id}, total open risk cap.`, 'info'); return; }
+    // Minis when the budget covers at least one full contract (and minis are allowed), micros otherwise.
+    const miniQty = Math.floor(risk / (plan.R * I.usd_per_point_mini));
+    if (this.cfg.allowMinis && miniQty >= 1) { orderSym = S.symbol; plan.qty = miniQty; }
+    const openRisk = this.trades.reduce((a, t) => a + Math.abs(t.entry - t.stop) * pointValue(t.sym, t.orderSym) * t.qty, 0);
+    if (openRisk + plan.R * pointValue(S.symbol, orderSym) * plan.qty > this.cfg.capMult * risk) { this.d.note(`K system: skipped ${S.id}, total open risk cap.`, 'info'); return; }
     // Keel's own risk limits (daily loss, contract caps, allowed symbols) have the last word.
     let pnl: number;
     try { pnl = await this.d.dailyPnL(); } catch { this.d.note(`K system: blocked ${S.id}, today's P&L can't be read.`, 'warn'); return; }
@@ -206,7 +216,7 @@ export class KLive {
     // Re-anchor stop and target on the real fill (average price), with the same rules.
     const pos = (await this.d.desk.getPositions()).find(p => p.symbol === orderSym && Math.sign(p.qty) === d);
     const fill = pos && Number.isFinite(pos.avgPrice) ? pos.avgPrice : px + d * I.tick;
-    const fin = planEntry(S, X, sig, dir, fill, risk, I.usd_per_point_micro, plan.qty);
+    const fin = planEntry(S, X, sig, dir, fill, risk, pointValue(S.symbol, orderSym), plan.qty);
     const stop = 'skip' in fin ? plan.stop : fin.stop, target = 'skip' in fin ? plan.target : fin.target;
     const t: LiveTrade = { id: S.id, sym: S.symbol, orderSym, dir, qty: plan.qty, entry: fill, entryUtc: this.lastBarUtc + H, signalUtc, stop, target, stopOrder: null, targetOrder: null, opened: this.now() };
     try {
