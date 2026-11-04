@@ -397,6 +397,16 @@ app.whenReady().then(async () => {
       kBroker = dataSrc; const eng = engine!; aiTimer = setInterval(() => void aiTick(kc.mode, eng), 30_000); (aiTimer as any).unref?.(); void aiTick(kc.mode, eng);
       const xOn = XSTRATEGIES.filter(S => kc.enabled[S.id]).map(S => S.id);
       if (xOn.length) engine.say(`PO3/Fractal strategies on: ${xOn.join(', ')}. PO3 entries are resting limit orders at the exact level; stops go in as soon as they fill.`);
+    } else if (kc.mode === 'off' && broker.getOpenOrders && broker.cancelOrder) {
+      // Strategies off: chart trading only. Real orders on this account and every account switched on under Accounts.
+      const mc = { ...kc, mode: 'live' as const, enabled: {} as Record<string, boolean> }, e = engine;
+      xLive = new XLive(mc, { data: broker, desk: broker as unknown as OrderDesk, risk: guard, store: xTradeStore('live'), dailyPnL: () => broker.getDailyPnL(),
+        note: m => { jot(m); e.say(m); }, kHolds: () => false });
+      xLive.start();
+      const others = st.accounts.filter(a => a.trade !== false && a.id !== acct?.id && a.connection in ADAPTERS && a.connection !== 'paper');
+      engine.say(`Strategies are off, so the bot is in chart-trading mode: orders you place from the chart are REAL orders on ${1 + others.length} account${others.length ? 's' : ''}.`);
+      if (others.length) void startFollowers(others, mc, m => engine?.say(m));
+      engine.onHalt = () => { xLive?.stop(); xLive?.forgetAll(); for (const f of followers) void f.flatten(); };
     }
     activeBroker = brokerId; activeAccount = acct?.id ?? '';
     hook = startWebhook(8787, webhookSecret(), s => void engine?.handleSignal(s));

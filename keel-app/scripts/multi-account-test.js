@@ -32,8 +32,13 @@ class Replay {
   async subscribe() {}
   lastPrice(s) { const a = DATA.hour[ROOT(s)]; return a ? a[a.length - 1].c : undefined; }
   async getHistory(s, unit, n) { const a = (DATA[unit] || DATA.hour)[ROOT(s)] || []; return a.slice(-n); }
-  async placeOrder() { return 'x'; } async getOpenOrders() { return []; } async modifyOrder() {} async cancelOrder() {}
-  async getPositions() { return []; } async getDailyPnL() { return 0; } async closeAll() { this.closed++; }
+  // behaves like a broker: market orders fill at the last price, stop/limit orders rest until cancelled
+  async placeOrder(o) { this.seq = (this.seq || 0) + 1; const id = 'r' + this.seq; this.pos = this.pos || {}; this.work = this.work || {};
+    if (o.type === 'market') { const q = (this.pos[o.symbol] || 0) + (o.side === 'buy' ? o.qty : -o.qty); this.pos[o.symbol] = q; (this.fills = this.fills || []).push(o); }
+    else this.work[id] = { id, symbol: o.symbol, side: o.side, qty: o.qty, type: o.type, price: o.price }; return id; }
+  async getOpenOrders() { return Object.values(this.work || {}); } async modifyOrder(id, c) { if (this.work[id]) this.work[id].price = c.price; } async cancelOrder(id) { delete (this.work || {})[id]; }
+  async getPositions() { return Object.entries(this.pos || {}).filter(([, q]) => q).map(([symbol, qty]) => ({ symbol, qty, avgPrice: this.lastPrice(symbol) })); }
+  async getDailyPnL() { return 0; } async closeAll() { this.closed++; this.pos = {}; this.work = {}; }
   async getAccount() { return { name: this.acct?.label ?? 'replay', size: 50000, startBalance: 50000, balance: 50000, maxLoss: 2000, days: [] }; }
 }
 const { ADAPTERS } = require('../dist/brokers');
@@ -46,7 +51,9 @@ const acct = (id, label, trade) => ({ id, label, firm: 'Topstep', connection: 'r
   dailyLoss: 1000, profitTarget: 4000, consistencyPct: 55, consistencyBasis: 'target', minDays: 0, maxMini: 4, maxMicro: 40, dailyGoal: 0, pauseAtGoal: true, cost: 0, purchaseDate: '', notes: '', trade });
 fs.writeFileSync(path.join(tmp, 'accounts.json'), JSON.stringify({ selected: 'a-00000000000a', accounts: [acct('a-00000000000a', 'Account A', true), acct('a-00000000000b', 'Account B', true), acct('a-00000000000c', 'Account C', false)] }));
 fs.writeFileSync(path.join(tmp, 'risk.json'), JSON.stringify({ maxDailyLoss: 1000, maxQtyPerOrder: 10, maxOpenPositions: 4, allowedSymbols: ['MNQ', 'MGC', 'NQ', 'GC'] }));
-fs.writeFileSync(path.join(tmp, 'ksystem.json'), JSON.stringify({ mode: 'paper', riskUsd: 250, flatByHour: 16 }));
+const MODE = process.env.MODE || 'paper';
+fs.writeFileSync(path.join(tmp, 'ksystem.json'), JSON.stringify({ mode: MODE, riskUsd: 250, flatByHour: MODE === 'off' ? 23 : 16 }));
+console.log(`--- Strategies mode: ${MODE} ---`);
 
 const ev = { senderFrame: { url: 'file:///keel/index.html' } };
 let fails = 0; const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`); if (!ok) fails++; };
@@ -58,8 +65,10 @@ let fails = 0; const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'
   await new Promise(r => setTimeout(r, 2500));
   const k = await handlers['k:get'](ev);
   const labels = (k.followers || []).map(f => f.label);
-  check(k.running && k.status !== null, 'K system running on the account picked at the top (Account A)');
-  check(labels.includes('Account B'), `second account running: ${JSON.stringify(labels)}`);
+  const ca0 = await handlers['chart:accounts'](ev), labels2 = ca0.accounts.map(a => a.label);
+  if (MODE !== 'off') check(k.running && k.status !== null, 'K system running on the account picked at the top (Account A)');
+  else check(k.running && k.status === null, 'strategies off: no K system, chart-trading mode');
+  check(labels2.includes('Account A') && labels2.includes('Account B'), `both accounts running: ${JSON.stringify(labels2)}`);
   check(!labels.includes('Account C') && !made.some(b => b.accountId === 'a-00000000000c'), 'Account C (Trade off) never connected');
   check(made.filter(b => b.accountId === 'a-00000000000b').length === 1, 'Account B has its own connection');
   // trading from the chart on both accounts
@@ -68,11 +77,11 @@ let fails = 0; const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'
   const o1 = await handlers['chart:order'](ev, { orderSym: 'MNQ', dir: 'long', qty: 1, type: 'market', stopPts: 20, tgtPts: 40, accounts: ids });
   check(o1.ok && o1.results.length === 2 && o1.results.every(r => r.ok), `chart BUY 1 MNQ (stop 20, target 40) sent to both: ${JSON.stringify(o1.results)}`);
   const kd = await handlers['k:get'](ev);
-  const fillsA = (kd.paper && kd.paper.fills) || [];
-  check(fillsA.some(f => f.symbol === 'MNQ' && f.side === 'buy'), `account A paper fill: ${JSON.stringify(fillsA.slice(-1))}`);
+  if (MODE === 'paper') { const fillsA = (kd.paper && kd.paper.fills) || []; check(fillsA.some(f => f.symbol === 'MNQ' && f.side === 'buy'), `account A paper fill: ${JSON.stringify(fillsA.slice(-1))}`); }
+  else { const run = made.filter(b => b.fills && b.fills.length); check(run.length === 2 && run.every(b => b.pos.MNQ === 1 && Object.values(b.work).some(w => w.type === 'stop') && Object.values(b.work).some(w => w.type === 'limit')), `real orders on both accounts: position 1 MNQ + stop + target each (${run.map(b => b.acct.label + ' pos ' + b.pos.MNQ + ', ' + Object.values(b.work).map(w => w.type + '@' + w.price).join(' ')).join(' | ')})`); }
   check((kd.followers || []).some(f => f.label === 'Account B' && f.open >= 1), `account B holds the chart trade: ${JSON.stringify(kd.followers)}`);
   const o2 = await handlers['chart:order'](ev, { orderSym: 'MNQ', dir: 'long', qty: 1, type: 'market', stopPts: 20, tgtPts: 0, accounts: ids });
-  check(o2.results.every(r => !r.ok && /already/.test(r.why)), `second order refused while each account already holds NQ: ${o2.results.map(r => r.why).join(' | ')}`);
+  check(o2.results.every(r => !r.ok && /already|holds/.test(r.why)), `second order refused while each account already holds NQ: ${o2.results.map(r => r.why).join(' | ')}`);
   const fl = await handlers['chart:flatten'](ev, 'MNQ', ids);
   check(fl.ok && fl.results.every(r => r.ok), 'flatten MNQ on both');
   const o3 = await handlers['chart:order'](ev, { orderSym: 'MGC', dir: 'short', qty: 2, type: 'limit', price: 9999, stopPts: 5, tgtPts: 10, accounts: ids });

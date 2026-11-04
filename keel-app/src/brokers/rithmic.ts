@@ -17,7 +17,7 @@ import * as protobuf from 'protobufjs';
 import { AccountInfo, BrokerAdapter, HistBar, HistUnit, Order, Position, Quote, WorkingOrder } from '../core/types';
 import type { AccountRecord } from '../core/accounts';
 
-const APP = { name: 'Keel', version: '0.6.4' };
+const APP = { name: 'Keel', version: '0.6.5' };
 const TEMPLATE_VERSION = '5.55';
 const DEFAULT_GATEWAY = 'wss://rituz00100.rithmic.com:443', DEFAULT_SYSTEM = 'Rithmic Test';
 const EXCHANGE: Record<string, string> = { NQ: 'CME', MNQ: 'CME', ES: 'CME', MES: 'CME', RTY: 'CME', M2K: 'CME', YM: 'CBOT', MYM: 'CBOT', GC: 'COMEX', MGC: 'COMEX', SI: 'COMEX', CL: 'NYMEX', MCL: 'NYMEX' };

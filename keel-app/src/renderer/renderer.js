@@ -510,26 +510,30 @@ function chartSymbols(extra) {
   if ([...sel.options].map(o => o.value).join() !== list.join()) sel.replaceChildren(...list.map(x => new Option(x, x)));
   sel.value = keep; chartSym = sel.value;
 }
+// The chart draws inside its own iframe, so none of Keel's page styles or layout can reach it.
+let lwFrame = null, lwReady = false;
 function lwEnsure() {
-  if (lw || !window.LightweightCharts) return;
+  if (lw) return;
   const box = $('cBox');
   if (!box.clientWidth || !box.clientHeight) return;            // page not visible yet: try again on the next refresh
-  box.replaceChildren();
-  lw = LightweightCharts.createChart(box, {
-    width: Math.floor(box.clientWidth), height: Math.floor(box.clientHeight),
-    layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#9fb3b7', fontFamily: getComputedStyle(document.body).fontFamily },
+  if (!lwFrame) {
+    lwFrame = document.createElement('iframe'); lwFrame.title = 'Price chart';
+    lwFrame.style.cssText = 'border:0;width:100%;height:100%;display:block;background:transparent';
+    lwFrame.srcdoc = '<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;overflow:hidden;background:transparent}#c{position:absolute;left:0;top:0;right:0;bottom:0}</style>'
+      + '<script src="vendor/lightweight-charts.js"><\/script></head><body><div id="c"></div></body></html>';
+    lwFrame.onload = () => { lwReady = true; lwKey = ''; lwLast = 0; void drawLive(); };
+    box.replaceChildren(lwFrame); return;
+  }
+  const W = lwReady ? lwFrame.contentWindow : null, LC = W && W.LightweightCharts;
+  if (!LC) return;
+  lw = LC.createChart(W.document.getElementById('c'), {
+    autoSize: true, layout: { background: { type: 'solid', color: '#16252a' }, textColor: '#9fb3b7', fontFamily: getComputedStyle(document.body).fontFamily },
     grid: { vertLines: { color: 'rgba(120,150,155,0.10)' }, horzLines: { color: 'rgba(120,150,155,0.10)' } },
     rightPriceScale: { borderColor: '#2a3a3f' }, timeScale: { borderColor: '#2a3a3f', timeVisible: true, secondsVisible: false, rightOffset: 8 },
-    crosshair: { mode: LightweightCharts.CrosshairMode.Normal }, handleScroll: true, handleScale: true
+    crosshair: { mode: LC.CrosshairMode.Normal }, handleScroll: true, handleScale: true
   });
   lwSeries = lw.addCandlestickSeries({ upColor: '#6fd3b8', downColor: '#ff7b70', borderVisible: false, wickUpColor: '#6fd3b8', wickDownColor: '#ff7b70' });
   lw.subscribeClick(p => { if (!p.point) return; const px = lwSeries.coordinateToPrice(p.point.y); if (px === null) return; const t = /GC/.test(chartSym) ? 0.1 : 0.25; $('tkPx').value = (Math.round(px / t) * t).toFixed(/GC/.test(chartSym) ? 1 : 2); $('tkMsg').textContent = 'Limit price set from the chart. Clear it for a market order.'; });
-  // Size it ourselves (not autoSize): whenever the box, the window or the zoom / display scaling changes, resize and repaint.
-  const fit = () => { if (lw && box.clientWidth && box.clientHeight) lw.resize(Math.floor(box.clientWidth), Math.floor(box.clientHeight), true); };
-  new ResizeObserver(() => requestAnimationFrame(fit)).observe(box);
-  window.addEventListener('resize', () => requestAnimationFrame(fit));
-  const watchDpr = () => { const mq = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`); mq.addEventListener('change', () => { fit(); watchDpr(); }, { once: true }); };
-  watchDpr();
 }
 function lwPriceLines(lines) {
   for (const p of lwLines) lwSeries.removePriceLine(p); lwLines = [];
@@ -584,7 +588,7 @@ $('cFit').onclick = () => { if (lw && lwN) lw.timeScale().setVisibleLogicalRange
 async function drawLive() {
   if (!cat || lwBusy) return;
   chartSymbols(); if (!chartSym) return;
-  lwEnsure(); if (!lw) { if (!window.LightweightCharts) $('cLegend').replaceChildren(el('p', 'empty', 'The chart library did not load.')); return; }
+  lwEnsure(); if (!lw) return;
   const key = chartSym + '|' + chartTf, full = key !== lwKey;
   if (!full && Date.now() - lwLast < 3000) return;          // newest bars every 3 s
   lwBusy = true;
@@ -1039,7 +1043,7 @@ function render(s) {
   if (!poll) poll = setInterval(refresh, 1500);
   if (!cat) { loadCatalog().then(() => renderToday(last)); go('dash'); return; }
   renderToday(s);
-  if (view === 'chart') drawLive();
+  if (view === 'chart') { drawLive(); if (Date.now() - (window._tkAt || 0) > 3000) { window._tkAt = Date.now(); void tkRender(); } }
   if (view === 'k') kLoad();
   if (wasRunning !== s.running) { renderPicker(); renderAccounts(); }
 }
