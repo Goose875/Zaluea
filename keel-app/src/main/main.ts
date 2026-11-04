@@ -43,7 +43,8 @@ let ai: KeelAI | null = null;
 let aiTimer: ReturnType<typeof setInterval> | undefined;
 let kBroker: any = null;
 let runBroker: any = null;
-let runData: any = null;     // a separate price connection when the account's own has no data   // the running bot's connection (also serves chart history)
+let runData: any = null;
+let chartData: Promise<any> | null = null;   // TopstepX prices for the chart when the account is on Rithmic Test     // a separate price connection when the account's own has no data   // the running bot's connection (also serves chart history)
 /** Other accounts trading at the same time (Accounts page "Trade with Keel"). */
 interface Follower { acct: AccountRecord; broker: any; k: KLive; x: XLive; paper: PaperOrders | null; error: string; stop: () => Promise<void>; flatten: () => Promise<void> }
 let followers: Follower[] = [];
@@ -181,12 +182,14 @@ async function startFollowers(list: AccountRecord[], kc: ReturnType<typeof loadK
 /** Prices and history for the strategies: the account's own connection, or (when it has none, e.g. Rithmic Test without
  *  market data) the saved TopstepX login. Orders always go to the account's own connection. */
 async function dataFor(broker: any, say: (m: string) => void): Promise<any> {
-  try { const h = broker.getHistory ? await broker.getHistory('NQ', 'hour', 3) : []; if (h.length) return broker; } catch { /* fall through */ }
+  const testPrices = broker.id === 'rithmic' && broker.isTest;   // Rithmic Test prices are simulated, not the real market
+  if (!testPrices) { try { const h = broker.getHistory ? await broker.getHistory('NQ', 'hour', 3) : []; if (h.length) return broker; } catch { /* fall through */ } }
   const px = vault.get('broker:projectx');
   if (!px || broker.id === 'projectx') return broker;
   try {
     const d: any = ADAPTERS.projectx(); await d.connect(px); await d.subscribe?.(K_SYMBOLS).catch(() => {});
-    say('This account has no price data from its own connection, so prices and history come from your TopstepX login. Orders still go to this account.');
+    say(testPrices ? 'This account is on Rithmic Test, whose prices are simulated, so prices and history come from your TopstepX login. Orders still go to this account.'
+      : 'This account has no price data from its own connection, so prices and history come from your TopstepX login. Orders still go to this account.');
     return d;
   } catch (err) { say(`No price data on this account, and TopstepX prices failed too (${(err as Error).message}).`); return broker; }
 }
@@ -467,7 +470,11 @@ app.whenReady().then(async () => {
   const HIST_UNITS = ['min1', 'min5', 'min15', 'hour', 'hour4', 'day'];
   ipcMain.handle('chart:hist', async (e, symbol: unknown, unit: unknown, count: unknown) => {
     if (!allowed(e) || typeof symbol !== 'string' || !HIST_UNITS.includes(unit as string)) return { ok: false, error: 'Not allowed.' };
-    const b: any = runData ?? runBroker ?? watch?.broker;
+    let b: any = runData ?? runBroker ?? watch?.broker;
+    if (b && b.id === 'rithmic' && b.isTest && vault.get('broker:projectx')) {          // Rithmic Test: show real prices from TopstepX
+      if (!chartData) { const d: any = ADAPTERS.projectx(); chartData = d.connect(vault.get('broker:projectx')).then(() => d).catch((err: Error) => { chartData = null; throw err; }); }
+      b = await chartData;
+    }
     if (!b?.getHistory) return { ok: false, error: 'Start the bot (or pick an account) to load chart history.' };
     try {
       const n = Math.max(3, Math.min(5000, Number(count) || 1500));

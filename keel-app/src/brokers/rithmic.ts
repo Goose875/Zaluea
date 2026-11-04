@@ -17,7 +17,7 @@ import * as protobuf from 'protobufjs';
 import { AccountInfo, BrokerAdapter, HistBar, HistUnit, Order, Position, Quote, WorkingOrder } from '../core/types';
 import type { AccountRecord } from '../core/accounts';
 
-const APP = { name: 'Keel', version: '0.6.6' };
+const APP = { name: 'Keel', version: '0.6.7' };
 const TEMPLATE_VERSION = '5.55';
 const DEFAULT_GATEWAY = 'wss://rituz00100.rithmic.com:443', DEFAULT_SYSTEM = 'Rithmic Test';
 const EXCHANGE: Record<string, string> = { NQ: 'CME', MNQ: 'CME', ES: 'CME', MES: 'CME', RTY: 'CME', M2K: 'CME', YM: 'CBOT', MYM: 'CBOT', GC: 'COMEX', MGC: 'COMEX', SI: 'COMEX', CL: 'NYMEX', MCL: 'NYMEX' };
@@ -165,6 +165,8 @@ async function openSession(c: { user: string; password: string; system: string }
 export class RithmicBroker implements BrokerAdapter {
   readonly id = 'rithmic'; readonly name = 'Rithmic';
   private s: Session | null = null; private key = '';
+  /** Rithmic Test: practice system whose prices are not the real market. */
+  isTest = false;
   private accountId = ''; private accountName = '';
   private orders = new Map<string, ROrder>();
   private positions = new Map<string, { qty: number; avg: number; open: number; closed: number }>();
@@ -186,7 +188,7 @@ export class RithmicBroker implements BrokerAdapter {
     if (!user || !password) throw new Error('Enter your Rithmic username and password under Logins.');
     const gateway = (creds.gateway || '').trim() || DEFAULT_GATEWAY, system = (creds.system || '').trim() || DEFAULT_SYSTEM;
     if (!/^wss:\/\/[a-z0-9.-]+(:\d+)?\/?$/i.test(gateway)) throw new Error('The Rithmic gateway must look like wss://name.rithmic.com:443');
-    this.key = `${gateway}|${system}|${user}`;
+    this.key = `${gateway}|${system}|${user}`; this.isTest = /test/i.test(system);
     let p = SESSIONS.get(this.key);
     if (!p) { p = openSession({ user, password, system }, gateway); SESSIONS.set(this.key, p); p.catch(() => SESSIONS.delete(this.key)); }
     const s = await p; s.refs++; this.s = s;
