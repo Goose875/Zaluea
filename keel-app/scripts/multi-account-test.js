@@ -4,6 +4,10 @@
 // Expected: Start bot runs A and B (B as a second account), never C; each has its own risk guard and trade files;
 // "Stop all trading" (kill switch) reaches every running account.   Usage: npm run build && node scripts/multi-account-test.js
 'use strict';
+// clock: a weekday morning in New York, so chart orders are allowed whatever time the test runs (not near the flat-by time)
+{ const RealDate = Date, shift = RealDate.parse('2026-11-04T15:30:00Z') - RealDate.now();
+  class FakeDate extends RealDate { constructor(...a) { super(...(a.length ? a : [RealDate.now() + shift])); } static now() { return RealDate.now() + shift; } }
+  global.Date = FakeDate; }
 const Module = require('module'), path = require('path'), fs = require('fs'), os = require('os');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'keel-multi-'));
 const handlers = {};

@@ -119,3 +119,19 @@ export const PRESETS: (Partial<Omit<AccountRecord, 'id'>> & { firm: string; plan
   { firm: 'Lucid Trading', plan: 'Daily $50K (evaluation)', stage: 'evaluation', size: 50000, drawdown: 'eod', maxLoss: 2000, dailyLoss: 0, profitTarget: 3000, consistencyPct: 50, consistencyBasis: 'total', maxMini: 4, maxMicro: 40, connection: 'rithmic' },
   { firm: 'Lucid Trading', plan: 'Daily $50K (funded)', stage: 'funded', size: 50000, drawdown: 'intraday', maxLoss: 2000, dailyLoss: 0, profitTarget: 0, consistencyPct: 0, consistencyBasis: 'total', maxMini: 4, maxMicro: 40, connection: 'rithmic' }
 ];
+
+/** Accounts that would end up trading the same real account: two on one connection with the same account ID, or
+ *  without one (the connection then picks the first tradable account on the login, so both would trade it).
+ *  Returns what to tell the user, or '' when every account is distinct. */
+export function clashingAccounts(list: AccountRecord[]): string {
+  const by = new Map<string, AccountRecord[]>();
+  for (const a of list) { if (a.connection === 'paper') continue; by.set(a.connection, [...(by.get(a.connection) ?? []), a]); }
+  for (const group of by.values()) {
+    if (group.length < 2) continue;
+    const blank = group.filter(a => !a.brokerRef.trim());
+    if (blank.length) return `${blank.map(a => a.label).join(' and ')} ${blank.length === 1 ? 'has' : 'have'} no account ID, so ${blank.length === 1 ? 'it' : 'they'} could trade the same real account as another one on this login. Set each account's ID under Accounts (Find my accounts fills it in), then start again.`;
+    const seen = new Map<string, string>();
+    for (const a of group) { const k = a.brokerRef.trim(); if (seen.has(k)) return `${seen.get(k)} and ${a.label} point at the same real account (ID ${k}), so every trade would go in twice. Fix the account ID under Accounts, then start again.`; seen.set(k, a.label); }
+  }
+  return '';
+}

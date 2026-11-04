@@ -12,7 +12,7 @@ import { BROKERS } from '../core/registry';
 import { ADAPTERS } from '../brokers';
 import { loadRisk, saveRisk } from './settings';
 import { evaluate } from '../core/goals';
-import { addAccount, updateAccounts, removeAccount, selectAccount, sampleAccounts, goalsFor, BLANK, PRESETS } from '../core/accounts';
+import { addAccount, updateAccounts, removeAccount, selectAccount, sampleAccounts, goalsFor, clashingAccounts, BLANK, PRESETS } from '../core/accounts';
 import { loadAccounts, saveAccounts } from './accountsStore';
 import { addTo, updateIn, removeFrom } from '../core/strategyList';
 import { checkPine } from '../pine/run';
@@ -367,6 +367,9 @@ app.whenReady().then(async () => {
     const st = loadAccounts(conns());
     const acct = st.accounts.find(a => a.id === st.selected) ?? null;
     if (acct && acct.trade === false) return { ok: false, error: `${acct.label} is switched off for trading (Accounts, Trade with Keel). Switch it on or pick another account.` };
+    // every account that will trade (the one at the top plus each one switched on under Accounts) must be a different real account
+    const clash = clashingAccounts(st.accounts.filter(a => a.id === acct?.id || (a.trade !== false && a.connection in ADAPTERS)));
+    if (clash) { void startWatch(); return { ok: false, error: clash }; }
     const brokerId = acct ? acct.connection : 'paper';
     const def = BROKERS.find(b => b.id === brokerId);
     if (!def || !(brokerId in ADAPTERS) || (def.dev && app.isPackaged)) return { ok: false, error: 'That connection is not available.' };
