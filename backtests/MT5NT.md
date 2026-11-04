@@ -103,3 +103,19 @@ Each candidate was tested with one fixed set of trade settings (the most typical
 | NQ MACD signal cross, long | +0.32 | +0.49 → −0.02 | 13/22 | | | faded |
 
 **Important:** these hold positions for days to weeks (time stops of 5–20 days). They **cannot be traded on accounts that must be flat every day** (Topstep evaluations and most prop evaluations).
+
+## Part 3 - Flat-daily versions (Topstep-compatible)
+Same daily signals. Enter at the next session's open, exit at the stop or target, or else at that session's close. No overnight holds.
+Each candidate's stop and target were picked on 2005-2019 only (12 versions each). Every result was then compared with 200 random-entry runs that used the same days, direction, trade count and stop/target (`swing_flat.py`, `swing_flat_control.py`).
+
+| Candidate | Flat version | Trades | Avg R 2005-26 | Avg R 2020-26 | Beats random (all / 2020-26) | Swing version 2020-26 |
+|---|---|---|---|---|---|---|
+| GC Fractal breakout (both sides, low vol, with trend) | 0.5xATR stop, 3R target | 168 | **+0.31** | **+0.28** | 100% / 88% | +0.18 |
+| ES MACD zero cross (high vol) | 1xATR stop, 3R target | 101 | +0.08 | +0.13 | 94% / 84% | +0.10 |
+| GC TEMA failed breakout (long) | 0.5xATR stop, exit at close | 198 | +0.13 | +0.05 | 93% / 54% | +0.36 |
+| GC VIDYA cross (long, low vol) | signal-bar stop, exit at close | 129 | +0.12 | +0.01 | 61% / 73% | +0.15 |
+| NQ outside bar reversal (long) | signal-bar stop, 1R target | 134 | +0.02 | -0.02 | 100% / 94% (random is -0.21) | +0.25 |
+
+Verdict: forcing a flat exit each day kills the edge in the three main swing winners, because their edge comes from holding for days.
+Only the GC Fractal breakout holds up as a day trade, and it even improves (+0.28R since 2020, 18 of 22 years positive).
+It trades only about 8 times a year, and its 2020-26 result is not separable from luck on its own (88th percentile against random).
