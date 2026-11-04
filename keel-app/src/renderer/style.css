@@ -274,3 +274,19 @@ details.more { margin-top:10px; } details.more summary { cursor:pointer; color:v
 /* Lightweight Charts lays itself out with a <table>: keep Keel's table styling away from it */
 .cbox.lw table { width:auto; min-width:0 !important; border-collapse:separate; font-size:inherit; }
 .cbox.lw td, .cbox.lw th, .cbox.lw tr { padding:0 !important; border:0 !important; background:none; }
+
+/* journal + payouts */
+.jcards { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-top:14px; }
+.jcard { background:var(--raised); border:1px solid var(--line); border-radius:8px; padding:10px 14px; min-width:0; }
+.jcard .v { font-family:var(--gauge); font-size:22px; font-variant-numeric:tabular-nums; }
+.jcurve { margin-top:14px; } .jcurve svg { width:100%; height:140px; display:block; }
+.jcurve .zero { stroke:var(--line2); stroke-dasharray:3 4; } .jcurve .eq { fill:none; stroke:var(--amber); stroke-width:2; }
+#jList table tr.click { cursor:pointer; } #jList table tr.click:hover td { background:var(--raised); }
+.tag { display:inline-block; font-size:11px; padding:0 6px; border-radius:9px; background:var(--raised); color:var(--fog); margin-left:4px; }
+dialog#jDlg { background:var(--deck); color:var(--chalk); border:1px solid var(--line2); border-radius:10px; padding:20px 22px; width:min(520px, 92vw); }
+dialog#jDlg::backdrop { background:rgba(0,0,0,.55); }
+.jdlg label { display:block; margin-top:10px; color:var(--fog); font-size:13px; }
+.jdlg textarea, .jdlg input { width:100%; }
+.fgrid4 .end { display:flex; align-items:flex-end; }
+.porules { margin-top:14px; } .porules summary { cursor:pointer; color:var(--fog); }
+@media (max-width:700px) { .jcards { grid-template-columns:1fr 1fr; } }

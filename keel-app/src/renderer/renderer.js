@@ -5,7 +5,7 @@ const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls)
 const NAMES = { projectx: 'TopstepX', rithmic: 'Rithmic', cqg: 'CQG', tradovate: 'Tradovate', ninjatrader: 'NinjaTrader' };
 const nm = v => NAMES[v] || v;
 const STATUS = { ready: '', beta: ' (beta)', 'needs-approval': ' (needs approval)' };
-const TITLES = { ai: 'Claude', rank: 'Compare mixes', dash: 'Today', chart: 'Chart', acct: 'Progress', accts: 'Accounts', k: 'Strategies', kval: 'Validate the K system', strat: 'Custom strategies', test: 'Backtest', conn: 'Logins', risk: 'Risk limits', alerts: 'TradingView alerts' };
+const TITLES = { journal: 'Journal', ai: 'Claude', rank: 'Compare mixes', dash: 'Today', chart: 'Chart', acct: 'Progress', accts: 'Accounts', k: 'Strategies', kval: 'Validate the K system', strat: 'Custom strategies', test: 'Backtest', conn: 'Logins', risk: 'Risk limits', alerts: 'TradingView alerts' };
 const STAGE = { evaluation: ['Evaluation', 'Profit target'], funded: ['Funded', 'Payout target'], live: ['Live', 'Payout target'], practice: ['Practice', 'Practice goal'] };
 const DD = { eod: 'EOD trailing', intraday: 'Intraday trailing', static: 'Static' };
 const MULT = { ES: 50, NQ: 20, MES: 5, MNQ: 2, YM: 5, MYM: 0.5, RTY: 50, M2K: 5, CL: 1000, MCL: 100, GC: 100, MGC: 10 };
@@ -32,7 +32,7 @@ const selAcct = () => store.accounts.find(a => a.id === store.selected) || null;
 // ---------- navigation ----------
 let view = 'dash';
 function go(v) {
-  view = v; if (v === 'chart') { requestAnimationFrame(() => requestAnimationFrame(drawLive)); void tkRender(); } if (v === 'test') fillBtStrats(); if (v === 'k') kLoad(); if (v === 'accts') loadAcctDefaults().then(renderAccounts); if (v === 'rank') rkLoad(); if (v === 'ai') aiLoad(); if (v === 'conn') dcLoad();
+  view = v; if (v === 'chart') { requestAnimationFrame(() => requestAnimationFrame(drawLive)); void tkRender(); } if (v === 'test') fillBtStrats(); if (v === 'k') kLoad(); if (v === 'accts') loadAcctDefaults().then(renderAccounts); if (v === 'rank') rkLoad(); if (v === 'ai') aiLoad(); if (v === 'conn') dcLoad(); if (v === 'journal') void jLoad();
   for (const k of Object.keys(TITLES)) $('v-' + k).hidden = k !== v;
   document.querySelectorAll('#nav button').forEach(b => { if (b.dataset.go === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   $('title').textContent = v === 'dash' ? greeting() : TITLES[v];
@@ -166,6 +166,7 @@ function renderProgress(s, n) {
   $('aName').textContent = a ? `${a.label} \u00b7 ${a.firm}${a.plan ? ' \u00b7 ' + a.plan : ''}` : 'Pick an account at the top to see its progress.';
   $('aBal').textContent = n && n.balance !== null && n.balance !== undefined ? cents(n.balance) : '\u2014';
   if (a && Date.now() - stageTouched > 3000) applyStage(a.stage);
+  if (!p) $('poPanel').hidden = true;
   if (!p) { for (const k of ['t', 'c', 'd', 'f']) { $(k + 'Text').textContent = '\u2014'; setBar($(k + 'Bar'), 0); $(k + 'Sub').textContent = ''; } $('daysBox').replaceChildren(el('p', 'empty', a ? (s.watch && s.watch.error) || 'Loading\u2026' : 'No account picked.')); return; }
 
   $('tText').textContent = p.profitTarget > 0 ? `${money(p.netProfit)} of ${plain(p.profitTarget)}` : money(p.netProfit);
@@ -187,6 +188,7 @@ function renderProgress(s, n) {
     $('fSub').textContent = `Your balance can fall to $${p.floor.toLocaleString()} before you hit the max loss.`;
   } else { $('fText').textContent = '\u2014'; setBar($('fBar'), 0); $('fSub').textContent = "Set a max loss with Edit rules, or this connection doesn't share your balance yet."; }
 
+  void poRefresh(a, p);
   const box = $('daysBox'); box.replaceChildren();
   const t = el('table'), head = el('tr');
   for (const [h, c] of [['Day', ''], ['Profit and loss', 'r']]) head.append(Object.assign(el('th', c, h), { scope: 'col' }));
@@ -204,6 +206,60 @@ document.querySelectorAll('#stageSeg button').forEach(b => {
     if (r.ok) { store = r.store; renderAccounts(); renderPicker(); flash($('stageMsg'), `Marked as ${STAGE[b.dataset.stage][0].toLowerCase()}.`); } else flash($('stageMsg'), r.error, true);
   };
 });
+// ---------- payouts ----------
+let poAt = 0, poFor = '', poRulesFor = '', poP = null;
+async function poRefresh(a, p, force) {
+  $('poPanel').hidden = !a || !p || !['funded', 'live'].includes(a.stage);
+  if ($('poPanel').hidden) return;
+  poP = p;
+  if (!force && poFor === a.id && Date.now() - poAt < 15000) return;
+  poAt = Date.now(); poFor = a.id;
+  const r = await window.keel.payouts(a.id, p.days, p.todayPnl, p.netProfit); if (!r) return;
+  const st = r.status, R = r.rec.rules;
+  if (poRulesFor !== a.id) {   // fill the rules form once per account, so typing is never overwritten
+    poRulesFor = a.id;
+    [['prWinDays', R.winDays], ['prWinMin', R.winDayMin], ['prPct', R.maxPct], ['prMax', R.maxAmount], ['prMin', R.minAmount], ['prBuf', R.buffer], ['prCons', R.consistencyPct]].forEach(([id, v]) => { $(id).value = v; });
+    $('poDate').value = r.today;
+  }
+  $('poHead').textContent = st.eligible ? `Eligible now: you can request up to ${cents(st.request)}` : `Not yet eligible · ${st.winDays} of ${st.winDaysNeeded} winning days`;
+  setBar($('poBar'), st.winDaysNeeded ? (st.winDays / st.winDaysNeeded) * 100 : 100, st.eligible ? 'ok' : '');
+  $('poSub').textContent = [
+    `This cycle${st.cycleStart ? ' (since your ' + new Date(st.cycleStart + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' payout)' : ''}: ${money(st.cycleProfit)} over ${st.cycleDays} day${st.cycleDays === 1 ? '' : 's'}; profit still in the account ${cents(st.available)}.`,
+    st.reasons.length ? 'Still needed: ' + st.reasons.join('; ') + '.' : '',
+    `Paid out on this account: ${cents(st.totalPaid)} in ${st.payouts} payout${st.payouts === 1 ? '' : 's'}${st.cost ? `, account cost ${cents(st.cost)}, net ${money(st.netAfterCost)}` : ''}.`,
+    `All accounts: ${cents(r.totals.paid)} paid out in ${r.totals.payouts}, ${cents(r.totals.cost)} spent on accounts, net ${money(r.totals.paid - r.totals.cost)}.`
+  ].filter(Boolean).join(' ');
+  const box = $('poList'); box.replaceChildren();
+  if (r.rec.taken.length) {
+    const t = el('table'), head = el('tr');
+    for (const [h, c] of [['Date', ''], ['Amount', 'r'], ['Note', ''], ['', 'r']]) head.append(Object.assign(el('th', c, h), { scope: 'col' }));
+    t.append(head);
+    r.rec.taken.forEach((x, i) => {
+      const row = el('tr'), del = el('button', 'ghost small', 'Remove');
+      del.onclick = async () => { if (!confirm(`Remove the ${cents(x.amount)} payout on ${x.date}?`)) return; const q = await window.keel.payoutRemove(a.id, i); if (!q.ok) flash($('poMsg'), q.error, true); void poRefresh(a, p, true); };
+      const dc = el('td', 'r'); dc.append(del);
+      row.append(el('td', '', x.date), el('td', 'r', cents(x.amount)), el('td', '', x.note), dc); t.append(row);
+    });
+    box.append(t);
+  }
+}
+$('poAdd').onclick = async () => {
+  const a = selAcct(); if (!a) return;
+  const amount = Number($('poAmt').value), date = $('poDate').value;
+  if (!(amount > 0)) { flash($('poMsg'), 'Enter the payout amount.', true); return; }
+  const r = await window.keel.payoutAdd(a.id, { date, amount, note: $('poNote').value });
+  if (!r.ok) { flash($('poMsg'), r.error, true); return; }
+  $('poAmt').value = ''; $('poNote').value = ''; flash($('poMsg'), `Recorded a ${cents(amount)} payout. The next cycle starts after ${date}.`);
+  if (poP) void poRefresh(a, poP, true);
+};
+$('prSave').onclick = async () => {
+  const a = selAcct(); if (!a) return;
+  const n = id => Number($(id).value);
+  const r = await window.keel.payoutRules(a.id, { winDays: n('prWinDays'), winDayMin: n('prWinMin'), maxPct: n('prPct'), maxAmount: n('prMax'), minAmount: n('prMin'), buffer: n('prBuf'), consistencyPct: n('prCons') });
+  if (!r.ok) { flash($('poMsg'), r.error, true); return; }
+  flash($('poMsg'), 'Payout rules saved.'); if (poP) void poRefresh(a, poP, true);
+};
+
 $('editRules').onclick = () => { const a = selAcct(); if (a) openDrawer('edit', [a.id], $('editRules')); };
 
 // ---------- accounts list ----------
@@ -553,15 +609,86 @@ function lwEnsure() {
     crosshair: { mode: LC.CrosshairMode.Normal }, handleScroll: true, handleScale: true
   });
   lwSeries = lw.addCandlestickSeries({ upColor: '#6fd3b8', downColor: '#ff7b70', borderVisible: false, wickUpColor: '#6fd3b8', wickDownColor: '#ff7b70' });
-  lw.subscribeClick(p => { if (!p.point) return; const px = lwSeries.coordinateToPrice(p.point.y); if (px === null) return; const t = /GC/.test(chartSym) ? 0.1 : 0.25; $('tkPx').value = (Math.round(px / t) * t).toFixed(/GC/.test(chartSym) ? 1 : 2); $('tkMsg').textContent = 'Limit price set from the chart. Clear it for a market order.'; });
+  lwDragSetup(W);
+  lw.subscribeClick(p => { if (!p.point || Date.now() - lwNoClick < 500) return; const px = lwSeries.coordinateToPrice(p.point.y); if (px === null) return; const t = /GC/.test(chartSym) ? 0.1 : 0.25; $('tkPx').value = (Math.round(px / t) * t).toFixed(/GC/.test(chartSym) ? 1 : 2); $('tkMsg').textContent = 'Limit price set from the chart. Clear it for a market order.'; });
+}
+// ---------- trades on the chart: drag a stop / target (or a working limit's entry) to move it at the broker ----------
+let lwMeta = [], lwDrag = null, lwNoClick = 0;
+const chartTick = () => (/GC/.test(chartSym) ? 0.1 : 0.25), chartFmt = n => n.toFixed(/GC/.test(chartSym) ? 1 : 2);
+function lwHit(y) {
+  let best = null, bd = 7;
+  for (const m of lwMeta) { if (!m.drag) continue; const c = lwSeries.priceToCoordinate(m.price); if (c === null) continue; const d = Math.abs(c - y); if (d < bd) { bd = d; best = m; } }
+  return best;
+}
+function lwDragSetup(W) {
+  const doc = W.document, box = doc.getElementById('c'), cur = doc.createElement('style'); doc.head.append(cur);
+  const yOf = ev => ev.clientY - box.getBoundingClientRect().top, xOk = ev => ev.clientX - box.getBoundingClientRect().left < box.clientWidth - lw.priceScale('right').width();
+  const setCur = c => { cur.textContent = c ? `*{cursor:${c} !important}` : ''; };
+  const down = ev => {
+    if (ev.button !== 0 || !lwSeries || !xOk(ev)) return;
+    const m = lwHit(yOf(ev)); if (!m) return;
+    ev.preventDefault(); ev.stopImmediatePropagation();
+    if (ev.type === 'mousedown') { lwDrag = { m, from: m.price }; lw.applyOptions({ handleScroll: false, handleScale: false }); setCur('ns-resize'); }
+  };
+  doc.addEventListener('pointerdown', down, true); doc.addEventListener('mousedown', down, true);
+  doc.addEventListener('mousemove', ev => {
+    if (!lwSeries) return;
+    if (lwDrag) {
+      ev.stopImmediatePropagation();
+      const px = lwSeries.coordinateToPrice(yOf(ev)); if (px === null) return;
+      const t = chartTick(), m = lwDrag.m; m.price = Math.round(px / t) * t;
+      m.line.applyOptions({ price: m.price, title: `${m.title} → ${chartFmt(m.price)}` }); return;
+    }
+    setCur(xOk(ev) && lwHit(yOf(ev)) ? 'ns-resize' : '');
+  }, true);
+  const up = ev => {
+    if (!lwDrag) return;
+    ev.stopImmediatePropagation();
+    const d = lwDrag; lwDrag = null; lwNoClick = Date.now(); setCur(''); lw.applyOptions({ handleScroll: true, handleScale: true });
+    if (Math.abs(d.m.price - d.from) < chartTick() / 2) return;
+    setTimeout(() => void lwMoved(d), 0);   // confirm() outside the event so the chart sees the button released
+  };
+  doc.addEventListener('mouseup', up, true);
+  W.addEventListener('blur', () => { if (lwDrag) { lwDrag.m.price = lwDrag.from; const d = lwDrag; lwDrag = null; setCur(''); lw.applyOptions({ handleScroll: true, handleScale: true }); d.m.line.applyOptions({ price: d.from, title: d.m.title }); } });
+}
+async function lwMoved(d) {
+  const m = d.m, what = m.which === 'entry' ? 'limit entry' : m.which, on = m.accounts.length ? m.accounts.join(', ') : 'this account';
+  if (!confirm(`Move the ${m.name} ${what} from ${chartFmt(d.from)} to ${chartFmt(m.price)}?\n\nOn: ${on}`)) { lwLast = 0; void drawLive(); return; }
+  $('tkMsg').textContent = 'Moving…';
+  const r = await window.keel.chartMove(m.ref, m.which, m.price);
+  if (!r || !r.ok) $('tkMsg').textContent = r ? r.error : 'Something went wrong.';
+  else $('tkMsg').textContent = `${m.name} ${what}: ` + r.results.map(x => `${x.account} ${x.ok ? 'moved' : 'not moved (' + x.why + ')'}`).join(' · ');
+  lwLast = 0; void drawLive();
+}
+/** Entry arrows and exit dots for trades on this market (open ones and the journal's closed ones). */
+function lwMarkers(closed, lines) {
+  const data = lwSeries.data(); if (!data.length) { lwSeries.setMarkers([]); return; }
+  const snap = ms => { const s = nySec(ms); if (s < data[0].time) return null; let lo = 0, hi = data.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (data[mid].time <= s) lo = mid; else hi = mid - 1; } return data[lo].time; };
+  const mk = [];
+  const entry = (t, dir, text) => { const time = snap(t); if (time !== null) mk.push({ time, position: dir === 'long' ? 'belowBar' : 'aboveBar', color: dir === 'long' ? '#6fd3b8' : '#ff7b70', shape: dir === 'long' ? 'arrowUp' : 'arrowDown', text }); };
+  for (const t of closed) {
+    entry(t.openedAt, t.dir, `${t.id === 'MANUAL' ? 'Chart' : t.id} ${t.dir === 'long' ? 'B' : 'S'}${t.qty}`);
+    const time = snap(t.closedAt);
+    if (time !== null) mk.push({ time, position: t.dir === 'long' ? 'aboveBar' : 'belowBar', color: t.pnl === null ? '#93a7a6' : t.pnl >= 0 ? '#6fd3b8' : '#ff7b70', shape: 'circle',
+      text: t.pnl === null ? 'exit' : `${t.pnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(t.pnl))}` });
+  }
+  for (const l of lines) if (l.opened) entry(l.opened, l.side === 'buy' ? 'long' : 'short', `${l.name} ${l.side === 'buy' ? 'B' : 'S'}${l.qty}`);
+  mk.sort((a, b) => a.time - b.time); lwSeries.setMarkers(mk);
 }
 function lwPriceLines(lines) {
-  for (const p of lwLines) lwSeries.removePriceLine(p); lwLines = [];
-  const add = (price, color, title, style) => { if (typeof price === 'number') lwLines.push(lwSeries.createPriceLine({ price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title })); };
-  for (const t of lines) { add(t.entry, '#f0a43a', `${t.name} in`, 0); add(t.tp, '#6fd3b8', `${t.name} target`, 2); add(t.sl, '#ff7b70', `${t.name} stop`, 2); }
+  if (lwDrag) return;                                  // never redraw under the mouse
+  for (const p of lwLines) lwSeries.removePriceLine(p); lwLines = []; lwMeta = [];
+  const add = (t, which, price, color, title, style) => {
+    if (typeof price !== 'number') return;
+    const drag = !!t.drag && (which !== 'entry' || !!t.working);
+    const line = lwSeries.createPriceLine({ price, color, lineWidth: drag ? 2 : 1, lineStyle: style, axisLabelVisible: true, title }); lwLines.push(line);
+    lwMeta.push({ line, ref: t.ref, which, price, title, name: t.name, accounts: t.accounts || [], drag });
+  };
+  for (const t of lines) { add(t, 'entry', t.entry, '#f0a43a', `${t.name} ${t.working ? 'limit' : 'in'}`, t.working ? 1 : 0); add(t, 'target', t.tp, '#6fd3b8', `${t.name} target`, 2); add(t, 'stop', t.sl, '#ff7b70', `${t.name} stop`, 2); }
   const leg = $('cLegend'); leg.replaceChildren();
   for (const t of lines) {
-    const row = el('div', 'row2'); row.append(el('strong', '', `${t.side === 'buy' ? 'Long' : 'Short'} ${t.qty} · ${t.name}`));
+    const row = el('div', 'row2'); row.append(el('strong', '', `${t.side === 'buy' ? 'Long' : 'Short'} ${t.qty} · ${t.name}${t.working ? ' (limit working)' : ''}${t.accounts && t.accounts.length ? ' · ' + t.accounts.join(', ') : ''}`));
+    if (t.ref && t.ref.startsWith('K|')) row.title = 'K1-K7 stops are trailed by the strategy, so their lines cannot be dragged.';
     const part = (cls, label, v) => { const sp = el('span'); sp.append(el('span', 'dot ' + cls), document.createTextNode(`${label} ${typeof v === 'number' ? v.toFixed(2) : 'none'}`)); return sp; };
     row.append(part('e', 'Entry', t.entry), part('t', 'Target', t.tp), part('s', 'Stop', t.sl)); leg.append(row);
   }
@@ -647,7 +774,7 @@ async function drawLive() {
     lwLast = Date.now();
     const lastBar = data[data.length - 1];
     $('cLast').textContent = lastBar ? `${chartSym}  ${lastBar.close.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : chartSym;
-    lwPriceLines(r.lines || []); lwLiveUpdate(r.tick, Date.now());
+    lwPriceLines(r.lines || []); lwMarkers(r.closed || [], r.lines || []); lwLiveUpdate(r.tick, Date.now());
   } catch (err) { $('cLegend').replaceChildren(el('p', 'empty', String(err.message || err))); }
   finally { lwBusy = false; }
 }
@@ -1096,3 +1223,95 @@ const refresh = async () => render(await window.keel.status());
 $('updateGo').onclick = async () => { const r = await window.keel.installUpdate(); if (r && !r.ok) notice(r.error); };
 
 refresh();
+
+// ---------- trade journal + stats ----------
+let jPer = 'month', jData = null, jEdit = null;
+const DAY = 86400000;
+function jFilter() {
+  const f = { accountId: $('jAcct').value, id: $('jStrat').value, mode: $('jMode').value };
+  if (jPer === 'today') { const d = new Date(); d.setHours(0, 0, 0, 0); f.from = d.getTime(); }
+  else if (jPer === 'week') f.from = Date.now() - 7 * DAY; else if (jPer === 'month') f.from = Date.now() - 30 * DAY;
+  return f;
+}
+function jSelect(sel, items, all) {
+  const keep = sel.value;
+  sel.replaceChildren(new Option(all, ''), ...items.map(([v, t]) => new Option(t, v)));
+  if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
+}
+async function jLoad() {
+  const r = await window.keel.journal(jFilter()); if (!r) return;
+  jData = r;
+  jSelect($('jAcct'), r.accounts.map(a => [a.id, a.label]), 'All accounts');
+  jSelect($('jStrat'), r.strategies.map(x => [x, x === 'MANUAL' ? 'Chart trades' : x]), 'All strategies');
+  const S = r.stats, cards = $('jCards'); cards.replaceChildren();
+  const card = (k, v, cls) => { const c = el('div', 'jcard'); c.append(el('p', 'k', k)); const n = el('p', 'v ' + (cls || ''), v); c.append(n); cards.append(c); return n; };
+  const net = card('Net P&L', money(S.net), S.net > 0 ? 'pos' : S.net < 0 ? 'neg' : '');
+  net.title = `${S.counted} trades with a P&L (of ${S.trades})`;
+  card('Trades · win rate', `${S.trades} · ${S.winRate}%`);
+  card('Profit factor', S.profitFactor === null ? (S.grossWin > 0 ? '∞' : '—') : String(S.profitFactor));
+  card('Expectancy / trade', money(S.expectancy), S.expectancy > 0 ? 'pos' : S.expectancy < 0 ? 'neg' : '');
+  card('Average win', money(S.avgWin), 'pos'); card('Average loss', money(S.avgLoss), 'neg');
+  card('Best · worst', `${money(S.best)} · ${money(S.worst)}`);
+  card('Max drawdown · losing streak', `${plain(S.maxDrawdown)} · ${S.longestLosing}`);
+  jCurve(S.curve);
+  const by = $('jBy'); by.replaceChildren();
+  by.append(jTable([['Strategy', ''], ['Trades', 'r'], ['Win rate', 'r'], ['Net', 'r']], S.byStrategy.map(x => [x.key === 'MANUAL' ? 'Chart trades' : x.key, String(x.trades), x.winRate + '%', x.net])));
+  if (!S.byStrategy.length) by.append(el('p', 'empty', 'No trades yet.'));
+  const dy = $('jDays'); dy.replaceChildren();
+  dy.append(jTable([['Day', ''], ['Trades', 'r'], ['Net', 'r']], S.byDay.slice(0, 60).map(x => [new Date(x.date + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }), String(x.trades), x.net])));
+  if (!S.byDay.length) dy.append(el('p', 'empty', 'No trades yet.'));
+  const box = $('jList'); box.replaceChildren();
+  if (!r.trades.length) { box.append(el('p', 'empty', 'No closed trades in this period. Keel adds every trade it closes, on every account.')); return; }
+  const t = el('table'), head = el('tr');
+  for (const [h, c] of [['Closed', ''], ['Account', ''], ['Strategy', ''], ['Trade', ''], ['Entry', 'r'], ['Exit', 'r'], ['P&L', 'r']]) head.append(Object.assign(el('th', c, h), { scope: 'col' }));
+  t.append(head);
+  for (const x of r.trades) {
+    const row = el('tr', 'click'), when = new Date(x.closedAt);
+    row.tabIndex = 0; row.onclick = () => jOpen(x); row.onkeydown = ev => { if (ev.key === 'Enter') jOpen(x); };
+    const strat = el('td', '', x.id === 'MANUAL' ? 'Chart' : x.id); for (const g of x.tags) strat.append(el('span', 'tag', g)); if (x.note) strat.title = x.note;
+    const pnl = el('td', 'r'); if (x.pnl === null) pnl.textContent = '—'; else { sign(pnl, x.pnl); if (x.approx) pnl.textContent = '≈ ' + pnl.textContent; }
+    row.append(el('td', '', when.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })),
+      el('td', '', x.account + (x.mode === 'paper' ? ' (paper)' : '')), strat, el('td', '', `${x.dir === 'long' ? 'Long' : 'Short'} ${x.qty} ${x.orderSym} · ${x.how}`),
+      el('td', 'r', x.entry.toFixed(2)), el('td', 'r', x.exit === null ? '—' : x.exit.toFixed(2)), pnl);
+    t.append(row);
+  }
+  box.append(t);
+  if (r.total > r.trades.length) box.append(el('p', 'hint', `Showing the newest ${r.trades.length} of ${r.total}. Export CSV for all of them.`));
+}
+function jTable(cols, rows) {
+  const t = el('table'), head = el('tr');
+  for (const [h, c] of cols) head.append(Object.assign(el('th', c, h), { scope: 'col' }));
+  t.append(head);
+  for (const r of rows) { const tr = el('tr'); r.forEach((v, i) => { const td = el('td', cols[i][1]); if (typeof v === 'number') sign(td, v); else td.textContent = v; tr.append(td); }); t.append(tr); }
+  return t;
+}
+function jCurve(curve) {
+  const box = $('jCurve'); box.replaceChildren();
+  if (curve.length < 2) return;
+  const NS = 'http://www.w3.org/2000/svg', W = 800, H = 140, P = 6, ys = [0, ...curve.map(c => c.equity)], lo = Math.min(...ys), hi = Math.max(...ys), span = hi - lo || 1;
+  const x = i => P + (i / (curve.length - 1)) * (W - 2 * P), y = v => H - P - ((v - lo) / span) * (H - 2 * P);
+  const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', `Equity curve: ${money(curve[curve.length - 1].equity)} over ${curve.length} trades`);
+  const z = document.createElementNS(NS, 'line'); z.setAttribute('class', 'zero'); z.setAttribute('x1', P); z.setAttribute('x2', W - P); z.setAttribute('y1', y(0)); z.setAttribute('y2', y(0));
+  const path = document.createElementNS(NS, 'path'); path.setAttribute('class', 'eq'); path.setAttribute('vector-effect', 'non-scaling-stroke');
+  path.setAttribute('d', curve.map((c, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(c.equity).toFixed(1)}`).join(''));
+  svg.append(z, path); box.append(svg);
+}
+function jOpen(x) {
+  jEdit = x;
+  $('jDlgTitle').textContent = `${x.dir === 'long' ? 'Long' : 'Short'} ${x.qty} ${x.orderSym} · ${x.id === 'MANUAL' ? 'Chart trade' : x.id}`;
+  $('jDlgInfo').textContent = `${x.account}${x.mode === 'paper' ? ' (paper)' : ''}. Opened ${new Date(x.openedAt).toLocaleString()}, closed ${new Date(x.closedAt).toLocaleString()} (${x.why}). Entry ${x.entry.toFixed(2)}, exit ${x.exit === null ? 'unknown' : x.exit.toFixed(2) + (x.approx ? ' (last price, approximate)' : '')}.`;
+  $('jNote').value = x.note; $('jTags').value = x.tags.join(' '); $('jExit').value = x.exit === null ? '' : String(x.exit);
+  $('jDlg').showModal();
+}
+$('jDlg').addEventListener('close', async () => {
+  const x = jEdit, v = $('jDlg').returnValue; jEdit = null; if (!x) return;
+  if (v === 'del') { if (confirm('Remove this trade from the journal? Your stats will no longer count it.')) { await window.keel.journalRemove(x.uid); void jLoad(); } return; }
+  if (v !== 'save') return;
+  const patch = { note: $('jNote').value, tags: $('jTags').value.split(/\s+/).filter(Boolean) }, ex = $('jExit').value.trim();
+  if (ex && Number(ex) !== x.exit) patch.exit = Number(ex);
+  const r = await window.keel.journalEdit(x.uid, patch); if (!r.ok) notice(r.error); void jLoad();
+});
+['jAcct', 'jStrat', 'jMode'].forEach(id => { $(id).onchange = () => void jLoad(); });
+document.querySelectorAll('#jPer button').forEach(b => { b.onclick = () => { jPer = b.dataset.p; document.querySelectorAll('#jPer button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); void jLoad(); }; });
+$('jCsv').onclick = async () => { const r = await window.keel.journalCsv(jFilter()); if (r && r.ok) notice(`Saved ${r.path}`, true); else if (r && r.error) notice(r.error); };

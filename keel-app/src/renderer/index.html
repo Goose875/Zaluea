@@ -15,6 +15,7 @@
         <button data-go="ai">Claude</button>
         <button data-go="chart">Chart</button>
         <button data-go="acct">Progress</button>
+        <button data-go="journal">Journal</button>
         <button data-go="accts">Accounts</button>
         <button data-go="rank">Compare mixes</button>
         <button data-go="conn">Logins</button>
@@ -70,7 +71,7 @@
               <div class="liverow"><span id="cLive" class="livepill">…</span><p id="cLast" class="clast"></p></div>
             </div>
             <div id="cBox" class="cbox lw"></div>
-            <p class="hint">Drag to move, scroll or pinch to zoom, drag the price or time axis to stretch it. Times are New York time. Chart by TradingView Lightweight Charts.</p>
+            <p class="hint">Drag to move, scroll or pinch to zoom, drag the price or time axis to stretch it. Drag a trade's dashed stop or target line (or a working limit's entry line) up or down to move it at the broker; Keel asks before sending. Arrows mark entries and dots mark exits. Times are New York time. Chart by TradingView Lightweight Charts.</p>
             <div id="cLegend" class="clegend"></div>
           </div>
           <div class="panel">
@@ -111,9 +112,69 @@
             <div class="panel"><h2>Room before max loss</h2><p id="fText" class="big2">—</p><progress id="fBar" max="100" value="0"></progress><p id="fSub" class="hint"></p></div>
           </div>
 
+          <div class="panel" id="poPanel">
+            <h2>Payouts</h2>
+            <p id="poHead" class="big2">—</p>
+            <progress id="poBar" max="100" value="0"></progress>
+            <p id="poSub" class="hint"></p>
+            <div id="poList"></div>
+            <div class="fgrid4" style="margin-top:10px">
+              <div><label for="poDate">Payout date</label><input id="poDate" type="date"></div>
+              <div><label for="poAmt">Amount ($)</label><input id="poAmt" type="number" min="0" step="0.01"></div>
+              <div><label for="poNote">Note</label><input id="poNote" type="text" maxlength="200" placeholder="optional"></div>
+              <div class="end"><button id="poAdd" type="button">Record payout</button></div>
+            </div>
+            <details class="porules"><summary>Payout rules for this account</summary>
+              <p class="hint">Firms change their payout rules often. Set these to your firm's current rules; Keel only tracks them, it never requests a payout.</p>
+              <div class="fgrid4">
+                <div><label for="prWinDays">Winning days needed</label><input id="prWinDays" type="number" min="0" max="60" step="1"></div>
+                <div><label for="prWinMin">A winning day is at least ($)</label><input id="prWinMin" type="number" min="0" step="1"></div>
+                <div><label for="prPct">You may take (% of profit)</label><input id="prPct" type="number" min="1" max="100" step="1"></div>
+                <div><label for="prMax">Cap per payout ($, 0 = none)</label><input id="prMax" type="number" min="0" step="1"></div>
+                <div><label for="prMin">Smallest payout ($)</label><input id="prMin" type="number" min="0" step="1"></div>
+                <div><label for="prBuf">Profit that must stay in ($)</label><input id="prBuf" type="number" min="0" step="1"></div>
+                <div><label for="prCons">Best day max (% of cycle profit, 0 = off)</label><input id="prCons" type="number" min="0" max="100" step="1"></div>
+                <div class="end"><button id="prSave" type="button" class="ghost">Save rules</button></div>
+              </div>
+            </details>
+            <p id="poMsg" class="hint" role="status" aria-live="polite"></p>
+          </div>
+
           <div class="two">
             <div class="panel"><h2>Past days</h2><div id="daysBox"></div></div>
           </div>
+        </section>
+
+        <section id="v-journal" class="view" hidden>
+          <div class="panel">
+            <div class="toolbar">
+              <div class="btns0">
+                <label class="inl" for="jAcct">Account</label><select id="jAcct" class="auto"></select>
+                <label class="inl" for="jStrat">Strategy</label><select id="jStrat" class="auto"></select>
+                <label class="inl" for="jMode">Mode</label><select id="jMode" class="auto"><option value="">Paper and live</option><option value="live">Live only</option><option value="paper">Paper only</option></select>
+                <div class="seg small" id="jPer" role="group" aria-label="Period"><button type="button" data-p="today">Today</button><button type="button" data-p="week">7 days</button><button type="button" data-p="month" aria-pressed="true">30 days</button><button type="button" data-p="all">All</button></div>
+              </div>
+              <button type="button" id="jCsv" class="ghost small">Export CSV</button>
+            </div>
+            <div id="jCards" class="jcards"></div>
+            <div id="jCurve" class="jcurve"></div>
+            <p class="hint">Keel writes every trade it closes here, on every account. Exits at a stop or target use that price; forced exits (flat-by, 4h close, flatten) use the last price and are marked ≈, so totals can differ from your broker's by slippage and fees. Click a trade to add a note or tags, or to correct its exit price from your platform.</p>
+          </div>
+          <div class="two">
+            <div class="panel"><h2>By strategy</h2><div id="jBy"></div></div>
+            <div class="panel"><h2>By day</h2><div id="jDays"></div></div>
+          </div>
+          <div class="panel"><h2>Trades</h2><div id="jList"></div></div>
+          <dialog id="jDlg">
+            <form method="dialog" class="jdlg">
+              <h2 id="jDlgTitle">Trade</h2>
+              <p id="jDlgInfo" class="hint"></p>
+              <label for="jNote">Note</label><textarea id="jNote" rows="4" maxlength="2000"></textarea>
+              <label for="jTags">Tags (space separated)</label><input id="jTags" type="text" placeholder="e.g. news early-exit a-plus">
+              <label for="jExit">Exit price (correct it from your platform)</label><input id="jExit" type="number" step="0.01">
+              <div class="mixrow" style="margin-top:12px"><button id="jSave" value="save">Save</button><button id="jDel" value="del" class="ghost danger">Remove from journal</button><button value="cancel" class="ghost">Cancel</button></div>
+            </form>
+          </dialog>
         </section>
 
         <section id="v-accts" class="view" hidden>

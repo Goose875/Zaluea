@@ -1,4 +1,5 @@
 import { BrokerAdapter, Order, Position, WorkingOrder } from '../core/types';
+import type { CloseReport } from '../core/journal';
 import { RiskGuard } from '../core/risk';
 import { buildSeries, fromHistory, dailyFromHistory, Series } from './series';
 import { simulate, planEntry, STRATEGIES, INSTRUMENTS, PRIORITY, SimOptions, SimResult, Dir, KStrategy } from './sim';
@@ -65,6 +66,8 @@ export interface KDeps {
   xHolds?: (sym: string) => boolean;                           // a K8/K9/P1-P3 trade (or working entry) holds this market
   /** Last word before an entry is sent: news pause and the optional Claude entry check. */
   gate?: (ctx: EntryContext) => Promise<{ ok: boolean; reason?: string }>;
+  /** Called once for every trade that closes (the trade journal). */
+  record?: (t: CloseReport) => void;
 }
 export interface EntryContext { system: string; id: string; name: string; symbol: string; dir: 'long' | 'short'; price: number; stop: number; target: number | null; qty: number; orderSym: string;
   bars: { t: string; o: number; h: number; l: number; c: number }[] }
@@ -251,6 +254,10 @@ export class KLive {
     } catch (e) { this.d.note(`K system: could not move the ${t.id} stop (${(e as Error).message}). The old stop is still working.`, 'warn'); }
   }
 
+  private journal(t: LiveTrade, how: CloseReport['how'], exit: number | null, why: string, approx: boolean) {
+    if (!this.d.record) return;
+    try { this.d.record({ system: 'K', id: t.id, sym: t.sym, orderSym: t.orderSym, dir: t.dir, qty: t.qty, entry: t.entry, exit, how, why, approx, openedAt: t.opened, closedAt: this.now() }); } catch { /* best effort */ }
+  }
   private async exit(t: LiveTrade, why: string) {
     for (const id of [t.stopOrder, t.targetOrder]) if (id) await this.d.desk.cancelOrder(id).catch(() => {});
     const pos = (await this.d.desk.getPositions()).find(p => p.symbol === t.orderSym);
@@ -258,6 +265,7 @@ export class KLive {
     try {
       if (open > 0) await this.d.desk.placeOrder({ symbol: t.orderSym, side: t.dir === 'long' ? 'sell' : 'buy', qty: open, type: 'market' });
       this.d.note(`K system: closed ${t.id} ${t.dir} ${t.qty} ${t.orderSym} (${why}).`, 'trade');
+      this.journal(t, 'forced', this.d.data.lastPrice?.(t.orderSym) ?? this.d.data.lastPrice?.(t.sym) ?? null, why, true);
     } catch { this.d.note(`K system: could not close ${t.id} on ${t.orderSym}. Check your platform now.`, 'warn'); return; }
     this.trades = this.trades.filter(x => x !== t); this.d.store.save(this.trades);
   }
@@ -286,6 +294,7 @@ export class KLive {
       for (const id of [t.stopOrder, t.targetOrder]) if (id && ids.has(id)) await this.d.desk.cancelOrder(id).catch(() => {});
       const hitTarget = t.targetOrder !== null && !ids.has(t.targetOrder) && (t.stopOrder === null || ids.has(t.stopOrder));
       this.d.note(`K system: ${t.id} ${t.dir} ${t.qty} ${t.orderSym} closed at its ${hitTarget ? 'target' : 'stop'}.`, 'trade');
+      this.journal(t, hitTarget ? 'target' : 'stop', hitTarget ? t.target : t.stop, hitTarget ? 'target filled' : 'stop filled', false);
       this.trades = this.trades.filter(x => x !== t); this.d.store.save(this.trades);
     }
   }

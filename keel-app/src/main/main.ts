@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, Menu, session, IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, IpcMainInvokeEvent } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import * as http from 'http';
 import * as path from 'path';
@@ -29,6 +29,10 @@ import RANKINGS from '../ksys/rankings.json';
 import { KeelAI, parseAIConfig } from './ai';
 import { ping, checkWebhook, testPing } from './discord';
 import { UPDATE_KEY } from './updateKey';
+import { loadJournal, recordTrade, editTrade, removeTrade, payoutRecord, allPayouts, setPayoutRules, addPayout, removePayout } from './journalStore';
+import { stats as journalStats, filter as journalFilter, toCsv, nyDay } from '../core/journal';
+import type { CloseReport, JournalFilter } from '../core/journal';
+import { payoutStatus } from '../core/payouts';
 import { listRithmicAccounts } from '../brokers/rithmic';
 import type { AccountRecord } from '../core/accounts';
 import { ProjectXBroker } from '../brokers/projectx';
@@ -170,10 +174,11 @@ async function startFollowers(list: AccountRecord[], kc: ReturnType<typeof loadK
       void poll(); const timer = setInterval(() => void poll(), 60_000); (timer as any).unref?.();
       let x: XLive | null = null;
       const fc = acctCfg(kc, a);
+      const record = recorder(a.id, () => a.label, kc.mode as 'paper' | 'live');
       const k = new KLive(fc, { data, desk, risk: guard, store: kTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, account: () => info, note: tag,
-        xHolds: sym => !!x?.holds(sym), gate: ctx => aiGate(ctx, kc.mode) });
+        xHolds: sym => !!x?.holds(sym), gate: ctx => aiGate(ctx, kc.mode), record });
       x = new XLive(fc, { data, desk, risk: guard, store: xTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, note: tag,
-        kHolds: sym => k.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode) });
+        kHolds: sym => k.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode), record });
       k.start(); x.start();
       const f: Follower = { acct: a, broker: b, k, x, paper, error: '',
         stop: async () => { k.stop(); x!.stop(); clearInterval(timer); await b.disconnect().catch(() => {}); if (data !== b) await data.disconnect().catch(() => {}); },
@@ -212,6 +217,11 @@ function applyConfigs() {
   for (const f of followers) { const c = acctCfg(kc, find(f.acct.id) ?? f.acct); f.k.setConfig(c); f.x.setConfig(c); }
 }
 const mainLabel = () => loadAccounts(conns()).accounts.find(a => a.id === activeAccount)?.label ?? 'Paper account';
+/** Trade journal hook for one account's trading systems. */
+const recorder = (id: string, label: () => string, mode: 'paper' | 'live') => (r: CloseReport) => {
+  const t = recordTrade(r, { id, label: label() }, mode);
+  jot(`[${t.account}] Journal: ${t.id} ${t.dir} ${t.qty} ${t.orderSym} ${t.entry.toFixed(2)} -> ${t.exit !== null ? t.exit.toFixed(2) : '?'} (${t.how})${t.pnl !== null ? ` ${t.pnl >= 0 ? '+' : '-'}$${Math.abs(t.pnl).toFixed(2)}${t.approx ? ' approx.' : ''}` : ''}`);
+};
 
 /** Before any entry is sent: the news pause, then (if switched on for this mode) Claude's entry check. */
 async function aiGate(ctx: EntryContext, mode: string): Promise<{ ok: boolean; reason?: string }> {
@@ -392,13 +402,15 @@ app.whenReady().then(async () => {
       kLive = new KLive(pc, {
         data: dataSrc, desk, risk: guard, store: kTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
-        account: () => kAcct, note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, xHolds: sym => !!xLive?.holds(sym), gate: ctx => aiGate(ctx, kc.mode)
+        account: () => kAcct, note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, xHolds: sym => !!xLive?.holds(sym), gate: ctx => aiGate(ctx, kc.mode),
+        record: recorder(acct?.id ?? 'main', mainLabel, kc.mode as 'paper' | 'live')
       });
       // K8, K9, P1-P3: same order desk, same risk limits, one position per market shared with K1-K7.
       xLive = new XLive(pc, {
         data: dataSrc, desk, risk: guard, store: xTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
-        note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, kHolds: sym => !!kLive?.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode)
+        note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, kHolds: sym => !!kLive?.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode),
+        record: recorder(acct?.id ?? 'main', mainLabel, kc.mode as 'paper' | 'live')
       });
       const pollAcct = async () => {
         try { const i = broker.getAccount ? await broker.getAccount() : null; if (i) kAcct = { equity: i.balance, floor: i.floor ?? ((acct?.size || i.size) - (acct?.maxLoss || i.maxLoss)) }; } catch { /* keep the last value */ }
@@ -425,7 +437,7 @@ app.whenReady().then(async () => {
       // Strategies off: chart trading only. Real orders on this account and every account switched on under Accounts.
       const mc = { ...kc, mode: 'live' as const, enabled: {} as Record<string, boolean> }, e = engine;
       xLive = new XLive(mc, { data: broker, desk: broker as unknown as OrderDesk, risk: guard, store: xTradeStore('live'), dailyPnL: () => broker.getDailyPnL(),
-        note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, kHolds: () => false });
+        note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, kHolds: () => false, record: recorder(acct?.id ?? 'main', mainLabel, 'live') });
       xLive.start();
       const others = st.accounts.filter(a => a.trade !== false && a.id !== acct?.id && a.connection in ADAPTERS && a.connection !== 'paper');
       engine.say(`Strategies are off, so the bot is in chart-trading mode: orders you place from the chart are REAL orders on ${1 + others.length} account${others.length ? 's' : ''}.`);
@@ -464,7 +476,7 @@ app.whenReady().then(async () => {
   // ---------- trading from the chart, on any running account ----------
   const runners = () => {
     const st = loadAccounts(conns()), main = st.accounts.find(a => a.id === activeAccount);
-    return [...(xLive ? [{ id: activeAccount || 'main', label: main?.label ?? 'Paper account', x: xLive }] : []), ...followers.map(f => ({ id: f.acct.id, label: f.acct.label, x: f.x }))];
+    return [...(xLive ? [{ id: activeAccount || 'main', label: main?.label ?? 'Paper account', x: xLive, k: kLive }] : []), ...followers.map(f => ({ id: f.acct.id, label: f.acct.label, x: f.x, k: f.k as KLive | null }))];
   };
   ipcMain.handle('chart:accounts', e => allowed(e) ? { running: !!engine, mode: loadKConfig().mode, accounts: runners().map(r => ({ id: r.id, label: r.label })) } : null);
   ipcMain.handle('chart:order', async (e, o: any) => {
@@ -495,6 +507,42 @@ app.whenReady().then(async () => {
     const a = src.get(symbol), b = src.get(twinOf(symbol)); return a && b ? (a.ts >= b.ts ? a : b) : a ?? b ?? null;
   };
   ipcMain.handle('chart:tick', (e, symbol: unknown) => (allowed(e) && typeof symbol === 'string' ? { tick: liveTick(symbol), now: Date.now() } : null));
+  /** Open trades on a market across every running account, one line set per trade; the same trade on several accounts
+   *  (a chart order sent to all of them, or the same strategy) is grouped. PO3/Fractal/chart/Claude trades can be dragged. */
+  type Line = { ref: string; name: string; side: string; qty: number; entry: number | null; tp: number | null; sl: number | null; drag: boolean; working: boolean; opened: number | null; accounts: string[] };
+  const chartLines = (same: (s: string) => boolean): Line[] => {
+    const out = new Map<string, Line>(), add = (l: Line) => {
+      const g = out.get(l.ref);
+      if (!g) { out.set(l.ref, l); return; }
+      g.accounts.push(...l.accounts); g.qty += l.qty;
+    };
+    for (const r of runners()) {
+      for (const t of r.k?.trades ?? []) if (same(t.sym)) add({ ref: `K|${t.id}|${t.sym}|${t.dir}`, name: t.id, side: t.dir === 'long' ? 'buy' : 'sell', qty: t.qty, entry: t.entry, tp: t.target, sl: t.stop, drag: false, working: false, opened: t.opened, accounts: [r.label] });
+      for (const t of r.x.trades) if (same(t.sym)) {
+        const d = t.dir === 'long' ? 1 : -1, w = t.state === 'working', e = t.entry ?? t.limitPx;
+        const sl = w ? (e !== null && t.stopPts > 0 ? e - d * t.stopPts : null) : t.stop, tp = w ? (e !== null && t.tgtPts > 0 ? e + d * t.tgtPts : null) : t.target;
+        add({ ref: `X|${t.id}|${t.sym}|${t.dir}|${t.state}`, name: t.id === 'MANUAL' ? 'Chart' : t.id, side: t.dir === 'long' ? 'buy' : 'sell', qty: t.qty, entry: e, tp, sl,
+          drag: !w || t.limitPx !== null, working: w, opened: w ? null : t.placed, accounts: [r.label] });
+      }
+    }
+    const res = [...out.values()];
+    for (const t of engine ? engine.openTrades() : []) if (same(t.symbol)) res.push({ ref: `E|${t.name}`, name: t.name, side: t.side, qty: t.qty, entry: t.entry, tp: t.tpPx ?? null, sl: t.slPx ?? null, drag: false, working: false, opened: null, accounts: [] });
+    return res;
+  };
+  // A stop / target / limit line dragged on the chart: moved on every running account that holds that trade.
+  ipcMain.handle('chart:move', async (e, ref: unknown, which: unknown, price: unknown) => {
+    if (!allowed(e) || typeof ref !== 'string' || !['stop', 'target', 'entry'].includes(which as string) || typeof price !== 'number') return { ok: false, error: 'Not allowed.' };
+    const [kind, id, sym, dir, state] = ref.split('|');
+    if (kind !== 'X') return { ok: false, error: 'K1-K7 stops are managed by the strategy (it trails them), so they cannot be dragged.' };
+    const targets = runners().map(r => ({ r, t: r.x.trades.find(t => t.id === id && t.sym === sym && t.dir === dir && t.state === state) })).filter(x => x.t);
+    if (!targets.length) return { ok: false, error: 'That trade is no longer open.' };
+    const results = await Promise.all(targets.map(async ({ r, t }) => {
+      try { const why = await r.x.moveBracket(t!.key, which as 'stop' | 'target' | 'entry', price); return { account: r.label, ok: !why, why }; }
+      catch (err) { return { account: r.label, ok: false, why: (err as Error).message }; }
+    }));
+    for (const x of results) jot(`Chart: ${id} ${which} to ${price} on ${x.account}: ${x.ok ? 'moved' : 'not moved, ' + x.why}`);
+    return { ok: true, results };
+  });
   const HIST_UNITS = ['min1', 'min5', 'min15', 'hour', 'hour4', 'day'];
   ipcMain.handle('chart:hist', async (e, symbol: unknown, unit: unknown, count: unknown) => {
     if (!allowed(e) || typeof symbol !== 'string' || !HIST_UNITS.includes(unit as string)) return { ok: false, error: 'Not allowed.' };
@@ -509,17 +557,68 @@ app.whenReady().then(async () => {
       const n = Math.max(3, Math.min(5000, Number(count) || 1500));
       const bars = await b.getHistory(symbol, unit, n, true);
       const root = symbol.replace(/^M(?=NQ|ES|GC)/, ''), same = (s: string) => s.replace(/^M(?=NQ|ES|GC)/, '') === root;
-      const lines: { name: string; side: string; qty: number; entry: number | null; tp: number | null; sl: number | null }[] = [];
-      for (const t of kLive?.trades ?? []) if (same(t.sym)) lines.push({ name: t.id, side: t.dir === 'long' ? 'buy' : 'sell', qty: t.qty, entry: t.entry, tp: t.target, sl: t.stop });
-      for (const t of xLive?.trades ?? []) if (same(t.sym)) lines.push({ name: t.id + (t.state === 'working' ? ' (limit working)' : ''), side: t.dir === 'long' ? 'buy' : 'sell', qty: t.qty, entry: t.entry ?? t.limitPx, tp: t.target, sl: t.stop });
-      for (const t of engine ? engine.openTrades() : []) if (same(t.symbol)) lines.push({ name: t.name, side: t.side, qty: t.qty, entry: t.entry, tp: t.tpPx ?? null, sl: t.slPx ?? null });
-      return { ok: true, bars, lines, tick: liveTick(symbol) };
+      const lines = chartLines(same);
+      const first = bars.length ? bars[0].t : Date.now() - 86_400_000;
+      const closed = loadJournal().filter(t => same(t.sym) && t.closedAt >= first).slice(-300)
+        .map(t => ({ account: t.account, id: t.id, dir: t.dir, qty: t.qty, entry: t.entry, exit: t.exit, pnl: t.pnl, openedAt: t.openedAt, closedAt: t.closedAt, how: t.how }));
+      return { ok: true, bars, lines, closed, tick: liveTick(symbol) };
     } catch (err) { return { ok: false, error: (err as Error).message }; }
   });
   ipcMain.handle('chart:get', (e, symbol: unknown, tf: unknown) => {
     if (!allowed(e) || typeof symbol !== 'string' || ![15, 60, 300].includes(tf as number)) return null;
     const trades = engine ? engine.openTrades().filter(t => t.symbol === symbol).map(t => ({ side: t.side, qty: t.qty, entry: t.entry, tp: t.tpPx, sl: t.slPx, name: t.name })) : [];
     return { bars: bars.get(symbol, (tf as number) * 1000, 160), trades, symbols: bars.symbols() };
+  });
+  // ---------- trade journal, stats and payouts ----------
+  const parseFilter = (f: any): JournalFilter => {
+    const o: JournalFilter = {};
+    if (!f || typeof f !== 'object') return o;
+    for (const k of ['accountId', 'system', 'id', 'sym'] as const) if (typeof f[k] === 'string' && f[k] && f[k].length < 80) o[k] = f[k];
+    if (f.mode === 'paper' || f.mode === 'live') o.mode = f.mode;
+    for (const k of ['from', 'to'] as const) if (Number.isFinite(f[k]) && f[k] > 0) o[k] = f[k];
+    return o;
+  };
+  ipcMain.handle('journal:get', (e, f: unknown) => {
+    if (!allowed(e)) return null;
+    const all = loadJournal(), list = journalFilter(all, parseFilter(f));
+    return { trades: list.slice(-1000).reverse(), total: list.length, stats: journalStats(list),
+      accounts: [...new Map(all.map(t => [t.accountId, t.account])).entries()].map(([id, label]) => ({ id, label })), strategies: [...new Set(all.map(t => t.id))].sort() };
+  });
+  ipcMain.handle('journal:edit', (e, uid: unknown, patch: unknown) => {
+    if (!allowed(e) || typeof uid !== 'string' || !patch || typeof patch !== 'object') return { ok: false, error: 'Not allowed.' };
+    try { return { ok: true, trade: editTrade(uid, patch as any) }; } catch (err) { return { ok: false, error: (err as Error).message }; }
+  });
+  ipcMain.handle('journal:remove', (e, uid: unknown) => { if (!allowed(e) || typeof uid !== 'string') return { ok: false, error: 'Not allowed.' }; removeTrade(uid); return { ok: true }; });
+  ipcMain.handle('journal:csv', async (e, f: unknown) => {
+    if (!allowed(e)) return { ok: false, error: 'Not allowed.' };
+    const csv = toCsv(journalFilter(loadJournal(), parseFilter(f))), w = BrowserWindow.fromWebContents(e.sender);
+    const r = await (w ? dialog.showSaveDialog(w, { defaultPath: `keel-journal-${nyDay(Date.now())}.csv`, filters: [{ name: 'CSV', extensions: ['csv'] }] }) : dialog.showSaveDialog({ defaultPath: 'keel-journal.csv' }));
+    if (r.canceled || !r.filePath) return { ok: false, error: '' };
+    fs.writeFileSync(r.filePath, csv); return { ok: true, path: r.filePath };
+  });
+  const validAcct = (id: unknown): id is string => typeof id === 'string' && loadAccounts(conns()).accounts.some(a => a.id === id);
+  /** Payout status for an account. The window passes the account's daily results it already shows (from the broker). */
+  ipcMain.handle('payouts:get', (e, id: unknown, days: unknown, todayPnl: unknown, netProfit: unknown) => {
+    if (!allowed(e) || !validAcct(id)) return null;
+    const a = loadAccounts(conns()).accounts.find(x => x.id === id)!, rec = payoutRecord(id);
+    const ds = Array.isArray(days) ? days.filter((d: any) => d && typeof d.date === 'string' && Number.isFinite(d.pnl)).map((d: any) => ({ date: d.date, pnl: d.pnl })) : [];
+    const today = nyDay(Date.now()), tp = Number.isFinite(todayPnl) ? (todayPnl as number) : 0, np = Number.isFinite(netProfit) ? (netProfit as number) : ds.reduce((x, d) => x + d.pnl, 0) + tp;
+    const all = allPayouts(), accts = loadAccounts(conns()).accounts;
+    const totals = { paid: 0, cost: 0, payouts: 0 };
+    for (const x of accts) { totals.cost += x.cost || 0; const r = all[x.id]; if (r) { totals.paid += r.taken.reduce((s, p) => s + p.amount, 0); totals.payouts += r.taken.length; } }
+    return { rec: { rules: rec.rules, taken: [...rec.taken].sort((x, y) => (x.date < y.date ? -1 : 1)) }, status: payoutStatus(rec, ds, tp, today, np, a.cost || 0), totals, today };
+  });
+  ipcMain.handle('payouts:rules', (e, id: unknown, rules: unknown) => {
+    if (!allowed(e) || !validAcct(id)) return { ok: false, error: 'Not allowed.' };
+    try { setPayoutRules(id, rules); return { ok: true }; } catch (err) { return { ok: false, error: (err as Error).message }; }
+  });
+  ipcMain.handle('payouts:add', (e, id: unknown, p: unknown) => {
+    if (!allowed(e) || !validAcct(id)) return { ok: false, error: 'Not allowed.' };
+    try { addPayout(id, p); jot(`Payout recorded on ${loadAccounts(conns()).accounts.find(a => a.id === id)?.label}: $${(p as any).amount}`); return { ok: true }; } catch (err) { return { ok: false, error: (err as Error).message }; }
+  });
+  ipcMain.handle('payouts:remove', (e, id: unknown, index: unknown) => {
+    if (!allowed(e) || !validAcct(id)) return { ok: false, error: 'Not allowed.' };
+    try { removePayout(id, index as number); return { ok: true }; } catch (err) { return { ok: false, error: (err as Error).message }; }
   });
   // Backtests run here, never in the window. Data comes from a CSV the user picks, or pretend prices in the dev version.
   ipcMain.handle('backtest:run', async (e, id: unknown, csv: unknown, opts: any) => {

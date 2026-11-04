@@ -4,6 +4,7 @@ import { OrderDesk, KConfig, EntryContext } from './live';
 import { XSTRATEGIES, XStrategy, XOrder, toXBars, xOrders, xSimulate, XTICK } from './extra';
 import { wallOf, utcOf, sessionKey } from './time';
 import { tick as tickOf } from '../core/contracts';
+import type { CloseReport } from '../core/journal';
 
 /** One K8 / K9 / P1-P3 trade Keel is running (or its entry order still waiting). Saved so a restart picks it up. */
 export interface XLiveTrade {
@@ -23,6 +24,8 @@ export interface XDeps {
   kHolds: (sym: string) => boolean;
   gate?: (ctx: EntryContext) => Promise<{ ok: boolean; reason?: string }>;
   now?: () => number;
+  /** Called once for every trade that closes (the trade journal). */
+  record?: (t: CloseReport) => void;
 }
 const MICRO: Record<string, string> = { NQ: 'MNQ', GC: 'MGC' }, MICRO_PT: Record<string, number> = { NQ: 2, GC: 10 };
 const HIST: Record<number, { unit: 'min5' | 'hour' | 'day'; count: number }> = { 5: { unit: 'min5', count: 3000 }, 60: { unit: 'hour', count: 600 }, 1440: { unit: 'day', count: 320 } };
@@ -50,6 +53,12 @@ export class XLive {
   private now() { return this.d.now ? this.d.now() : Date.now(); }
   private save() { this.d.store.save({ trades: this.trades, done: [...this.done].slice(-400) }); }
   holds(sym: string) { return this.trades.some(t => t.sym === sym); }
+  private px(t: XLiveTrade) { const d = this.d.data; return d.lastPrice?.(t.orderSym) ?? d.lastPrice?.(t.sym); }
+  /** Hands a closed trade to the journal (never throws: the journal must not stop trading). */
+  private journal(t: XLiveTrade, how: CloseReport['how'], exit: number | null, why: string, approx: boolean) {
+    if (!this.d.record || t.entry === null) return;
+    try { this.d.record({ id: t.id, sym: t.sym, orderSym: t.orderSym, dir: t.dir, qty: t.qty, entry: t.entry, exit: exit ?? null, how, why, approx, openedAt: t.placed, closedAt: this.now() }); } catch { /* best effort */ }
+  }
   start(everyMs = 5_000) { this.timer = setInterval(() => void this.tick(), everyMs); (this.timer as any).unref?.(); void this.tick(); }
   stop() { clearInterval(this.timer); }
   forgetAll() { this.trades = []; this.save(); }
@@ -208,8 +217,51 @@ export class XLive {
     for (const p of (await this.d.desk.getPositions()).filter(p => same(p.symbol) && p.qty !== 0)) {
       await this.d.desk.placeOrder({ symbol: p.symbol, side: p.qty > 0 ? 'sell' : 'buy', qty: Math.abs(p.qty), type: 'market' }); closed += ` ${p.qty > 0 ? 'sold' : 'bought'} ${Math.abs(p.qty)} ${p.symbol}`;
     }
+    for (const t of this.trades) if (same(t.sym) && t.state === 'open') this.journal(t, 'flatten', this.px(t) ?? null, 'flattened from the chart', true);
     this.trades = this.trades.filter(t => !same(t.sym)); this.save();
     this.d.note(`Flattened ${root} from the chart.${closed || ' Nothing was open.'}`, 'trade'); return '';
+  }
+
+  /**
+   * You dragged a line on the chart: move this trade's stop, target or (still working) limit entry to `price`.
+   * Open trade: the order at the broker is changed (or placed, if the trade had none). A stop must stay on the losing side of the
+   * current price and a target on the winning side, so a drag can never fill it at once. Working entry: the stop / target
+   * distances are re-measured from the limit price and go in when it fills. Returns '' or why it was refused.
+   */
+  async moveBracket(key: string, which: 'stop' | 'target' | 'entry', price: number): Promise<string> {
+    const t = this.trades.find(x => x.key === key);
+    if (!t) return 'that trade is no longer open';
+    if (!Number.isFinite(price) || price <= 0) return 'that price is not valid';
+    const T = XTICK[t.sym] ?? tickOf(t.orderSym), px = Math.round(price / T) * T, d = t.dir === 'long' ? 1 : -1, exit = d > 0 ? 'sell' as const : 'buy' as const;
+    const f = (n: number) => n.toFixed(T < 1 ? 2 : 0);
+    if (t.state === 'working') {
+      const ref = t.limitPx;
+      if (ref === null || !t.entryOrder) return 'this entry is a market order; drag its lines once it has filled';
+      if (which === 'entry') {
+        const last = this.px(t);
+        if (last !== undefined && (d > 0 ? px >= last : px <= last)) return `a ${t.dir} limit must stay ${d > 0 ? 'below' : 'above'} the current price (${f(last)})`;
+        await this.d.desk.modifyOrder(t.entryOrder, { price: px }); t.limitPx = px; this.save();
+        this.d.note(`${t.id}: limit entry moved to ${f(px)} from the chart.`, 'info'); return '';
+      }
+      const dist = (px - ref) * d;
+      if (which === 'stop') { if (dist >= 0) return `the stop must be ${d > 0 ? 'below' : 'above'} the entry`; t.stopPts = Math.round(-dist / T) * T; }
+      else { if (dist <= 0) return `the target must be ${d > 0 ? 'above' : 'below'} the entry`; t.tgtPts = Math.round(dist / T) * T; }
+      this.save(); this.d.note(`${t.id}: ${which} set to ${f(px)} (goes in when the entry fills).`, 'info'); return '';
+    }
+    if (which === 'entry') return 'the entry has already filled';
+    const last = this.px(t);
+    if (last === undefined) return 'no live price yet, so the move cannot be checked';
+    if (which === 'stop' && (d > 0 ? px >= last : px <= last)) return `a ${t.dir} stop must stay ${d > 0 ? 'below' : 'above'} the current price (${f(last)})`;
+    if (which === 'target' && (d > 0 ? px <= last : px >= last)) return `a ${t.dir} target must stay ${d > 0 ? 'above' : 'below'} the current price (${f(last)})`;
+    const id = which === 'stop' ? t.stopOrder : t.targetOrder;
+    if (id) await this.d.desk.modifyOrder(id, { price: px });
+    else {
+      const nid = await this.d.desk.placeOrder({ symbol: t.orderSym, side: exit, qty: t.qty, type: which === 'stop' ? 'stop' : 'limit', price: px });
+      if (which === 'stop') t.stopOrder = nid; else t.targetOrder = nid;
+    }
+    if (which === 'stop') { t.stop = px; this.stopMissing.set(t.key, 0); } else t.target = px;
+    this.save();
+    this.d.note(`${t.id}: ${which} moved to ${f(px)} from the chart.`, 'trade'); return '';
   }
 
   /** Entry filled: put the stop (and target) at the broker, measured from the real average fill price. */
@@ -238,7 +290,7 @@ export class XLive {
     const open = pos ? Math.max(0, Math.min(t.qty, pos.qty * d)) : 0;
     try { if (open > 0) await this.d.desk.placeOrder({ symbol: t.orderSym, side: d > 0 ? 'sell' : 'buy', qty: open, type: 'market' }); }
     catch { this.d.note(`${t.id}: could not close ${t.orderSym}. Check your platform now.`, 'warn'); return; }
-    if (open > 0 || t.state === 'open') this.d.note(`${t.id}: closed ${t.dir} ${t.qty} ${t.orderSym} (${why}).`, 'trade');
+    if (open > 0 || t.state === 'open') { this.d.note(`${t.id}: closed ${t.dir} ${t.qty} ${t.orderSym} (${why}).`, 'trade'); this.journal(t, 'forced', this.px(t) ?? null, why, true); }
     else this.d.note(`${t.id}: entry order cancelled (${why}).`, 'info');
     this.trades = this.trades.filter(x => x !== t); this.save();
   }
@@ -280,6 +332,7 @@ export class XLive {
       for (const id of [t.stopOrder, t.targetOrder]) if (id && ids.has(id)) await this.d.desk.cancelOrder(id).catch(() => {});
       const hitTarget = t.targetOrder !== null && !ids.has(t.targetOrder) && (t.stopOrder === null || ids.has(t.stopOrder));
       this.d.note(`${t.id} ${t.dir} ${t.qty} ${t.orderSym} closed at its ${hitTarget ? 'target' : 'stop'}.`, 'trade');
+      this.journal(t, hitTarget ? 'target' : 'stop', hitTarget ? t.target : (t.stop ?? this.px(t) ?? null), hitTarget ? 'target filled' : 'stop filled', t.stop === null && !hitTarget);
       this.trades = this.trades.filter(x => x !== t); this.save();
     }
   }
