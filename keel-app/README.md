@@ -27,6 +27,8 @@ Needs Wine with 32-bit support (`dpkg --add-architecture i386 && apt-get install
     npx electron-builder --win dir --x64 --publish never -c.win.signAndEditExecutable=false
     wine ~/.cache/electron-builder/winCodeSign/winCodeSign-2.6.0/rcedit-x64.exe dist-installer/win-unpacked/Keel.exe \
       --set-version-string ProductName Keel --set-version-string FileDescription Keel --set-file-version <version> --set-icon build/icon.ico
+    printf 'provider: generic\nurl: https://updates.keeltrading.net/\nupdaterCacheDirName: keel-updater\n' > dist-installer/win-unpacked/resources/app-update.yml
     npx electron-builder --win nsis --x64 --publish never --prepackaged dist-installer/win-unpacked -c.win.signAndEditExecutable=false
+    node scripts/publish-update.js        # uploads the release (see UPDATES.md)
 
 The installer is `dist-installer/Keel-Setup-<version>.exe`. It is not code-signed, so Windows shows a warning the first time.

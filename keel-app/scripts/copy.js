@@ -8,3 +8,6 @@ else console.warn('Rithmic dev kit not found in vendor/rithmic/proto: the Rithmi
 fs.mkdirSync('dist/renderer/vendor', { recursive: true });
 fs.copyFileSync('node_modules/lightweight-charts/dist/lightweight-charts.standalone.production.js', 'dist/renderer/vendor/lightweight-charts.js');
 fs.copyFileSync('node_modules/lightweight-charts/LICENSE', 'dist/renderer/vendor/lightweight-charts-LICENSE.txt');
+
+// auto-update key (git-ignored secret)
+if (fs.existsSync('.secrets/update-key.json')) fs.copyFileSync('.secrets/update-key.json', 'dist/main/update-key.json');

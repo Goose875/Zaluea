@@ -1,22 +1,22 @@
-# Updates without the command prompt
+# Automatic updates (keeltrading.net)
 
-Keel checks for a new version when it opens and every 4 hours, downloads it in the background, and installs it when you close Keel. If the bot is stopped you can also press "Restart and update". It never restarts while the bot is running.
+Installed Keel checks **https://updates.keeltrading.net/** when it opens and every 4 hours. It downloads a new version in the background and installs it when you close Keel; it never restarts while the bot runs.
 
-## One-time setup (about 15 minutes, all in the browser)
-1. Make two repositories on github.com:
-   - `keel` (Private): your code. Upload the contents of this folder.
-   - `keel-releases` (Public): stays empty. Only the installers go here, so your code stays private.
-2. Make a token: GitHub, Settings, Developer settings, Fine-grained tokens, Generate new token.
-   Repository access: only `keel-releases`. Permissions: Contents, Read and write. Copy the token.
-3. In the `keel` repository: Settings, Secrets and variables, Actions, New repository secret.
-   Name: `RELEASES_TOKEN`. Value: the token.
-4. In `package.json`, change `YOUR-GITHUB-NAME` to your GitHub username (you can edit it on github.com).
+The installers contain your licensed Rithmic files, so the update site is **not public**. Keel sends a secret header with every request, and a Cloudflare rule blocks requests without it.
 
-## Every update
-1. Upload the changed files to the `keel` repository (Add file, Upload files, then Commit).
-2. Actions tab, "Release Keel", Run workflow, type a version higher than the last (0.2.1, 0.2.2, ...).
-3. About 10 minutes later the new installer is on your releases page, and Keel picks it up by itself.
+## One-time Cloudflare setup (about 10 minutes)
+1. **R2 → Create bucket**: name it `keel-updates`.
+2. **Bucket → Settings → Custom Domains → Connect domain**: `updates.keeltrading.net`. Leave "Public Development URL" OFF.
+3. **keeltrading.net → Security → WAF → Custom rules → Create rule**:
+   - Name: `Keel updates key`
+   - Expression (Edit expression): `(http.host eq "updates.keeltrading.net" and not any(http.request.headers["x-keel-key"][*] eq "<your update key>"))`
+   - Action: **Block** → Deploy.
+   - The key is in `keel-app/.secrets/update-key.json` on the build machine (never in git); Claude gives it to you in chat.
+4. **R2 → Manage R2 API tokens → Create API token**: permission **Object Read & Write**, bucket `keel-updates` only.
+   Put these in the Claude environment settings (not in chat): `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`.
 
-The first time, download `Keel-Setup-x.y.z.exe` from the `keel-releases` page and install it. After that you never need the installer again.
+## Publishing a version
+`npm run build && npx electron-builder --win nsis ...` (see README), then `node scripts/publish-update.js`.
+Check the lock: `node scripts/publish-update.js --check` must show 200 with the key and 403 without it.
 
-Note: the installer contains the app's code, including your strategies. Anyone with the release link could unpack it. Keep the releases repo name to yourself, or make it private later and update by downloading installers by hand.
+Install the first version that has this (0.7.1) by hand once; after that Keel updates itself.

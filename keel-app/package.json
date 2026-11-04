@@ -1,6 +1,6 @@
 {
   "name": "keel",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Keel: my personal futures trading bot.",
   "main": "dist/main/main.js",
   "scripts": {
@@ -44,10 +44,8 @@
     },
     "publish": [
       {
-        "provider": "github",
-        "owner": "YOUR-GITHUB-NAME",
-        "repo": "keel-releases",
-        "releaseType": "release"
+        "provider": "generic",
+        "url": "https://updates.keeltrading.net/"
       }
     ]
   },

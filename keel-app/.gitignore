@@ -5,3 +5,6 @@ dist-installer/
 
 # Rithmic dev kit: licensed to you, never commit it
 vendor/rithmic/
+
+# local secrets (update key): never commit
+.secrets/

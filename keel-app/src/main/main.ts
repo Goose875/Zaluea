@@ -28,6 +28,7 @@ import { loadKConfig, saveKConfig, kTradeStore, xTradeStore } from './kstore';
 import RANKINGS from '../ksys/rankings.json';
 import { KeelAI, parseAIConfig } from './ai';
 import { ping, checkWebhook, testPing } from './discord';
+import { UPDATE_KEY } from './updateKey';
 import { listRithmicAccounts } from '../brokers/rithmic';
 import type { AccountRecord } from '../core/accounts';
 import { ProjectXBroker } from '../brokers/projectx';
@@ -266,11 +267,12 @@ app.whenReady().then(async () => {
   }));
   session.defaultSession.setPermissionRequestHandler((_w, _p, cb) => cb(false));
 
-  // Updates: in the installed app, Keel checks GitHub for a newer version, downloads it quietly,
+  // Updates: in the installed app, Keel checks updates.keeltrading.net (Cloudflare R2, key-protected) for a newer version, downloads it quietly,
   // and installs it when you close Keel (or right away if you press Restart and update while the bot is stopped).
   let update: { state: 'none' | 'downloading' | 'ready' | 'error'; version: string } = { state: 'none', version: '' };
   if (app.isPackaged) {
     autoUpdater.autoDownload = true; autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.requestHeaders = { 'x-keel-key': UPDATE_KEY };
     autoUpdater.on('update-available', i => { update = { state: 'downloading', version: i.version }; });
     autoUpdater.on('update-downloaded', i => { update = { state: 'ready', version: i.version }; });
     autoUpdater.on('error', () => { if (update.state !== 'ready') update = { state: 'error', version: '' }; });
