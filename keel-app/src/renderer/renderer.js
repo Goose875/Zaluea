@@ -547,7 +547,8 @@ async function drawLive() {
   try {
     const r = await window.keel.chartHist(chartSym, chartTf, full ? (chartTf === 'day' ? 600 : 2000) : 3);
     if (!r || !r.ok) { if (full) { lwSeries.setData([]); lwKey = ''; } $('cLast').textContent = chartSym; $('cLegend').replaceChildren(el('p', 'empty', r ? r.error : 'Start the bot or pick an account.')); return; }
-    const data = r.bars.map(toBar).sort((x, y) => x.time - y.time).filter((x, i, a) => i === 0 || x.time !== a[i - 1].time);
+    const data = r.bars.filter(b => [b.t, b.o, b.h, b.l, b.c].every(Number.isFinite) && b.h >= b.l).map(toBar).sort((x, y) => x.time - y.time)
+      .filter((x, i, a) => i === a.length - 1 || x.time !== a[i + 1].time);   // one bar per time (the newest wins)
     if (full) {
       lwSeries.setData(data); lwKey = key; lwN = data.length;
       lwSeries.applyOptions({ priceFormat: { type: 'price', precision: /GC/.test(chartSym) ? 1 : 2, minMove: /GC/.test(chartSym) ? 0.1 : 0.25 } });
@@ -676,7 +677,8 @@ function renderLogins() {
     for (const f of def.fields) {
       const l = el('label', '', f.label), i = el('input'); i.id = `lg_${def.id}_${f.key}`; l.htmlFor = i.id;
       i.type = f.secret ? 'password' : 'text'; i.autocomplete = 'off'; i.spellcheck = false;
-      if (saved) i.placeholder = f.secret ? 'Saved (hidden)' : 'Saved'; inputs[f.key] = i; card.append(l, i);
+      if (saved) i.placeholder = f.secret ? 'Saved (hidden)' : 'Saved'; else if (f.optional) i.placeholder = 'Optional: leave empty';
+      inputs[f.key] = i; card.append(l, i);
     }
     const msg = el('p', 'hint'); msg.setAttribute('role', 'status'); msg.setAttribute('aria-live', 'polite');
     const save = el('button', '', saved ? 'Replace login' : 'Save login'), rm = el('button', 'ghost', 'Remove');

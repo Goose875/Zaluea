@@ -266,3 +266,7 @@ details.more { margin-top:10px; } details.more summary { cursor:pointer; color:v
 .switch input:focus-visible + span { outline:2px solid var(--amber); outline-offset:2px; }
 .sdesc { display:block; color:var(--fog); font-size:12px; margin-top:2px; } .tag { font-size:11px; padding:1px 6px; border-radius:4px; border:1px solid var(--line2); color:var(--fog); margin-left:6px; }
 @media (max-width: 900px) { .navsep { display:none; } }
+
+/* Lightweight Charts lays itself out with a <table>: keep Keel's table styling away from it */
+.cbox.lw table { width:auto; min-width:0 !important; border-collapse:separate; font-size:inherit; }
+.cbox.lw td, .cbox.lw th, .cbox.lw tr { padding:0 !important; border:0 !important; background:none; }

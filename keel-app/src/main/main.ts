@@ -269,7 +269,8 @@ app.whenReady().then(async () => {
     const clean: Record<string, string> = {};
     for (const f of def.fields) {
       const v = creds[f.key];
-      if (typeof v !== 'string' || !v.trim() || v.length > 200) return { ok: false, error: 'Fill in every field.' };
+      if (f.optional && (v === undefined || v === null || (typeof v === 'string' && !v.trim()))) continue;
+      if (typeof v !== 'string' || !v.trim() || v.length > 200) return { ok: false, error: `Fill in ${f.label}.` };
       clean[f.key] = v.trim();
     }
     vault.set(`broker:${brokerId}`, clean);
