@@ -70,6 +70,8 @@ export interface KDeps {
   record?: (t: CloseReport) => void;
 }
 export interface EntryContext { system: string; id: string; name: string; symbol: string; dir: 'long' | 'short'; price: number; stop: number; target: number | null; qty: number; orderSym: string;
+  /** market = fills now near lastPrice; limit = rests at `price` and fills only if the market trades back to it (stop and risk are measured from `price`). */
+  entryType: 'market' | 'limit'; lastPrice: number; riskUsd: number;
   bars: { t: string; o: number; h: number; l: number; c: number }[] }
 
 const H = 3_600_000;
@@ -222,6 +224,7 @@ export class KLive {
     if (!verdict.ok) { this.d.note(`K system: blocked ${S.id}: ${verdict.reason}`, 'warn'); return; }
     if (this.d.gate) {
       const g = await this.d.gate({ system: 'K', id: S.id, name: S.name, symbol: S.symbol, dir, price: px, stop: plan.stop, target: plan.target, qty: plan.qty, orderSym,
+        entryType: 'market', lastPrice: px, riskUsd: Math.round(plan.R * pointValue(S.symbol, orderSym) * plan.qty),
         bars: X.bars.slice(-36).map(b => ({ t: new Date(b.utc).toISOString(), o: b.o, h: b.h, l: b.l, c: b.c })) });
       if (!g.ok) { this.d.note(`K system: ${S.id} not entered: ${g.reason}`, 'warn'); return; }
     }

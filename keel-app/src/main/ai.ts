@@ -118,6 +118,7 @@ Then write a 3-5 sentence summary of what matters for trading NQ and GC today an
   async entryCheck(ctx: object): Promise<{ allow: boolean; reason: string }> {
     const run = this.json<{ allow: boolean; reason: string }>(
       `A backtested strategy wants to enter now. Veto it ONLY for a concrete reason visible in the data (e.g. a high-impact release minutes away, price already far past the planned stop, a gap or spike that makes the stop meaningless, or the market being closed/illiquid). Otherwise allow it: the strategies are tested and you should not second-guess ordinary setups.
+How to read the entry: entryType "market" fills now, near lastPrice. entryType "limit" is a RESTING order at price: it fills only if the market trades back to price, and then the stop is exactly where it is listed, so the market having moved away from price is NOT a reason to veto (it only means the order may not fill). riskUsd is Keel's own risk for this trade, measured from price to stop; use it rather than working out a risk from lastPrice.
 Answer in one short sentence.\n\n${JSON.stringify(ctx)}\n\nToday's calendar: ${JSON.stringify(this.state.preflight?.date === nyDate() ? this.state.preflight.events : [])}`, VETO_SCHEMA, 'low');
     const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('Claude took longer than 25 s')), 25_000));
     return Promise.race([run, timeout]);

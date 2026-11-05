@@ -132,7 +132,7 @@ export class XLive {
     if (this.d.gate) {
       const ref = o.type === 1 ? o.px : last.c, d = side;
       const g = await this.d.gate({ system: 'PO3/Fractal', id: S.id, name: S.name, symbol: S.symbol, dir: d > 0 ? 'long' : 'short', price: ref, stop: ref - d * o.stop,
-        target: o.tgt ? ref + d * o.tgt : null, qty, orderSym, bars: X.slice(-36).map(b => ({ t: new Date(b.utc).toISOString(), o: b.o, h: b.h, l: b.l, c: b.c })) });
+        target: o.tgt ? ref + d * o.tgt : null, qty, orderSym, entryType: o.type === 1 ? 'limit' : 'market', lastPrice: last.c, riskUsd: Math.round(qty * perContract), bars: X.slice(-36).map(b => ({ t: new Date(b.utc).toISOString(), o: b.o, h: b.h, l: b.l, c: b.c })) });
       if (!g.ok) return say(`not entered: ${g.reason}`, 'warn');
     }
     // Window: the research keeps the order live from bar o.i through bar o.i + o.exp; nothing new from 15:55 ET.
