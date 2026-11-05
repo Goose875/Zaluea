@@ -5,11 +5,14 @@ sys.path.insert(0, '.')
 from topstep_static import tday
 from portfolio_all import k_trades, fractal_trades, po3_trades, MM
 TARGET, MLL, DLL, CONS, CAP = 9000, 4500, 3000, float(sys.argv[1]) if len(sys.argv) > 1 else 0.50, 150
+import os; FIXED = os.environ.get("FIXED") == "1"   # FIXED=1: "risk" is a fixed number of full-size contracts (1-4)
 
 def daily(T, risk, days):
     T = T.sort_values("entry_t"); busy = {"NQ": None, "GC": None}; out = {}
-    mm = T.sym.map(MM).values; n = np.minimum(np.maximum(1, np.floor(risk / (T.stop_pts.values * mm))), CAP)
-    usd = n * (T.pts.values * mm - 1.5)
+    mm = T.sym.map(MM).values
+    if FIXED: n = np.full(len(T), float(risk)); mm = mm * 10; fee = 5.0      # fixed full-size contracts (NQ $20/pt, GC $100/pt), ~$5 round trip each
+    else: n = np.minimum(np.maximum(1, np.floor(risk / (T.stop_pts.values * mm))), CAP); fee = 1.5
+    usd = n * (T.pts.values * mm - fee)
     for k, r in enumerate(T.itertuples()):
         if busy[r.sym] is not None and r.entry_t < busy[r.sym]: continue
         if out.get(tday(r.entry_t), 0.0) <= -DLL: continue
@@ -40,7 +43,7 @@ rows = []
 for k in range(1, len(names) + 1):
     for combo in itertools.combinations(names, k):
         T = ALL[ALL.strategy.isin(combo)]
-        for risk in (500, 750, 1000, 1250, 1500):
+        for risk in ((1, 2, 3, 4) if FIXED else (500, 750, 1000, 1250, 1500)):
             st = stats(daily(T, risk, days), days)
             if st: rows.append(dict(mix=" + ".join(NAME.get(x, x) for x in combo), risk=risk, **st))
 R = pd.DataFrame(rows); R.to_csv(sys.argv[2] if len(sys.argv) > 2 else "results/topstep_150k_combos.csv", index=False)
