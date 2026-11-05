@@ -414,6 +414,12 @@
             <label class="check"><input id="dcEveryone" type="checkbox" checked> Mention @everyone on trade pings (the live status message never pings)</label>
             <p id="dcMsg" class="hint" role="status" aria-live="polite"></p>
           </div>
+          <div class="panel">
+            <h2>Discord bot log</h2>
+            <p class="hint">Every line of Keel&rsquo;s log (hourly checks, entries, skips, blocks, Claude vetoes, errors) in its own Discord channel, sent about every 5 seconds. Use a different channel&rsquo;s webhook from the one above. It never mentions anyone.</p>
+            <div class="mixrow"><input id="dlUrl" type="password" placeholder="https://discord.com/api/webhooks/..." autocomplete="off" aria-label="Discord bot log webhook URL"><button id="dlSave" type="button">Save and test</button><button id="dlDel" type="button" class="ghost">Remove</button></div>
+            <p id="dlMsg" class="hint" role="status" aria-live="polite"></p>
+          </div>
         </section>
 
         <section id="v-risk" class="view" hidden>

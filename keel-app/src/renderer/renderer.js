@@ -1239,7 +1239,10 @@ document.querySelectorAll('#kMode button').forEach(b => {
 });
 
 // ---------- Discord ----------
-async function dcLoad() { const r = await window.keel.discordGet(); if (r) { $('dcUrl').placeholder = r.saved ? 'Saved (paste a new one to replace it)' : 'https://discord.com/api/webhooks/...'; $('dcDel').hidden = !r.saved; $('dcEveryone').checked = r.everyone !== false; } }
+async function dcLoad() { const r = await window.keel.discordGet(); if (r) { $('dcUrl').placeholder = r.saved ? 'Saved (paste a new one to replace it)' : 'https://discord.com/api/webhooks/...'; $('dcDel').hidden = !r.saved; $('dcEveryone').checked = r.everyone !== false; $('dlUrl').placeholder = r.logSaved ? 'Saved (paste a new one to replace it)' : 'https://discord.com/api/webhooks/...'; $('dlDel').hidden = !r.logSaved; } }
+$('dlSave').onclick = async () => { const u = $('dlUrl').value.trim(); if (!u) return; $('dlMsg').textContent = 'Sending a test message…';
+  const r = await window.keel.discordLogSave(u); $('dlUrl').value = ''; $('dlMsg').textContent = r.ok ? 'Saved. Check Discord for the test message.' : r.error; dcLoad(); };
+$('dlDel').onclick = async () => { await window.keel.discordLogRemove(); $('dlMsg').textContent = 'Bot log to Discord turned off.'; dcLoad(); };
 $('dcSave').onclick = async () => { const u = $('dcUrl').value.trim(); if (!u) return; $('dcMsg').textContent = 'Sending a test message…';
   const r = await window.keel.discordSave(u, $('dcEveryone').checked); $('dcUrl').value = ''; $('dcMsg').textContent = r.ok ? 'Saved. Check Discord for the test message.' : r.error; dcLoad(); };
 $('dcEveryone').onchange = async () => { const r = await window.keel.discordEveryone($('dcEveryone').checked); $('dcMsg').textContent = r && r.ok ? ($('dcEveryone').checked ? 'Trade pings will mention @everyone.' : 'Trade pings will not mention @everyone.') : 'Save a webhook first; this setting is saved with it.'; };

@@ -46,6 +46,8 @@ contextBridge.exposeInMainWorld('keel', {
   discordGet: () => ipcRenderer.invoke('discord:get'),
   discordSave: (url: string, everyone: boolean) => ipcRenderer.invoke('discord:save', url, everyone),
   discordEveryone: (on: boolean) => ipcRenderer.invoke('discord:everyone', on),
+  discordLogSave: (url: string) => ipcRenderer.invoke('discord:logSave', url),
+  discordLogRemove: () => ipcRenderer.invoke('discord:logRemove'),
   discordRemove: () => ipcRenderer.invoke('discord:remove'),
   aiSet: (cfg: unknown) => ipcRenderer.invoke('ai:set', cfg),
   aiKey: (key: string | null) => ipcRenderer.invoke('ai:key', key),

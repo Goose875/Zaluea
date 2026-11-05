@@ -27,7 +27,7 @@ import { PaperOrders } from '../ksys/paperOrders';
 import { loadKConfig, saveKConfig, kTradeStore, xTradeStore } from './kstore';
 import RANKINGS from '../ksys/rankings.json';
 import { KeelAI, parseAIConfig } from './ai';
-import { ping, checkWebhook, testPing, status as discordStatus, statusEnd as discordStatusEnd, everyoneOn, COLOR, Embed } from './discord';
+import { ping, checkWebhook, testPing, status as discordStatus, statusEnd as discordStatusEnd, everyoneOn, COLOR, Embed, logLine, flushLog, testLog } from './discord';
 import { mult } from '../core/contracts';
 import { UPDATE_KEY } from './updateKey';
 import { loadJournal, recordTrade, editTrade, removeTrade, payoutRecord, allPayouts, setPayoutRules, addPayout, removePayout } from './journalStore';
@@ -62,6 +62,7 @@ const nyStamp = (t = Date.now()) => new Date(wallOf(t)).toISOString().slice(0, 1
 function jot(m: string) {
   const line = `${nyStamp()} ${m}`; journal.push(line); if (journal.length > 1500) journal.splice(0, journal.length - 1500);
   try { fs.appendFileSync(path.join(app.getPath('userData'), `journal_${line.slice(0, 10)}.txt`), line + '\n'); } catch { /* journal is best effort */ }
+  try { logLine(line); } catch { /* Discord must never touch trading */ }
 }
 const todayJournal = () => { const d = nyStamp().slice(0, 10); return journal.filter(l => l.startsWith(d)); };
 
@@ -215,6 +216,7 @@ function keepAwake(on: boolean) {
 
 async function stopTrading() {
   keepAwake(false);
+  void flushLog();
   void stopStatus();
   stopK(); runBroker = null;
   await engine?.shutdown();
@@ -781,7 +783,12 @@ app.whenReady().then(async () => {
   });
 
   // ---------- Discord ----------
-  ipcMain.handle('discord:get', e => (allowed(e) ? { saved: vault.has('discord'), everyone: everyoneOn() } : null));
+  ipcMain.handle('discord:get', e => (allowed(e) ? { saved: vault.has('discord'), everyone: everyoneOn(), logSaved: vault.has('discordLog') } : null));
+  ipcMain.handle('discord:logSave', async (e, url: unknown) => {
+    if (!allowed(e) || typeof url !== 'string') return { ok: false, error: 'Not allowed.' };
+    try { const u = checkWebhook(url); await testLog(u); vault.set('discordLog', { url: u }); return { ok: true }; } catch (err) { return { ok: false, error: (err as Error).message }; }
+  });
+  ipcMain.handle('discord:logRemove', e => { if (allowed(e)) vault.remove('discordLog'); return { ok: true }; });
   ipcMain.handle('discord:save', async (e, url: unknown, everyone: unknown) => {
     if (!allowed(e) || typeof url !== 'string') return { ok: false, error: 'Not allowed.' };
     try { const u = checkWebhook(url), ev = everyone !== false; await testPing(u, ev); vault.set('discord', { url: u, everyone: ev ? '1' : '0' }); if (engine) startStatus(); return { ok: true }; } catch (err) { return { ok: false, error: (err as Error).message }; }

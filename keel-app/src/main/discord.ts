@@ -85,3 +85,26 @@ export async function testPing(url: string, everyone = true) {
     footer: { text: 'Keel' }, timestamp: new Date().toISOString() }, everyone));
   if (r.status < 200 || r.status >= 300) throw new Error(r.status === 0 ? "Couldn't reach Discord. Check your internet connection." : `Discord refused the message (HTTP ${r.status}). Check the webhook URL.`);
 }
+
+// ---------- bot log channel: every log-file line, batched (a separate webhook, never mentions anyone) ----------
+const logUrl = () => { const c = vault.get('discordLog'); return c && typeof c.url === 'string' ? c.url : null; };
+let logBuf: string[] = [], logTimer: ReturnType<typeof setTimeout> | null = null, logQueue: Promise<unknown> = Promise.resolve();
+/** Queue one log line; lines go out together about every 5 s, as code blocks of up to ~1,850 characters. */
+export function logLine(line: string) {
+  if (!logUrl()) return;
+  logBuf.push(line); if (logBuf.length > 400) logBuf.splice(0, logBuf.length - 400);   // a long outage keeps the newest 400 lines
+  if (!logTimer) { logTimer = setTimeout(() => void flushLog(), 5000); (logTimer as any).unref?.(); }
+}
+export function flushLog(): Promise<unknown> {
+  if (logTimer) { clearTimeout(logTimer); logTimer = null; }
+  const url = logUrl(), lines = logBuf.splice(0); if (!url || !lines.length) return logQueue;
+  const chunks: string[] = []; let cur = '';
+  for (const l of lines) { const s = l.replace(/```/g, "'''").slice(0, 1800); if (cur && cur.length + s.length + 1 > 1850) { chunks.push(cur); cur = ''; } cur += (cur ? '\n' : '') + s; }
+  if (cur) chunks.push(cur);
+  for (const c of chunks) logQueue = logQueue.then(() => send('POST', url, { content: '```\n' + c + '\n```', username: 'Keel log', allowed_mentions: { parse: [] as string[] } })).catch(() => {});
+  return logQueue;
+}
+export async function testLog(url: string) {
+  const r = await send('POST', `${checkWebhook(url)}?wait=true`, { content: '✅ **Keel bot log connected.** Every line of Keel\'s log (checks, entries, skips, blocks, vetoes, errors) will appear here, about every 5 seconds.', username: 'Keel log', allowed_mentions: { parse: [] as string[] } });
+  if (r.status < 200 || r.status >= 300) throw new Error(r.status === 0 ? "Couldn't reach Discord. Check your internet connection." : `Discord refused the message (HTTP ${r.status}). Check the webhook URL.`);
+}
