@@ -103,7 +103,10 @@ export class XLive {
     if (X.length < (S.kind === 'fractal' ? 120 : 200)) throw new Error(`only ${X.length} bars of ${S.symbol} history came back for ${S.id}.`);
     const last = X[X.length - 1];
     if (S.kind === 'fractal' && last.day !== sessionKey(wallOf(now - 2 * 3_600_000))) { this.status[S.id] = { lastScan: now, working: null, note: 'yesterday\'s daily bar is not in yet' }; return; }
-    if (S.kind !== 'fractal' && now - (last.utc + ms) > 10 * 60_000) { this.status[S.id] = { lastScan: now, working: null, note: 'history is behind; waiting' }; if (S.barMinutes >= 60) this.d.log?.(`${S.id}: scan skipped, price history is behind.`); return; }
+    // Behind = the newest bar that should have closed by now is missing. A scan between bar closes (e.g. right after Start
+    // at 11:59) only has the 11:00 close to look at, which is not behind. The 17:00-18:00 ET break has no bar.
+    let due = Math.floor(now / ms) * ms; if (ms <= 3_600_000 && new Date(wallOf(due)).getUTCHours() === 18) due -= 3_600_000;
+    if (S.kind !== 'fractal' && (ms <= 3_600_000 ? due - (last.utc + ms) : now - (last.utc + ms)) > 10 * 60_000) { this.status[S.id] = { lastScan: now, working: null, note: 'history is behind; waiting' }; if (S.barMinutes >= 60) this.d.log?.(`${S.id}: scan skipped, price history is behind.`); return; }
     // The fractal's daily trades are independent (as in the research): today's order is simply the one due at the next bar.
     const orders = xOrders(S, X), sim = S.kind === 'fractal' ? { working: orders.filter(o => o.i === X.length).map(order => ({ order, k: -1 })) } : xSimulate(X, S.symbol, orders);
     const w = sim.working[sim.working.length - 1];

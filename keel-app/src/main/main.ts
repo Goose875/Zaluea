@@ -207,7 +207,7 @@ function feed(data: any, seen: Record<string, number>, now: number): { text: str
   const parts: string[] = []; let stale = false;
   for (const [root, micro] of [['NQ', 'MNQ'], ['GC', 'MGC']]) {
     const sym = (seen[micro] ?? 0) > (seen[root] ?? 0) ? micro : root, t = seen[sym], px = data?.lastPrice?.(sym) ?? data?.lastPrice?.(root);
-    const age = t ? Math.round((now - t) / 1000) : null;
+    const age = t ? Math.max(0, Math.round((now - t) / 1000)) : null;   // a quote that arrives while this line is built is 0 s old, not -1
     if (age === null || age > 120) stale = true;
     parts.push(`${root} ${px === undefined ? '?' : px.toFixed(2)} (${age === null ? 'no live price yet' : age < 120 ? age + ' s old' : Math.round(age / 60) + ' min old'})`);
   }
@@ -219,7 +219,7 @@ async function healthLines() {
   const now = Date.now(), closed = marketClosed(now), st = loadAccounts(conns()), snap = engine?.snapshot();
   const one = (label: string, f: { text: string; stale: boolean }, today: number | null, open: number, working: number, next: number | null, err: string, flag: string) => {
     const ok = !f.stale && today !== null, state = ok ? 'connected' : closed ? 'market closed' : '⚠ CHECK CONNECTION';
-    jot(`Health: [${label}] ${state} · ${f.text} · today ${today === null ? 'P&L unreadable' : usd(today)} · ${open ? open + ' open' : 'flat'}${working ? ' · ' + working + ' working order' + (working > 1 ? 's' : '') : ''}${next ? ' · next check ' + nyHM(next) + ' ET' : ''}${flag ? ' · ' + flag : ''}${err ? ' · last error: ' + err : ''}`);
+    jot(`Health: [${label}] ${state} · ${f.text} · today ${today === null ? 'P&L unreadable' : usd(today)} · ${open ? open + ' open' : 'flat'}${working ? ' · ' + working + ' working order' + (working > 1 ? 's' : '') : ''}${next ? ' · next check ' + (next <= now + 60_000 ? 'due now' : nyHM(next) + ' ET') : ''}${flag ? ' · ' + flag : ''}${err ? ' · last error: ' + err : ''}`);
   };
   if (snap) {
     const main = st.accounts.find(a => a.id === activeAccount);
