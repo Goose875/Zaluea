@@ -54,7 +54,7 @@ let runData: any = null;
 let chartData: Promise<any> | null = null;
 const chartTicks = new Map<string, { price: number; ts: number }>();   // TopstepX prices for the chart when the account is on Rithmic Test     // a separate price connection when the account's own has no data   // the running bot's connection (also serves chart history)
 /** Other accounts trading at the same time (Accounts page "Trade with Keel"). */
-interface Follower { acct: AccountRecord; broker: any; data: any; k: KLive; x: XLive; paper: PaperOrders | null; error: string; goalHit: boolean; stop: () => Promise<void>; flatten: () => Promise<void> }
+interface Follower { acct: AccountRecord; broker: any; data: any; seen: Record<string, number>; k: KLive; x: XLive; paper: PaperOrders | null; error: string; goalHit: boolean; stop: () => Promise<void>; flatten: () => Promise<void> }
 let followers: Follower[] = [];
 // The bot journal: every K / PO3 / Claude note with its New York time (today's notes feed the daily review and the chat).
 const journal: string[] = [];
@@ -199,6 +199,52 @@ function startStatus() {
   setTimeout(() => void push(), 5000);
   statusTimer = setInterval(() => void push(), 30_000); (statusTimer as any).unref?.();
 }
+// ---------- health line: every 5 minutes, one log line per running account (file + Discord bot log) ----------
+let healthTimer: ReturnType<typeof setInterval> | undefined, healthFirst: ReturnType<typeof setTimeout> | undefined;
+const mainSeen: Record<string, number> = {};   // when the main account's price feed last sent each symbol
+/** NQ and GC price with its age, from whichever of the mini / micro quoted last. */
+function feed(data: any, seen: Record<string, number>, now: number): { text: string; stale: boolean } {
+  const parts: string[] = []; let stale = false;
+  for (const [root, micro] of [['NQ', 'MNQ'], ['GC', 'MGC']]) {
+    const sym = (seen[micro] ?? 0) > (seen[root] ?? 0) ? micro : root, t = seen[sym], px = data?.lastPrice?.(sym) ?? data?.lastPrice?.(root);
+    const age = t ? Math.round((now - t) / 1000) : null;
+    if (age === null || age > 120) stale = true;
+    parts.push(`${root} ${px === undefined ? '?' : px.toFixed(2)} (${age === null ? 'no live price yet' : age < 120 ? age + ' s old' : Math.round(age / 60) + ' min old'})`);
+  }
+  return { text: parts.join(' · '), stale };
+}
+/** Futures pause 17:00-18:00 ET and over the weekend: no prices then is normal. */
+function marketClosed(now: number) { const w = new Date(wallOf(now)), d = w.getUTCDay(), h = w.getUTCHours(); return h === 17 || d === 6 || (d === 0 && h < 18) || (d === 5 && h >= 17); }
+async function healthLines() {
+  const now = Date.now(), closed = marketClosed(now), st = loadAccounts(conns()), snap = engine?.snapshot();
+  const one = (label: string, f: { text: string; stale: boolean }, today: number | null, open: number, working: number, next: number | null, err: string, flag: string) => {
+    const ok = !f.stale && today !== null, state = ok ? 'connected' : closed ? 'market closed' : '⚠ CHECK CONNECTION';
+    jot(`Health: [${label}] ${state} · ${f.text} · today ${today === null ? 'P&L unreadable' : usd(today)} · ${open ? open + ' open' : 'flat'}${working ? ' · ' + working + ' working order' + (working > 1 ? 's' : '') : ''}${next ? ' · next check ' + nyHM(next) + ' ET' : ''}${flag ? ' · ' + flag : ''}${err ? ' · last error: ' + err : ''}`);
+  };
+  if (snap) {
+    const main = st.accounts.find(a => a.id === activeAccount);
+    let today: number | null = null;
+    try { today = kPaper ? kPaper.realized + kPaper.unrealized() : runBroker?.getDailyPnL ? await runBroker.getDailyPnL() : snap.total; } catch { /* unreadable */ }
+    one(main?.label ?? 'Paper account', feed(kBroker ?? runBroker, mainSeen, now), today,
+      (kLive?.trades.length ?? 0) + (xLive?.trades.filter(t => t.state === 'open').length ?? 0) + (engine?.openTrades().length ?? 0),
+      xLive?.trades.filter(t => t.state === 'working').length ?? 0, kLive?.status().nextCheck || null, kLive?.lastError || xLive?.lastError || '',
+      snap.paused ? 'stopped for today (daily target)' : snap.halted ? 'halted' : '');
+  }
+  for (const f of followers) {
+    let today: number | null = null;
+    try { today = f.paper ? f.paper.realized + f.paper.unrealized() : await f.broker.getDailyPnL(); } catch { /* unreadable */ }
+    one(f.acct.label, feed(f.data, f.seen, now), today, f.k.trades.length + f.x.trades.filter(t => t.state === 'open').length, f.x.trades.filter(t => t.state === 'working').length,
+      f.k.status().nextCheck || null, f.k.lastError || f.x.lastError || '', f.goalHit ? 'stopped for today (daily target)' : '');
+  }
+}
+function startHealth() {
+  stopHealth();
+  const run = () => { if (engine) void healthLines().catch(() => {}); };
+  healthFirst = setTimeout(run, 20_000); (healthFirst as any).unref?.();   // the first one shortly after Start, once prices flow
+  healthTimer = setInterval(run, 5 * 60_000); (healthTimer as any).unref?.();
+}
+function stopHealth() { clearTimeout(healthFirst); clearInterval(healthTimer); healthTimer = undefined; }
+
 async function stopStatus() {
   clearInterval(statusTimer); statusTimer = undefined;
   try { await discordStatusEnd({ title: '⏹ Keel stopped', color: COLOR.grey, description: 'A new live status card starts when the bot starts again.',
@@ -216,6 +262,7 @@ function keepAwake(on: boolean) {
 
 async function stopTrading() {
   keepAwake(false);
+  stopHealth();
   void flushLog();
   void stopStatus();
   stopK(); runBroker = null;
@@ -251,7 +298,8 @@ async function startFollowers(list: AccountRecord[], kc: ReturnType<typeof loadK
       await b.subscribe?.(K_SYMBOLS).catch(() => {});
       const data: any = await dataFor(b, tag);
       const g = loadRisk(), guard = new RiskGuard({ ...g, maxDailyLoss: a.dailyLoss > 0 ? Math.min(g.maxDailyLoss, a.dailyLoss) : g.maxDailyLoss, maxMini: a.maxMini || 0, maxMicro: a.maxMicro || 0 });
-      const paper = kc.mode === 'paper' ? new PaperOrders(data) : null; data.onQuote((q: any) => paper?.onQuote(q));
+      const paper = kc.mode === 'paper' ? new PaperOrders(data) : null, seen: Record<string, number> = {};
+      data.onQuote((q: any) => { seen[q.symbol] = Date.now(); paper?.onQuote(q); });
       const desk: OrderDesk = paper ?? (b as OrderDesk);
       const dailyPnL = async () => (paper ? paper.realized + paper.unrealized() : b.getDailyPnL());
       let info: { equity: number; floor: number } | null = null;
@@ -265,7 +313,7 @@ async function startFollowers(list: AccountRecord[], kc: ReturnType<typeof loadK
       x = new XLive(fc, { data, desk, risk: guard, store: xTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, note: tag, log: m => jot(`[${a.label}] ${m}`),
         kHolds: sym => k.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode), record });
       k.start(); x.start();
-      const f: Follower = { acct: a, broker: b, data, k, x, paper, error: '', goalHit: false,
+      const f: Follower = { acct: a, broker: b, data, seen, k, x, paper, error: '', goalHit: false,
         stop: async () => { k.stop(); x!.stop(); clearInterval(timer); clearInterval(goalTimer); await b.disconnect().catch(() => {}); if (data !== b) await data.disconnect().catch(() => {}); },
         flatten: async () => { k.stop(); k.forgetAll(); x!.stop(); x!.forgetAll(); if (paper) await paper.closeAll(); else await b.closeAll().catch(() => tag('could not flatten. Check your platform now.')); } };
       // this account's own daily profit target: close everything on it and stop trading it (the other accounts keep going)
@@ -504,7 +552,7 @@ app.whenReady().then(async () => {
     let dataSrc: any = broker;
     if (kc.mode !== 'off' && !kErr) {
       dataSrc = await dataFor(broker, m => engine?.say(m));
-      if (dataSrc !== broker) { dataSrc.onQuote((q: any) => { bars.add(q); kPaper?.onQuote(q); }); runData = dataSrc; }
+      if (dataSrc !== broker) { dataSrc.onQuote((q: any) => { mainSeen[q.symbol] = Date.now(); bars.add(q); kPaper?.onQuote(q); }); runData = dataSrc; }
       kPaper = kc.mode === 'paper' ? new PaperOrders(dataSrc) : null;
       const desk: OrderDesk = kPaper ?? (broker as unknown as OrderDesk);
       const e = engine;
@@ -531,7 +579,7 @@ app.whenReady().then(async () => {
       engine.onGoal = () => { kLive?.stop(); kLive?.forgetAll(); xLive?.stop(); xLive?.forgetAll(); void kPaper?.closeAll(); goalPing(mainLabel()); };
       if (kPaper) { const p = kPaper; engine.goalPnl = async () => p.realized + p.unrealized(); }
     }
-    engine.onTick = q => { if (runData) return; bars.add(q); kPaper?.onQuote(q); };   // with a separate price source, that source feeds both
+    engine.onTick = q => { if (runData) return; mainSeen[q.symbol] = Date.now(); bars.add(q); kPaper?.onQuote(q); };   // with a separate price source, that source feeds both
     await seedBars(broker);
     await engine.start(kLive ? [...new Set([...limits.allowedSymbols, ...K_SYMBOLS])] : limits.allowedSymbols);
     if (kErr) engine.say(`K system is off: ${kErr}`);
@@ -562,6 +610,7 @@ app.whenReady().then(async () => {
     hook = startWebhook(8787, webhookSecret(), s => void engine?.handleSignal(s));
     startStatus();
     keepAwake(true);
+    startHealth();
     return { ok: true };
   });
   // Strategies save as soon as they change and the running bot picks the change up right away.
