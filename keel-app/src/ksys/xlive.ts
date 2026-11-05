@@ -29,6 +29,12 @@ export interface XDeps {
   /** Called once for every trade that closes (the trade journal). */
   record?: (t: CloseReport) => void;
 }
+/** CME Globex has no bars 17:00-18:00 ET on weekdays, nor from Friday 17:00 to Sunday 18:00 ET. True when a bar starting at `utc` cannot exist. */
+const noBarAt = (utc: number) => { const w = new Date(wallOf(utc)), d = w.getUTCDay(), h = w.getUTCHours(); return h === 17 || d === 6 || (d === 5 && h >= 17) || (d === 0 && h < 18); };
+/** Start of the k-th real bar after the bar that starts at `from`: bar counts skip the daily break and the weekend, like the research data. */
+const barStartAfter = (from: number, k: number, ms: number) => { let t = from; for (let i = 0; i < k; ) { t += ms; if (!noBarAt(t)) i++; } return t; };
+/** Start of the newest bar that should have closed by `now` (skipping the break and the weekend). */
+const lastDueBar = (now: number, ms: number) => { let t = Math.floor(now / ms) * ms - ms; for (let i = 0; i < 2000 && noBarAt(t); i++) t -= ms; return t; };
 const MICRO: Record<string, string> = { NQ: 'MNQ', GC: 'MGC' }, MICRO_PT: Record<string, number> = { NQ: 2, GC: 10 };
 const HIST: Record<number, { unit: 'min5' | 'hour' | 'day'; count: number }> = { 5: { unit: 'min5', count: 3000 }, 60: { unit: 'hour', count: 600 }, 1440: { unit: 'day', count: 320 } };
 const SETTLE_MS = 20_000;
@@ -104,9 +110,9 @@ export class XLive {
     const last = X[X.length - 1];
     if (S.kind === 'fractal' && last.day !== sessionKey(wallOf(now - 2 * 3_600_000))) { this.status[S.id] = { lastScan: now, working: null, note: 'yesterday\'s daily bar is not in yet' }; return; }
     // Behind = the newest bar that should have closed by now is missing. A scan between bar closes (e.g. right after Start
-    // at 11:59) only has the 11:00 close to look at, which is not behind. The 17:00-18:00 ET break has no bar.
-    let due = Math.floor(now / ms) * ms; if (ms <= 3_600_000 && new Date(wallOf(due)).getUTCHours() === 18) due -= 3_600_000;
-    if (S.kind !== 'fractal' && (ms <= 3_600_000 ? due - (last.utc + ms) : now - (last.utc + ms)) > 10 * 60_000) { this.status[S.id] = { lastScan: now, working: null, note: 'history is behind; waiting' }; if (S.barMinutes >= 60) this.d.log?.(`${S.id}: scan skipped, price history is behind.`); return; }
+    // at 11:59) only has the 11:00 close to look at, which is not behind. The 17:00-18:00 ET break and the weekend have no bars,
+    // so at the 18:00 reopen the 16:00 bar is the newest one due (and on Sunday 18:00, Friday's 16:00 bar).
+    if (S.kind !== 'fractal' && lastDueBar(now, ms) - last.utc > 10 * 60_000) { this.status[S.id] = { lastScan: now, working: null, note: 'history is behind; waiting' }; if (S.barMinutes >= 60) this.d.log?.(`${S.id}: scan skipped, price history is behind.`); return; }
     // The fractal's daily trades are independent (as in the research): today's order is simply the one due at the next bar.
     const orders = xOrders(S, X), sim = S.kind === 'fractal' ? { working: orders.filter(o => o.i === X.length).map(order => ({ order, k: -1 })) } : xSimulate(X, S.symbol, orders);
     const w = sim.working[sim.working.length - 1];
@@ -142,7 +148,8 @@ export class XLive {
       if (!g.ok) return say(`not entered: ${g.reason}`, 'warn');
     }
     // Window: the research keeps the order live from bar o.i through bar o.i + o.exp; nothing new from 15:55 ET.
-    const liveUntil = last.utc + (o.i + o.exp - (n - 1) + 1) * ms;
+    // Counted in real bars (the research's bar indexes): an order placed at the 18:00 reopen from the 16:00 bar must not lose the hour of the break.
+    const liveUntil = barStartAfter(last.utc, o.i + o.exp - (n - 1) + 1, ms);
     let endAt: number | null = null;
     if (S.kind === 'po3' && o.candleStart) {
       const start = o.candleStart - (((new Date(o.candleStart).getUTCHours() - 18 + 24) % 24) % 4) * 3_600_000 - new Date(o.candleStart).getUTCMinutes() * 60_000;
