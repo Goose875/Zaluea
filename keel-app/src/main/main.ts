@@ -27,7 +27,8 @@ import { PaperOrders } from '../ksys/paperOrders';
 import { loadKConfig, saveKConfig, kTradeStore, xTradeStore } from './kstore';
 import RANKINGS from '../ksys/rankings.json';
 import { KeelAI, parseAIConfig } from './ai';
-import { ping, checkWebhook, testPing } from './discord';
+import { ping, checkWebhook, testPing, status as discordStatus, statusEnd as discordStatusEnd, everyoneOn, COLOR, Embed } from './discord';
+import { mult } from '../core/contracts';
 import { UPDATE_KEY } from './updateKey';
 import { loadJournal, recordTrade, editTrade, removeTrade, payoutRecord, allPayouts, setPayoutRules, addPayout, removePayout } from './journalStore';
 import { stats as journalStats, filter as journalFilter, toCsv, nyDay } from '../core/journal';
@@ -53,7 +54,7 @@ let runData: any = null;
 let chartData: Promise<any> | null = null;
 const chartTicks = new Map<string, { price: number; ts: number }>();   // TopstepX prices for the chart when the account is on Rithmic Test     // a separate price connection when the account's own has no data   // the running bot's connection (also serves chart history)
 /** Other accounts trading at the same time (Accounts page "Trade with Keel"). */
-interface Follower { acct: AccountRecord; broker: any; k: KLive; x: XLive; paper: PaperOrders | null; error: string; goalHit: boolean; stop: () => Promise<void>; flatten: () => Promise<void> }
+interface Follower { acct: AccountRecord; broker: any; data: any; k: KLive; x: XLive; paper: PaperOrders | null; error: string; goalHit: boolean; stop: () => Promise<void>; flatten: () => Promise<void> }
 let followers: Follower[] = [];
 // The bot journal: every K / PO3 / Claude note with its New York time (today's notes feed the daily review and the chat).
 const journal: string[] = [];
@@ -132,7 +133,79 @@ function webhookSecret(): string {
 }
 
 function stopK() { if (runData) { void runData.disconnect().catch(() => {}); runData = null; } for (const f of followers) void f.stop(); followers = []; clearInterval(aiTimer); kBroker = null; kLive?.stop(); kLive = null; xLive?.stop(); xLive = null; kPaper = null; clearInterval(kAcctTimer); kAcct = null; }
+// ---------- Discord live status: one message, edited every 30 s while the bot runs ----------
+let statusTimer: ReturnType<typeof setInterval> | undefined;
+const usd = (v: number) => `${v < 0 ? '-' : '+'}$${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+const px2 = (v: number | null | undefined) => (v === null || v === undefined || !Number.isFinite(v) ? '?' : v.toFixed(2));
+/** 7:42 PM style New York time. */
+const nyHM = (t = Date.now()) => { const w = new Date(wallOf(t)), h = w.getUTCHours(), m = String(w.getUTCMinutes()).padStart(2, '0'); return `${h % 12 || 12}:${m} ${h < 12 ? 'AM' : 'PM'}`; };
+const shortLabel = (s: string) => (s.length > 26 ? `${s.slice(0, 12)}…${s.slice(-12)}` : s);
+/** One account's open Keel trades with live P&L, and its working entry orders. */
+function tradeLines(k: KLive | null, x: XLive | null, data: any, engineTrades: ReturnType<Engine['openTrades']> = []): { lines: string[]; open: number; pnl: number | null } {
+  const price = (orderSym: string, sym: string) => data?.lastPrice?.(orderSym) ?? data?.lastPrice?.(sym);
+  const out: string[] = []; let open = 0, sum = 0, known = true;
+  const line = (id: string, dir: 'long' | 'short', qty: number, orderSym: string, sym: string, entry: number, stop: number | null, target: number | null) => {
+    const now = price(orderSym, sym), d = dir === 'long' ? 1 : -1, pnl = now === undefined ? null : (now - entry) * d * qty * mult(orderSym);
+    open++; if (pnl === null) known = false; else sum += pnl;
+    out.push(`${pnl === null ? '⚪' : pnl >= 0 ? '🟢' : '🔴'} **${id}** ${dir === 'long' ? 'Long' : 'Short'} ${qty} ${orderSym} · **${pnl === null ? 'P&L ?' : usd(pnl)}**\n` +
+      `└ entry ${px2(entry)} → now ${px2(now)} · stop ${px2(stop)}${target !== null ? ` · target ${px2(target)}` : ''}`);
+  };
+  for (const t of k?.trades ?? []) line(t.id, t.dir, t.qty, t.orderSym, t.sym, t.entry, t.stop, t.target);
+  for (const t of x?.trades ?? []) {
+    if (t.state === 'open' && t.entry !== null) line(t.id, t.dir, t.qty, t.orderSym, t.sym, t.entry, t.stop, t.target);
+    else if (t.state === 'working') out.push(`⏳ **${t.id}** ${t.dir === 'long' ? 'Buy' : 'Sell'} limit ${t.qty} ${t.orderSym} @ ${px2(t.limitPx)}\n└ working until ${nyHM(t.liveUntil)} ET`);
+  }
+  for (const t of engineTrades) if (t.entry !== null) line(t.name, t.side === 'buy' ? 'long' : 'short', t.qty, t.symbol, t.symbol, t.entry, t.slPx, t.tpPx);
+  return { lines: out, open, pnl: open ? (known ? sum : null) : 0 };
+}
+/** The live status card: a summary row, then each account (P&L today, open P&L, its trades). */
+async function statusEmbed(): Promise<Embed> {
+  const kc = loadKConfig(), st = loadAccounts(conns()), snap = engine?.snapshot();
+  const rows: { label: string; today: number | null; goal: number; flag: string; t: ReturnType<typeof tradeLines> }[] = [];
+  if (snap) {
+    const main = st.accounts.find(a => a.id === activeAccount);
+    rows.push({ label: main?.label ?? 'Paper account', today: kPaper ? kPaper.realized + kPaper.unrealized() : snap.total, goal: main?.dailyGoal ?? 0,
+      flag: snap.paused ? '⛔ Stopped for today (daily target)' : snap.halted ? '⛔ Halted' : '', t: tradeLines(kLive, xLive, kBroker ?? runBroker, engine?.openTrades()) });
+  }
+  for (const f of followers) {
+    let today: number | null = null;
+    try { today = f.paper ? f.paper.realized + f.paper.unrealized() : await f.broker.getDailyPnL(); } catch { /* unknown right now */ }
+    rows.push({ label: f.acct.label, today, goal: f.acct.dailyGoal, flag: f.goalHit ? '⛔ Stopped for today (daily target)' : '', t: tradeLines(f.k, f.x, f.data) });
+  }
+  const total = rows.every(r => r.today !== null) ? rows.reduce((a, r) => a + (r.today as number), 0) : null;
+  const openPnl = rows.every(r => r.t.pnl !== null) ? rows.reduce((a, r) => a + (r.t.pnl as number), 0) : null, openN = rows.reduce((a, r) => a + r.t.open, 0);
+  const next = kLive?.status().nextCheck;
+  const fields: Embed['fields'] = [
+    { name: '⚙️ Mode', value: kc.mode === 'off' ? 'Chart trading' : kc.mode === 'live' ? 'Live' : 'Paper', inline: true },
+    { name: '💰 Today', value: total === null ? '?' : usd(total), inline: true },
+    { name: '📈 Open P&L', value: openN ? `${openPnl === null ? '?' : usd(openPnl)} (${openN})` : 'Flat', inline: true },
+    ...(next ? [{ name: '🕒 Next check', value: `${nyHM(next)} ET`, inline: true }] : [])
+  ];
+  for (const r of rows) {
+    fields.push({ name: '🏦 Account', value: shortLabel(r.label), inline: true },
+      { name: '💵 Today', value: `${r.today === null ? '?' : usd(r.today)}${r.goal > 0 && r.today !== null ? ` · ${Math.max(0, Math.round(100 * r.today / r.goal))}% of $${r.goal.toLocaleString('en-US')}` : ''}`, inline: true },
+      { name: '📊 Open', value: r.t.open ? (r.t.pnl === null ? '?' : usd(r.t.pnl)) : 'Flat', inline: true });
+    if (r.flag || r.t.lines.length) fields.push({ name: '​', value: [r.flag, ...r.t.lines].filter(Boolean).join('\n'), inline: false });
+  }
+  const anyStop = rows.some(r => r.flag);
+  return { title: '📊 Keel live', color: total === null ? COLOR.blue : total >= 0 ? COLOR.green : COLOR.red, fields,
+    footer: { text: `Live trade tracking · updated ${nyHM()} ET${anyStop ? ' · some accounts stopped' : ''}` }, timestamp: new Date().toISOString() };
+}
+function startStatus() {
+  clearInterval(statusTimer);
+  if (!vault.has('discord')) return;
+  const push = async () => { try { if (engine) await discordStatus(await statusEmbed()); } catch { /* Discord must never touch trading */ } };
+  setTimeout(() => void push(), 5000);
+  statusTimer = setInterval(() => void push(), 30_000); (statusTimer as any).unref?.();
+}
+async function stopStatus() {
+  clearInterval(statusTimer); statusTimer = undefined;
+  try { await discordStatusEnd({ title: '⏹ Keel stopped', color: COLOR.grey, description: 'A new live status card starts when the bot starts again.',
+    footer: { text: `Live trade tracking · stopped ${nyHM()} ET` }, timestamp: new Date().toISOString() }); } catch { /* best effort */ }
+}
+
 async function stopTrading() {
+  void stopStatus();
   stopK(); runBroker = null;
   await engine?.shutdown();
   engine = null;
@@ -180,7 +253,7 @@ async function startFollowers(list: AccountRecord[], kc: ReturnType<typeof loadK
       x = new XLive(fc, { data, desk, risk: guard, store: xTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, note: tag,
         kHolds: sym => k.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode), record });
       k.start(); x.start();
-      const f: Follower = { acct: a, broker: b, k, x, paper, error: '', goalHit: false,
+      const f: Follower = { acct: a, broker: b, data, k, x, paper, error: '', goalHit: false,
         stop: async () => { k.stop(); x!.stop(); clearInterval(timer); clearInterval(goalTimer); await b.disconnect().catch(() => {}); if (data !== b) await data.disconnect().catch(() => {}); },
         flatten: async () => { k.stop(); k.forgetAll(); x!.stop(); x!.forgetAll(); if (paper) await paper.closeAll(); else await b.closeAll().catch(() => tag('could not flatten. Check your platform now.')); } };
       // this account's own daily profit target: close everything on it and stop trading it (the other accounts keep going)
@@ -473,6 +546,7 @@ app.whenReady().then(async () => {
     } else engine.onGoal = () => goalPing(mainLabel());
     activeBroker = brokerId; activeAccount = acct?.id ?? '';
     hook = startWebhook(8787, webhookSecret(), s => void engine?.handleSignal(s));
+    startStatus();
     return { ok: true };
   });
   // Strategies save as soon as they change and the running bot picks the change up right away.
@@ -517,7 +591,7 @@ app.whenReady().then(async () => {
         return { account: r.label, ok: !why, why }; }
       catch (err) { return { account: r.label, ok: false, why: (err as Error).message }; }
     }));
-    for (const x of results) { const line = `Chart ${o.dir} ${o.type} ${o.qty} ${o.orderSym} on ${x.account}: ${x.ok ? 'sent' : 'not sent, ' + x.why}`; jot(line); if (x.ok) ping(line); }
+    for (const x of results) { const line = `Chart ${o.dir} ${o.type} ${o.qty} ${o.orderSym} on ${x.account}: ${x.ok ? 'sent' : 'not sent, ' + x.why}`; jot(line); }   // each account's runner pings its own "sent" / "filled" (no duplicate here)
     return { ok: true, results };
   });
   ipcMain.handle('chart:flatten', async (e, root: unknown, accounts: unknown) => {
@@ -694,12 +768,16 @@ app.whenReady().then(async () => {
   });
 
   // ---------- Discord ----------
-  ipcMain.handle('discord:get', e => (allowed(e) ? { saved: vault.has('discord') } : null));
-  ipcMain.handle('discord:save', async (e, url: unknown) => {
+  ipcMain.handle('discord:get', e => (allowed(e) ? { saved: vault.has('discord'), everyone: everyoneOn() } : null));
+  ipcMain.handle('discord:save', async (e, url: unknown, everyone: unknown) => {
     if (!allowed(e) || typeof url !== 'string') return { ok: false, error: 'Not allowed.' };
-    try { const u = checkWebhook(url); await testPing(u); vault.set('discord', { url: u }); return { ok: true }; } catch (err) { return { ok: false, error: (err as Error).message }; }
+    try { const u = checkWebhook(url), ev = everyone !== false; await testPing(u, ev); vault.set('discord', { url: u, everyone: ev ? '1' : '0' }); if (engine) startStatus(); return { ok: true }; } catch (err) { return { ok: false, error: (err as Error).message }; }
   });
-  ipcMain.handle('discord:remove', e => { if (allowed(e)) vault.remove('discord'); return { ok: true }; });
+  ipcMain.handle('discord:everyone', (e, on: unknown) => {
+    const c = vault.get('discord'); if (!allowed(e) || !c) return { ok: false };
+    vault.set('discord', { ...c, everyone: on === true ? '1' : '0' }); return { ok: true };
+  });
+  ipcMain.handle('discord:remove', e => { if (allowed(e)) { void stopStatus(); vault.remove('discord'); } return { ok: true }; });
 
   // ---------- Claude ----------
   ipcMain.handle('ai:get', e => allowed(e) && ai ? { cfg: ai.cfg, hasKey: ai.hasKey(), preflight: ai.state.preflight, review: ai.state.review, chat: ai.state.chat,

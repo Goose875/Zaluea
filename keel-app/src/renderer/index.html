@@ -409,8 +409,9 @@
           <div id="logins" class="logins"></div>
           <div class="panel">
             <h2>Discord pings</h2>
-            <p class="hint">Get a Discord message whenever Keel enters or closes a trade on any account. In Discord: Server Settings &rarr; Integrations &rarr; Webhooks &rarr; New Webhook &rarr; pick the channel &rarr; Copy Webhook URL, and paste it here. Keel sends a test message when you save.</p>
+            <p class="hint">Get a Discord message whenever Keel enters or closes a trade on any account, plus one live status message (each account's P&amp;L today and every open trade with its live P&amp;L) that Keel updates every 30 seconds while the bot runs. In Discord: Server Settings &rarr; Integrations &rarr; Webhooks &rarr; New Webhook &rarr; pick the channel &rarr; Copy Webhook URL, and paste it here. Keel sends a test message when you save.</p>
             <div class="mixrow"><input id="dcUrl" type="password" placeholder="https://discord.com/api/webhooks/..." autocomplete="off" aria-label="Discord webhook URL"><button id="dcSave" type="button">Save and test</button><button id="dcDel" type="button" class="ghost">Remove</button></div>
+            <label class="check"><input id="dcEveryone" type="checkbox" checked> Mention @everyone on trade pings (the live status message never pings)</label>
             <p id="dcMsg" class="hint" role="status" aria-live="polite"></p>
           </div>
         </section>
