@@ -20,6 +20,8 @@ export class Engine {
   onGoal?: () => void;
   /** Today's P&L from the K system's paper desk (paper mode), so paper trades count toward the daily target too. */
   goalPnl?: () => Promise<number>;
+  /** Gets the engine's OWN messages (daily goal stop, loss limit, kill switch, rule strategies), for the log file. Not say(). */
+  onNote?: (m: string) => void;
   log: string[] = [];
   events: { t: number; msg: string; kind: 'trade' | 'warn' | 'info' }[] = [];
   private stats = { realized: 0, unrealized: 0, total: 0, positions: [] as Position[], updated: 0 };
@@ -220,9 +222,11 @@ export class Engine {
   }
 
   /** Lets other parts of Keel (the K system) post to the activity feed. */
-  say(m: string) { this.note(m); }
+  say(m: string) { this.record(m); }
 
-  private note(m: string) {
+  private note(m: string) { this.record(m); try { this.onNote?.(m); } catch { /* logging must never stop trading */ } }
+
+  private record(m: string) {
     this.log.push(`${new Date().toISOString()} ${m}`); this.log = this.log.slice(-200);
     const kind = /^Sent|closed .* at its|K system: closed/.test(m) ? 'trade' : /Blocked|Ignored|stopped:|limit|can't|Can't|failed|not available|Check your|could not|skipped .* late/i.test(m) ? 'warn' : 'info';
     this.events.push({ t: Date.now(), msg: m, kind }); this.events = this.events.slice(-200);

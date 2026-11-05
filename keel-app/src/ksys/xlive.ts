@@ -20,6 +20,8 @@ export interface XStore { load(): { trades: XLiveTrade[]; done: string[] }; save
 export interface XDeps {
   data: BrokerAdapter; desk: OrderDesk; risk: RiskGuard; dailyPnL: () => Promise<number>;
   store: XStore; note: (msg: string, kind?: 'trade' | 'warn' | 'info') => void;
+  /** Log file only: one line per hourly/daily scan (K8, K9), so the log shows the scan ran. */
+  log?: (msg: string) => void;
   /** True when a K1-K7 trade holds this market (one position per market across all of Keel's systems). */
   kHolds: (sym: string) => boolean;
   gate?: (ctx: EntryContext) => Promise<{ ok: boolean; reason?: string }>;
@@ -101,11 +103,12 @@ export class XLive {
     if (X.length < (S.kind === 'fractal' ? 120 : 200)) throw new Error(`only ${X.length} bars of ${S.symbol} history came back for ${S.id}.`);
     const last = X[X.length - 1];
     if (S.kind === 'fractal' && last.day !== sessionKey(wallOf(now - 2 * 3_600_000))) { this.status[S.id] = { lastScan: now, working: null, note: 'yesterday\'s daily bar is not in yet' }; return; }
-    if (S.kind !== 'fractal' && now - (last.utc + ms) > 10 * 60_000) { this.status[S.id] = { lastScan: now, working: null, note: 'history is behind; waiting' }; return; }
+    if (S.kind !== 'fractal' && now - (last.utc + ms) > 10 * 60_000) { this.status[S.id] = { lastScan: now, working: null, note: 'history is behind; waiting' }; if (S.barMinutes >= 60) this.d.log?.(`${S.id}: scan skipped, price history is behind.`); return; }
     // The fractal's daily trades are independent (as in the research): today's order is simply the one due at the next bar.
     const orders = xOrders(S, X), sim = S.kind === 'fractal' ? { working: orders.filter(o => o.i === X.length).map(order => ({ order, k: -1 })) } : xSimulate(X, S.symbol, orders);
     const w = sim.working[sim.working.length - 1];
     this.status[S.id] = { lastScan: now, working: w ? `${w.order.side > 0 ? 'long' : 'short'} ${w.order.type ? 'limit ' + w.order.px.toFixed(2) : 'market'}` : null, note: '' };
+    if (S.barMinutes >= 60) this.d.log?.(`${S.id}: ${S.kind === 'fractal' ? 'daily' : 'hourly'} scan done, ${w ? 'setup: ' + this.status[S.id].working : 'no setup'}.`);
     for (const { order } of sim.working) await this.place(S, X, order);
   }
 
@@ -268,8 +271,10 @@ export class XLive {
   private async onFilled(t: XLiveTrade) {
     const d = t.dir === 'long' ? 1 : -1, T = XTICK[t.sym] ?? tickOf(t.orderSym), exit = d > 0 ? 'sell' as const : 'buy' as const;
     if (t.entryOrder) { await this.d.desk.cancelOrder(t.entryOrder).catch(() => {}); t.entryOrder = null; }   // a partial fill keeps what filled
-    const pos = (await this.d.desk.getPositions()).find(p => p.symbol === t.orderSym && Math.sign(p.qty) === d);
-    if (!pos) { this.d.note(`${t.id}: entry sent but no position showed up; nothing to protect.`, 'warn'); this.trades = this.trades.filter(x => x !== t); this.save(); return; }
+    // Some brokers (Rithmic) report the new position a moment after the fill: keep looking for up to ~15 s before giving up.
+    let pos = (await this.d.desk.getPositions()).find(p => p.symbol === t.orderSym && Math.sign(p.qty) === d);
+    for (let i = 0; !pos && i < 30; i++) { await new Promise(r => setTimeout(r, 500)); pos = (await this.d.desk.getPositions()).find(p => p.symbol === t.orderSym && Math.sign(p.qty) === d); }
+    if (!pos) { this.d.note(`${t.id}: entry sent but no ${t.orderSym} position showed up after 15 s, so NO stop was placed. Check your platform now: if a position is open, protect or close it.`, 'trade'); this.trades = this.trades.filter(x => x !== t); this.save(); return; }
     t.qty = Math.abs(pos.qty); t.entry = Number.isFinite(pos.avgPrice) ? pos.avgPrice : (t.limitPx ?? 0);
     t.stop = t.stopPts > 0 ? Math.round((t.entry - d * t.stopPts) / T) * T : null; t.target = t.tgtPts > 0 ? Math.round((t.entry + d * t.tgtPts) / T) * T : null;
     t.state = 'open'; t.placed = this.now();

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, IpcMainInvokeEvent, powerSaveBlocker } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import * as http from 'http';
 import * as path from 'path';
@@ -204,7 +204,17 @@ async function stopStatus() {
     footer: { text: `Live trade tracking · stopped ${nyHM()} ET` }, timestamp: new Date().toISOString() }); } catch { /* best effort */ }
 }
 
+// While the bot runs, Windows must not go to sleep (a sleeping PC trades nothing). Released when the bot stops.
+let awakeId: number | null = null;
+function keepAwake(on: boolean) {
+  try {
+    if (on && awakeId === null && powerSaveBlocker) { awakeId = powerSaveBlocker.start('prevent-app-suspension'); jot('Keeping this PC awake while the bot runs.'); }
+    if (!on && awakeId !== null) { powerSaveBlocker.stop(awakeId); awakeId = null; }
+  } catch { /* best effort */ }
+}
+
 async function stopTrading() {
+  keepAwake(false);
   void stopStatus();
   stopK(); runBroker = null;
   await engine?.shutdown();
@@ -248,9 +258,9 @@ async function startFollowers(list: AccountRecord[], kc: ReturnType<typeof loadK
       let x: XLive | null = null;
       const fc = acctCfg(kc, a);
       const record = recorder(a.id, () => a.label, kc.mode as 'paper' | 'live');
-      const k = new KLive(fc, { data, desk, risk: guard, store: kTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, account: () => info, note: tag,
+      const k = new KLive(fc, { data, desk, risk: guard, store: kTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, account: () => info, note: tag, log: m => jot(`[${a.label}] ${m}`),
         xHolds: sym => !!x?.holds(sym), gate: ctx => aiGate(ctx, kc.mode), record });
-      x = new XLive(fc, { data, desk, risk: guard, store: xTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, note: tag,
+      x = new XLive(fc, { data, desk, risk: guard, store: xTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, note: tag, log: m => jot(`[${a.label}] ${m}`),
         kHolds: sym => k.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode), record });
       k.start(); x.start();
       const f: Follower = { acct: a, broker: b, data, k, x, paper, error: '', goalHit: false,
@@ -283,13 +293,14 @@ async function startFollowers(list: AccountRecord[], kc: ReturnType<typeof loadK
  *  market data) the saved TopstepX login. Orders always go to the account's own connection. */
 async function dataFor(broker: any, say: (m: string) => void): Promise<any> {
   const testPrices = broker.id === 'rithmic' && broker.isTest;   // Rithmic Test prices are simulated, not the real market
-  if (!testPrices) { try { const h = broker.getHistory ? await broker.getHistory('NQ', 'hour', 3) : []; if (h.length) return broker; } catch { /* fall through */ } }
+  // the account's own prices only when it really serves the history the strategies need (300+ hourly bars of NQ and GC), not just a few bars
+  if (!testPrices) { try { const [n, g] = broker.getHistory ? await Promise.all([broker.getHistory('NQ', 'hour', 300), broker.getHistory('GC', 'hour', 300)]) : [[], []]; if (n.length >= 300 && g.length >= 300) return broker; } catch { /* fall through */ } }
   const px = vault.get('broker:projectx');
   if (!px || broker.id === 'projectx') return broker;
   try {
     const d: any = ADAPTERS.projectx(); await d.connect(px); await d.subscribe?.(K_SYMBOLS).catch(() => {});
     say(testPrices ? 'This account is on Rithmic Test, whose prices are simulated, so prices and history come from your TopstepX login. Orders still go to this account.'
-      : 'This account has no price data from its own connection, so prices and history come from your TopstepX login. Orders still go to this account.');
+      : 'The connection of this account does not serve enough price history for the strategies, so prices and history come from your TopstepX login. Orders still go to this account.');
     return d;
   } catch (err) { say(`No price data on this account, and TopstepX prices failed too (${(err as Error).message}).`); return broker; }
 }
@@ -478,6 +489,7 @@ app.whenReady().then(async () => {
       maxMini: acct?.maxMini || 0, maxMicro: acct?.maxMicro || 0 };
     const guard = new RiskGuard(limits);
     engine = new Engine(broker, guard);
+    engine.onNote = m => jot(m);   // daily goal stop, loss limit, kill switch, rule strategies: into the log file too
     engine.setGoals(goalsFor(acct));
     engine.syncStrategies(loadStrategies());
     // K system (K1-K7): paper = real prices, pretend orders; live = real orders with stops resting at the broker.
@@ -498,14 +510,14 @@ app.whenReady().then(async () => {
       kLive = new KLive(pc, {
         data: dataSrc, desk, risk: guard, store: kTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
-        account: () => kAcct, note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, xHolds: sym => !!xLive?.holds(sym), gate: ctx => aiGate(ctx, kc.mode),
+        account: () => kAcct, note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, log: jot, xHolds: sym => !!xLive?.holds(sym), gate: ctx => aiGate(ctx, kc.mode),
         record: recorder(acct?.id ?? 'main', mainLabel, kc.mode as 'paper' | 'live')
       });
       // K8, K9, P1-P3: same order desk, same risk limits, one position per market shared with K1-K7.
       xLive = new XLive(pc, {
         data: dataSrc, desk, risk: guard, store: xTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
-        note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, kHolds: sym => !!kLive?.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode),
+        note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, log: jot, kHolds: sym => !!kLive?.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode),
         record: recorder(acct?.id ?? 'main', mainLabel, kc.mode as 'paper' | 'live')
       });
       const pollAcct = async () => {
@@ -547,6 +559,7 @@ app.whenReady().then(async () => {
     activeBroker = brokerId; activeAccount = acct?.id ?? '';
     hook = startWebhook(8787, webhookSecret(), s => void engine?.handleSignal(s));
     startStatus();
+    keepAwake(true);
     return { ok: true };
   });
   // Strategies save as soon as they change and the running bot picks the change up right away.

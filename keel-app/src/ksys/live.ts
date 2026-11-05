@@ -62,6 +62,8 @@ export interface KDeps {
   account: () => { equity: number; floor: number } | null;    // for cushion sizing
   store: { load(): LiveTrade[]; save(t: LiveTrade[]): void };
   note: (msg: string, kind?: 'trade' | 'warn' | 'info') => void;
+  /** Log file only (not the activity feed): one line per completed hourly check, so the log shows the check ran. */
+  log?: (msg: string) => void;
   now?: () => number;                                          // for tests
   xHolds?: (sym: string) => boolean;                           // a K8/K9/P1-P3 trade (or working entry) holds this market
   /** Last word before an entry is sent: news pause and the optional Claude entry check. */
@@ -114,7 +116,10 @@ export class KLive {
     try {
       await this.syncFills();
       await this.flatByGuard();
-      if (this.now() >= this.nextCheck) await this.hourly();
+      if (this.now() >= this.nextCheck) {
+        await this.hourly();
+        this.d.log?.(`K system: hourly check done${this.lastError ? ' (working again after: ' + this.lastError + ')' : ''}. Entries, skips and blocks are listed as their own lines; none means no signals.`);
+      }
       this.lastError = '';
     } catch (e) {
       const m = (e as Error).message;
