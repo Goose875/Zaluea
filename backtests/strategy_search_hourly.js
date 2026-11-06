@@ -21,7 +21,7 @@ function prep(APP, DATA, sym) {
 }
 
 if (isMainThread) {
-  const [APP, DATA, mode] = process.argv.slice(2), NULL = mode === 'null';
+  const [APP, DATA] = process.argv.slice(2, 4).map(p => path.resolve(p)), NULL = process.argv[4] === 'null';
   const data = ['NQ', 'GC'].map(s => prep(APP, DATA, s));
   const FAMILIES = [];
   for (const N of [3, 5, 8, 12, 20, 30, 50]) FAMILIES.push(['breakout', N]);
