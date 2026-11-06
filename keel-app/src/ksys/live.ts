@@ -318,7 +318,8 @@ export class KLive {
           id: S.id, name: S.name, symbol: S.symbol, orderSymbol: INSTRUMENTS[S.symbol].micro, enabled: !!this.cfg.enabled[S.id],
           paused: sim?.paused[S.id] ?? null, live: this.trades.find(t => t.id === S.id) ?? null,
           pending: sim?.pending.find(p => p.id === S.id) ?? null, rollingR: rec.length ? rec.reduce((a, t) => a + t.r, 0) / rec.length : null, rollingN: rec.length,
-          lastSignal: (sim?.trades ?? []).filter(t => t.id === S.id).slice(-1)[0]?.signalUtc ?? null
+          ...(() => { const all = [...(sim?.trades ?? []), ...(sim?.open ?? []), ...(sim?.pending ?? [])].filter(t => t.id === S.id && Number.isFinite(t.signalUtc)).sort((a, b) => a.signalUtc - b.signalUtc), l = all[all.length - 1];
+            return { lastSignal: l ? l.signalUtc : null, lastSignalDir: l ? l.dir : null }; })()
         };
       })
     };

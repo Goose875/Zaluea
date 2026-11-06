@@ -175,12 +175,13 @@ async function statusEmbed(): Promise<Embed> {
   }
   const total = rows.every(r => r.today !== null) ? rows.reduce((a, r) => a + (r.today as number), 0) : null;
   const openPnl = rows.every(r => r.t.pnl !== null) ? rows.reduce((a, r) => a + (r.t.pnl as number), 0) : null, openN = rows.reduce((a, r) => a + r.t.open, 0);
-  const next = kLive?.status().nextCheck;
+  const next = kLive?.status().nextCheck, sigs = lastSignals();
   const fields: Embed['fields'] = [
     { name: '⚙️ Mode', value: kc.mode === 'off' ? 'Chart trading' : kc.mode === 'live' ? 'Live' : 'Paper', inline: true },
     { name: '💰 Today', value: total === null ? '?' : usd(total), inline: true },
     { name: '📈 Open P&L', value: openN ? `${openPnl === null ? '?' : usd(openPnl)} (${openN})` : 'Flat', inline: true },
-    ...(next ? [{ name: '🕒 Next check', value: `${nyHM(next)} ET`, inline: true }] : [])
+    ...(next ? [{ name: '🕒 Next check', value: `${nyHM(next)} ET`, inline: true }] : []),
+    ...(sigs.length ? [{ name: '🔔 Last signal per strategy', value: sigs.map(s => `**${s.id}** ${s.t ? new Date(wallOf(s.t)).toISOString().slice(5, 10).replace('-', '/') + (s.dir ? ' ' + s.dir : '') : 'none yet'}`).join(' · '), inline: false }] : [])
   ];
   for (const r of rows) {
     fields.push({ name: '🏦 Account', value: shortLabel(r.label), inline: true },
@@ -215,6 +216,29 @@ function feed(data: any, seen: Record<string, number>, now: number): { text: str
 }
 /** Futures pause 17:00-18:00 ET and over the weekend: no prices then is normal. */
 function marketClosed(now: number) { const w = new Date(wallOf(now)), d = w.getUTCDay(), h = w.getUTCHours(); return h === 17 || d === 6 || (d === 0 && h < 18) || (d === 5 && h >= 17); }
+/** The main account's switched-on strategies with their newest signal (newest first). */
+function lastSignals(): { id: string; t: number | null; dir: string | null }[] {
+  const kc = loadKConfig(), out: { id: string; t: number | null; dir: string | null }[] = [];
+  for (const s of kLive?.status().strategies ?? []) if (kc.enabled[s.id]) out.push({ id: s.id, t: s.lastSignal ?? null, dir: s.lastSignalDir ?? null });
+  for (const s of xLive?.view() ?? []) if (kc.enabled[s.id] && !(s.paperOnly && kc.mode === 'live')) out.push({ id: s.id, t: s.lastScan ? s.lastSignal ?? null : null, dir: s.lastSignalDir ?? null });
+  return out.sort((a, b) => (b.t ?? 0) - (a.t ?? 0));
+}
+const nyDate = (t: number) => new Date(wallOf(t)).toISOString().slice(0, 10);
+/** Weekdays (trading days) after the day of `from`, up to and including today. */
+function tradingDaysSince(from: number, now = Date.now()) { let n = 0; for (let d = Date.parse(nyDate(from) + 'T12:00:00Z') + 86_400_000; d <= Date.parse(nyDate(now) + 'T12:00:00Z'); d += 86_400_000) { const w = new Date(d).getUTCDay(); if (w && w !== 6) n++; } return n; }
+let quietAlarmDay = '';
+/** No signal from any switched-on strategy for 5+ trading days: something may be wrong (it happened 3 times in 2.4 years of backtest). Once a day. */
+function checkQuiet() {
+  if (!kLive || !kLive.status().lastRun) return;   // the K system hasn't finished a check yet
+  const sigs = lastSignals(), newest = sigs.find(s => s.t !== null);
+  if (!sigs.length) return;
+  const days = newest && newest.t ? tradingDaysSince(newest.t) : Infinity, today = nyDate(Date.now());
+  if (days < 5 || quietAlarmDay === today) return;
+  quietAlarmDay = today;
+  const m = `No strategy has signalled for ${days === Infinity ? 'the whole loaded price history' : days + ' trading days'}${newest && newest.t ? ` (newest: ${newest.id} on ${nyDate(newest.t)})` : ''}. In 2.4 years of backtest that happened only 3 times: check the Strategies page and the log.`;
+  jot(m); engine?.say(m); ping(m);
+}
+
 async function healthLines() {
   const now = Date.now(), closed = marketClosed(now), st = loadAccounts(conns()), snap = engine?.snapshot();
   const one = (label: string, f: { text: string; stale: boolean }, today: number | null, open: number, working: number, next: number | null, err: string, flag: string) => {
@@ -239,7 +263,7 @@ async function healthLines() {
 }
 function startHealth() {
   stopHealth();
-  const run = () => { if (engine) void healthLines().catch(() => {}); };
+  const run = () => { if (engine) { void healthLines().catch(() => {}); try { checkQuiet(); } catch { /* never touch trading */ } } };
   healthFirst = setTimeout(run, 20_000); (healthFirst as any).unref?.();   // the first one shortly after Start, once prices flow
   healthTimer = setInterval(run, 5 * 60_000); (healthTimer as any).unref?.();
 }

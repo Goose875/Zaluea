@@ -54,7 +54,7 @@ export class XLive {
   trades: XLiveTrade[]; done: Set<string>;
   lastScan: Record<string, number> = {}; lastError = ''; private busy = false; private timer?: ReturnType<typeof setInterval>;
   private warned = new Set<string>(); private stopMissing = new Map<string, number>();
-  status: Record<string, { lastScan: number; working: string | null; note: string }> = {};
+  status: Record<string, { lastScan: number; working: string | null; note: string; lastSignal?: number | null; lastSignalDir?: 'long' | 'short' | null }> = {};
 
   constructor(private cfg: KConfig, private d: XDeps) { const s = d.store.load(); this.trades = s.trades; this.done = new Set(s.done); }
   setConfig(c: KConfig) { this.cfg = c; }
@@ -115,8 +115,9 @@ export class XLive {
     if (S.kind !== 'fractal' && lastDueBar(now, ms) - last.utc > 10 * 60_000) { this.status[S.id] = { lastScan: now, working: null, note: 'history is behind; waiting' }; if (S.barMinutes >= 60) this.d.log?.(`${S.id}: scan skipped, price history is behind.`); return; }
     // The fractal's daily trades are independent (as in the research): today's order is simply the one due at the next bar.
     const orders = xOrders(S, X), sim = S.kind === 'fractal' ? { working: orders.filter(o => o.i === X.length).map(order => ({ order, k: -1 })) } : xSimulate(X, S.symbol, orders);
-    const w = sim.working[sim.working.length - 1];
-    this.status[S.id] = { lastScan: now, working: w ? `${w.order.side > 0 ? 'long' : 'short'} ${w.order.type ? 'limit ' + w.order.px.toFixed(2) : 'market'}` : null, note: '' };
+    const w = sim.working[sim.working.length - 1], lo = orders[orders.length - 1];
+    const lastSignal = lo ? X[Math.min(lo.i, X.length) - 1].utc + ms : null, lastSignalDir = lo ? (lo.side > 0 ? 'long' as const : 'short' as const) : null;
+    this.status[S.id] = { lastSignal, lastSignalDir, lastScan: now, working: w ? `${w.order.side > 0 ? 'long' : 'short'} ${w.order.type ? 'limit ' + w.order.px.toFixed(2) : 'market'}` : null, note: '' };
     if (S.barMinutes >= 60) this.d.log?.(`${S.id}: ${S.kind === 'fractal' ? 'daily' : 'hourly'} scan done, ${w ? 'setup: ' + this.status[S.id].working : 'no setup'}.`);
     for (const { order } of sim.working) await this.place(S, X, order);
   }
@@ -355,6 +356,6 @@ export class XLive {
   aiTrade() { return this.trades.find(t => t.id === 'AI') ?? null; }
   view() {
     return XSTRATEGIES.map(S => ({ id: S.id, name: S.name, symbol: S.symbol, orderSymbol: MICRO[S.symbol], enabled: !!this.cfg.enabled[S.id], paperOnly: S.paperOnly, evidence: S.evidence,
-      trade: this.trades.find(t => t.id === S.id) ?? null, ...(this.status[S.id] ?? { lastScan: 0, working: null, note: '' }) }));
+      trade: this.trades.find(t => t.id === S.id) ?? null, ...(this.status[S.id] ?? { lastScan: 0, working: null, note: '', lastSignal: null, lastSignalDir: null }) }));
   }
 }

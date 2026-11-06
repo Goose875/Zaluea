@@ -1156,7 +1156,11 @@ function kRender() {
     const nm = el('td'); nm.append(el('b', '', m.id), document.createTextNode(' ' + (DESC[m.id] ? DESC[m.id][0] : m.name)));
     if (m.paperOnly) nm.append(el('span', 'tag', 'paper only')); if (m.id === 'K2') nm.append(el('span', 'tag', 'not for flat-daily accounts'));
     nm.append(el('span', 'sdesc', DESC[m.id] ? DESC[m.id][1] : ''));
-    row.append(tcell, nm, el('td', '', `${m.symbol} → ${m.orderSymbol}`), el('td', '', alone(m.id)), el('td', '', now));
+    const sig = m.kind === 'k' ? (st ? st.strategies.find(x => x.id === m.id) : null) : (d.x ? d.x.find(x => x.id === m.id) : null);
+    const nowCell = el('td', '', now);
+    if (d.running && sig && sig.lastSignal) nowCell.append(el('span', 'sdesc', `Last signal ${nyTime(sig.lastSignal)}${sig.lastSignalDir ? ' ' + sig.lastSignalDir : ''} (from the live prices)`));
+    else if (d.running && sig && c.enabled[m.id] && (m.kind === 'x' ? sig.lastScan : st && st.lastRun)) nowCell.append(el('span', 'sdesc', 'No signal in the price history Keel has loaded'));
+    row.append(tcell, nm, el('td', '', `${m.symbol} → ${m.orderSymbol}`), el('td', '', alone(m.id)), nowCell);
     t.append(row);
   }
   mixRender();
