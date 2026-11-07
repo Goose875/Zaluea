@@ -84,6 +84,9 @@ const H = 3_600_000;
 /** Dollars per point of the contract actually traded (the mini itself, or its micro). */
 const pointValue = (sym: string, orderSym: string) => (orderSym === sym ? INSTRUMENTS[sym].usd_per_point_mini : INSTRUMENTS[sym].usd_per_point_micro);
 const HOURLY_BARS = 1500, DAILY_BARS = 150, ENTRY_WINDOW = 10 * 60_000, SETTLE_MS = 60_000;
+// Late entries (backtest: entering up to an hour late kept the edge when price was within 25% of the stop distance
+// of the planned entry: 0.19R vs 0.19R on time over 401 trades; it fell off beyond that).
+const LATE_MAX = 50 * 60_000, LATE_TOL = 0.25;
 
 /**
  * Runs K1-K7 live. Every hour, right after a bar closes, it rebuilds the indicators from broker history and re-runs the same
@@ -200,6 +203,21 @@ export class KLive {
     const nextOpen = this.lastBarUtc + H, openHour = new Date(wallOf(nextOpen)).getUTCHours();
     // Same rule as the simulator: nothing opens from the flat-by hour until the 18:00 reopen.
     if (this.cfg.flatByHour !== null && openHour >= this.cfg.flatByHour && openHour < 18) return;
+    if (now - nextOpen > ENTRY_WINDOW && now - nextOpen <= LATE_MAX && this.d.data.getHistory) {
+      if (this.staleWarned === nextOpen) return;   // decided once per entry time
+      this.staleWarned = nextOpen;
+      for (const p of due) {
+        const S = STRATEGIES.find(s => s.id === p.id)!;
+        if (!this.cfg.enabled[S.id] || this.trades.some(t => t.id === S.id && t.signalUtc === p.signalUtc)) continue;
+        if (this.trades.some(t => t.sym === S.symbol) || this.d.xHolds?.(S.symbol)) { this.d.note(`K system: skipped ${S.id}, another Keel trade already holds ${S.symbol}.`, 'info'); this.d.decide?.({ id: S.id, dir: p.dir, signalUtc: p.signalUtc, outcome: 'skipped', why: `another Keel trade already held ${S.symbol}` }); continue; }
+        const late = await this.lateCheck(S, p.dir, p.signalUtc, nextOpen, now, risk);
+        const mins = Math.round((now - nextOpen) / 60_000);
+        if ('why' in late) { this.d.note(`K system: ${S.id} is ${mins} min late for its entry and ${late.why}, so it was skipped.`, 'warn'); this.d.decide?.({ id: S.id, dir: p.dir, signalUtc: p.signalUtc, outcome: 'late', why: `${mins} min late, ${late.why}` }); continue; }
+        this.d.note(`K system: ${S.id} is ${mins} min late for its entry, but price is still within ${Math.round(LATE_TOL * 100)}% of its stop distance and its stop and target were not touched, so it enters now with the original stop.`, 'info');
+        await this.enter(S, p.dir, p.signalUtc, risk, late);
+      }
+      return;
+    }
     if (now - nextOpen > ENTRY_WINDOW) {
       if (this.staleWarned !== nextOpen) { this.d.note(`K system: ${due.map(p => p.id).join(', ')} had an entry at ${new Date(nextOpen).toISOString().slice(11, 16)} UTC but Keel got there more than 10 minutes late, so it was skipped.`, 'warn');
         for (const p of due) if (this.cfg.enabled[p.id]) this.d.decide?.({ id: p.id, dir: p.dir, signalUtc: p.signalUtc, outcome: 'late', why: 'Keel got to the entry more than 10 minutes late' }); }
@@ -213,7 +231,27 @@ export class KLive {
     }
   }
 
-  private async enter(S: KStrategy, dir: Dir, signalUtc: number, risk: number) {
+  /** Late entry check: the missed minutes (5-minute bars since the planned open) must not have touched the planned stop or
+   *  target, and the price now must be within LATE_TOL of the stop distance from the planned entry. */
+  private async lateCheck(S: KStrategy, dir: Dir, signalUtc: number, openUtc: number, now: number, risk: number): Promise<{ stop: number; target: number | null } | { why: string }> {
+    const X = this.series[S.symbol], sig = X.bars.findIndex(b => b.utc === signalUtc), I = INSTRUMENTS[S.symbol], d = dir === 'long' ? 1 : -1;
+    if (sig < 0) return { why: 'its signal bar is not in the history' };
+    let bars: { t: number; o: number; h: number; l: number; c: number }[] = [];
+    try { bars = (await this.d.data.getHistory!(S.symbol, 'min5', 24)).filter(b => b.t >= openUtc && b.t < now); } catch { /* checked below */ }
+    if (!bars.length) return { why: "the missed minutes can't be checked (no 5-minute history)" };
+    const E0 = bars[0].o, plan = planEntry(S, X, sig, dir, E0 + d * I.tick, risk, I.usd_per_point_micro);
+    if ('skip' in plan) return { why: plan.skip };
+    const hitStop = bars.some(b => (d > 0 ? b.l <= plan.stop : b.h >= plan.stop)), hitTgt = plan.target !== null && bars.some(b => (d > 0 ? b.h >= plan.target! : b.l <= plan.target!));
+    if (hitStop) return { why: 'its stop was already hit in the missed minutes' };
+    if (hitTgt) return { why: 'its target was already reached in the missed minutes' };
+    const px = this.d.data.lastPrice?.(I.micro) ?? this.d.data.lastPrice?.(S.symbol);
+    if (px === undefined) return { why: 'there is no live price' };
+    const moved = Math.abs(px - E0) / plan.R;
+    if (moved > LATE_TOL) return { why: `price has moved ${Math.round(moved * 100)}% of the stop distance from the planned entry (limit ${Math.round(LATE_TOL * 100)}%)` };
+    return { stop: plan.stop, target: plan.target };
+  }
+
+  private async enter(S: KStrategy, dir: Dir, signalUtc: number, risk: number, late?: { stop: number; target: number | null }) {
     const X = this.series[S.symbol], sig = X.bars.findIndex(b => b.utc === signalUtc), I = INSTRUMENTS[S.symbol];
     const dec = (outcome: Decision['outcome'], why: string) => this.d.decide?.({ id: S.id, dir, signalUtc, outcome, why });
     let orderSym = I.micro;
@@ -221,6 +259,12 @@ export class KLive {
     const px = this.d.data.lastPrice?.(orderSym) ?? this.d.data.lastPrice?.(S.symbol);
     if (sig < 0 || px === undefined) { this.d.note(`K system: skipped ${S.id}, no live price for ${orderSym}.`, 'warn'); dec('skipped', `no live price for ${orderSym}`); return; }
     const plan = planEntry(S, X, sig, dir, px + d * I.tick, risk, I.usd_per_point_micro);
+    if (late && !('skip' in plan)) {
+      plan.stop = late.stop; plan.target = late.target; plan.R = Math.abs(px + d * I.tick - late.stop);
+      plan.qty = Math.floor(risk / (plan.R * I.usd_per_point_micro));
+      if (!(plan.R > 0) || (px + d * I.tick - late.stop) * d <= 0) { this.d.note(`K system: skipped ${S.id}, price is beyond its stop.`, 'info'); dec('skipped', 'price beyond its stop'); return; }
+      if (plan.qty < 1) { this.d.note(`K system: skipped ${S.id} ${dir}: stop too wide for the risk.`, 'info'); dec('skipped', 'stop too wide for the risk'); return; }
+    }
     if ('skip' in plan) { this.d.note(`K system: skipped ${S.id} ${dir}: ${plan.skip}.`, 'info'); dec('skipped', plan.skip); return; }
     // Minis when the budget covers at least one full contract (and minis are allowed), micros otherwise.
     const miniQty = Math.floor(risk / (plan.R * I.usd_per_point_mini));
@@ -245,7 +289,7 @@ export class KLive {
     const pos = (await this.d.desk.getPositions()).find(p => p.symbol === orderSym && Math.sign(p.qty) === d);
     const fill = pos && Number.isFinite(pos.avgPrice) ? pos.avgPrice : px + d * I.tick;
     const fin = planEntry(S, X, sig, dir, fill, risk, pointValue(S.symbol, orderSym), plan.qty);
-    const stop = 'skip' in fin ? plan.stop : fin.stop, target = 'skip' in fin ? plan.target : fin.target;
+    const stop = late ? late.stop : 'skip' in fin ? plan.stop : fin.stop, target = late ? late.target : 'skip' in fin ? plan.target : fin.target;
     const t: LiveTrade = { id: S.id, sym: S.symbol, orderSym, dir, qty: plan.qty, entry: fill, entryUtc: this.lastBarUtc + H, signalUtc, stop, target, stopOrder: null, targetOrder: null, opened: this.now() };
     try {
       t.stopOrder = await this.d.desk.placeOrder({ symbol: orderSym, side: exitSide, qty: t.qty, type: 'stop', price: stop });
@@ -257,7 +301,7 @@ export class KLive {
     }
     if (target !== null) { try { t.targetOrder = await this.d.desk.placeOrder({ symbol: orderSym, side: exitSide, qty: t.qty, type: 'limit', price: target }); } catch { this.d.note(`K system: ${S.id} target order failed; the stop is in place.`, 'warn'); } }
     this.trades.push(t); this.d.store.save(this.trades);
-    dec('entered', `${dir} ${t.qty} ${orderSym} @ ${fill.toFixed(2)}`);
+    dec('entered', `${dir} ${t.qty} ${orderSym} @ ${fill.toFixed(2)}${late ? ' (late entry)' : ''}`);
     this.d.note(`Sent ${side} ${t.qty} ${orderSym} (${S.id} ${S.name}): stop ${stop.toFixed(2)}${target !== null ? `, target ${target.toFixed(2)}` : ''}.`, 'trade');
   }
 

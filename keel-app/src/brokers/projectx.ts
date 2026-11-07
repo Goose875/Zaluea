@@ -104,8 +104,13 @@ export class ProjectXBroker implements BrokerAdapter {
     return this.remember(String(j.contract.name || id), j.contract);
   }
 
+  private subSyms: string[] = [];
+  /** Start the price feed again from scratch (a feed can go quiet without closing). */
+  async resubscribe() { this.market?.stop(); this.market = undefined; await this.subscribe([]); }
   async subscribe(symbols: string[]) {
+    this.subSyms = [...new Set([...this.subSyms, ...symbols])]; symbols = this.subSyms;
     for (const s of symbols) { try { await this.contractFor(s); } catch { /* symbol may not exist; skip it */ } }
+    this.market?.stop();   // one live feed per connection
     const hub = new SignalRClient(this.rtc.replace(/\/$/, '') + '/hubs/market', () => this.token);
     hub.on('GatewayQuote', ([contractId, d]) => {
       const price = Number(d?.lastPrice);

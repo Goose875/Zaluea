@@ -367,13 +367,46 @@ async function healthLines() {
       f.k.status().nextCheck || null, f.k.lastError || f.x.lastError || '', f.goalHit ? 'stopped for today (daily target)' : '');
   }
 }
+// ---------- price-feed watchdog: a feed silent for 2+ minutes while the market is open is started again ----------
+const feedState = new Map<string, { tries: number; last: number; alarmed: boolean }>();
+let feedTimer: ReturnType<typeof setInterval> | undefined;
+async function feedWatch() {
+  if (!engine || marketClosed(Date.now())) return;
+  const feeds: { label: string; data: any; seen: Record<string, number> }[] = [];
+  if (kBroker ?? runBroker) feeds.push({ label: mainLabel(), data: runData ?? runBroker, seen: mainSeen });
+  for (const f of followers) feeds.push({ label: f.acct.label, data: f.data, seen: f.seen });
+  const now = Date.now();
+  for (const f of feeds) {
+    const newest = Math.max(0, ...Object.values(f.seen));
+    const st = feedState.get(f.label) ?? { tries: 0, last: 0, alarmed: false };
+    if (newest && now - newest < 120_000) {   // prices are flowing
+      if (st.tries) { jot(`[${f.label}] Price feed is back.`); engine?.say(`[${f.label}] Price feed is back.`); }
+      feedState.set(f.label, { tries: 0, last: 0, alarmed: false }); continue;
+    }
+    if (!newest && now - startedAt < 120_000) continue;   // just started: give the feed time
+    if (now - st.last < 110_000) continue;                 // one attempt every 2 minutes
+    st.tries++; st.last = now; feedState.set(f.label, st);
+    const silent = newest ? `${Math.round((now - newest) / 60_000)} min` : 'since the start';
+    jot(`[${f.label}] Price feed silent ${silent}: reconnecting it (try ${st.tries}).`);
+    try { if (typeof f.data?.resubscribe === 'function') await f.data.resubscribe(); else await f.data?.subscribe?.(K_SYMBOLS); }
+    catch (err) { jot(`[${f.label}] Reconnecting the price feed failed: ${(err as Error).message}`); }
+    if (st.tries >= 3 && !st.alarmed) {
+      st.alarmed = true;
+      const m = `[${f.label}] The price feed is still silent after 3 reconnects (${silent}). Strategies on this account can't see the market: check your internet and the broker, or restart Keel.`;
+      jot(m); engine?.say(m); ping(m);
+    }
+  }
+}
+let startedAt = 0;
 function startHealth() {
-  stopHealth();
+  stopHealth();   // clears every timer, so the watchdog starts after it
+  startedAt = Date.now(); feedState.clear();
+  feedTimer = setInterval(() => void feedWatch().catch(() => {}), 30_000); (feedTimer as any).unref?.();
   const run = () => { if (engine) { void healthLines().catch(() => {}); void refreshProgress().catch(() => {}); void protectionCheck().catch(() => {}); try { checkQuiet(); maybeAudit(); } catch { /* never touch trading */ } } };
   healthFirst = setTimeout(run, 20_000); (healthFirst as any).unref?.();   // the first one shortly after Start, once prices flow
   healthTimer = setInterval(run, 5 * 60_000); (healthTimer as any).unref?.();
 }
-function stopHealth() { clearTimeout(healthFirst); clearInterval(healthTimer); healthTimer = undefined; }
+function stopHealth() { clearTimeout(healthFirst); clearInterval(healthTimer); healthTimer = undefined; clearInterval(feedTimer); feedTimer = undefined; }
 
 async function stopStatus() {
   clearInterval(statusTimer); statusTimer = undefined;

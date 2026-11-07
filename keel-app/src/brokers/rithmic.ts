@@ -229,6 +229,8 @@ export class RithmicBroker implements BrokerAdapter {
       this.s!.subscribed.add(sym);
     }
   }
+  /** Ask for the live prices again (a feed can go quiet without closing). */
+  async resubscribe() { const syms = [...this.s!.subscribed]; this.s!.subscribed.clear(); await this.subscribe(syms); }
   onQuote(cb: (q: Quote) => void) { this.quoteCbs.push(cb); }
   lastPrice(sym: string) { return this.s?.last.get(sym); }
 
