@@ -1,11 +1,13 @@
 /* Keel, personal edition. "Night watch": amber instrument light on deep sea-charcoal. */
+@font-face { font-family:"Inter"; src:url("fonts/inter.woff2") format("woff2"); font-weight:100 900; font-style:normal; font-display:swap; }
 :root {
-  --bg:#101a1d; --deck:#17252a; --raised:#1d3036; --line:#26393f; --line2:#31474e;
-  --amber:#f0a43a; --amber-ink:#2b1a02; --sea:#7fd6c4; --flare:#ff6f61;
-  --chalk:#e8e4da; --fog:#93a7a6; --dim:#6f8483;
-  --gauge: Bahnschrift, "DIN Alternate", "DIN 2014", "Segoe UI", system-ui, sans-serif;
-  --text: "Segoe UI", system-ui, -apple-system, sans-serif;
-  --mono: Consolas, Menlo, monospace;
+  /* 0.7.14: deeper neutrals, one warm accent used sparingly, Inter everywhere (bundled) */
+  --bg:#0a0f12; --deck:#10171b; --raised:#151e23; --line:rgba(255,255,255,.065); --line2:rgba(255,255,255,.11);
+  --amber:#e8a33d; --amber-ink:#1f1404; --sea:#4cc6a4; --flare:#f0675d;
+  --chalk:#e7eaec; --fog:#97a4aa; --dim:#66737a;
+  --gauge: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --text: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, Menlo, monospace;
 }
 * { box-sizing:border-box; }
 [hidden] { display:none !important; }
@@ -375,3 +377,79 @@ dialog#jDlg::backdrop { background:rgba(0,0,0,.55); }
 .events li { position:relative; padding-left:10px; }
 .events li.trade::before, .events li.warn::before { content:""; position:absolute; left:0; top:9px; bottom:9px; width:3px; border-radius:2px; }
 .events li.trade::before { background:var(--sea); } .events li.warn::before { background:var(--flare); }
+
+/* ===================== 0.7.14 design: calmer, more precise ===================== */
+body { font-feature-settings: "cv11", "ss01", "tnum" 0; -webkit-font-smoothing: antialiased; letter-spacing: -.003em; }
+h1, h2, h3 { letter-spacing: -.012em; }
+.num, .big, .mid, .big2, .abal, .clast, td.r, th.r, .events time, .rchip .rtext { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
+/* sidebar: icons, quiet groups, a soft active state */
+.rail { background: linear-gradient(180deg, #0c1215, #0a0f12); gap: 18px; padding: 18px 12px; }
+.logo { font: 650 21px var(--gauge); letter-spacing: -.02em; }
+#nav { gap: 1px; }
+#nav button { display: flex; align-items: center; gap: 11px; font: 500 14px var(--text); letter-spacing: 0; padding: 8px 10px; min-height: 36px; border-radius: 8px; color: var(--fog); }
+#nav button .ni { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; opacity: .85; }
+#nav button:hover { background: rgba(255,255,255,.04); color: var(--chalk); }
+#nav button[aria-current=page] { background: rgba(232,163,61,.10); color: var(--chalk); }
+#nav button[aria-current=page] .ni { color: var(--amber); opacity: 1; }
+#nav button[aria-current=page]::before { top: 8px; bottom: 8px; width: 2px; left: -12px; border-radius: 0 2px 2px 0; }
+.navsep { margin: 16px 10px 6px; font: 600 10.5px var(--text); letter-spacing: .1em; opacity: 1; color: var(--dim); }
+.navsep:first-child { margin-top: 4px; }
+
+/* header */
+.top { padding: 14px 28px; background: rgba(10,15,18,.82); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 5; }
+.top h1 { font-size: 22px; font-weight: 650; }
+.dateline { font-size: 12.5px; color: var(--dim); }
+.acctpick { font-size: 12.5px; }
+
+/* buttons: one primary, quiet secondaries, an outlined danger that fills on hover */
+button { font: 600 13.5px var(--text); letter-spacing: -.005em; border-radius: 8px; min-height: 36px; padding: 8px 15px; transition: background .15s, border-color .15s, color .15s, filter .15s; }
+button:hover { filter: brightness(1.06); }
+button.ghost { border-color: var(--line2); background: rgba(255,255,255,.02); }
+button.ghost:hover { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.16); }
+button.danger { background: transparent; color: var(--flare); border: 1px solid rgba(240,103,93,.45); }
+button.danger:hover { background: var(--flare); color: #1f0604; border-color: var(--flare); filter: none; }
+#toggle { background: rgba(255,255,255,.03); color: var(--chalk); border: 1px solid var(--line2); }
+#toggle:hover { background: rgba(255,255,255,.07); filter: none; }
+
+/* pill */
+.pill { font: 600 12px var(--text); letter-spacing: .01em; padding: 6px 12px; background: rgba(255,255,255,.02); }
+.pill.on { background: rgba(76,198,164,.08); border-color: rgba(76,198,164,.35); }
+
+/* panels */
+.panel, .stat, .group, .libcard, .scard, .logcard { border-radius: 12px; border: 1px solid var(--line); background: linear-gradient(180deg, rgba(255,255,255,.018), rgba(255,255,255,0) 40%), var(--deck); }
+.panel h2 { font-size: 14.5px; font-weight: 600; letter-spacing: -.005em; margin-bottom: 14px; }
+.content { padding: 22px 28px 56px; display: flex; flex-direction: column; gap: 0; }
+.say { font-size: 15px; color: var(--fog); }
+
+/* inputs */
+input, select, textarea { background: #0b1215; border: 1px solid var(--line2); border-radius: 8px; font: 14px var(--text); transition: border-color .15s, box-shadow .15s; }
+input:hover, select:hover, textarea:hover { border-color: rgba(255,255,255,.17); }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; border-color: rgba(232,163,61,.75); box-shadow: 0 0 0 3px rgba(232,163,61,.16); }
+.field { background: #0b1215; border-radius: 8px; }
+.field:focus-within { outline: none; border-color: rgba(232,163,61,.75); box-shadow: 0 0 0 3px rgba(232,163,61,.16); }
+label { font-size: 12.5px; color: var(--fog); font-weight: 500; }
+.seg button { background: #0b1215; border-color: var(--line2); }
+.seg button[aria-pressed=true] { background: rgba(232,163,61,.14); color: var(--amber); border-color: rgba(232,163,61,.55); }
+
+/* tables */
+th { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+td { border-top: 1px solid var(--line); }
+tbody tr:hover td, table tr:hover td { background: rgba(255,255,255,.015); }
+
+/* the hero numbers */
+.big { font-weight: 650; letter-spacing: -.03em; }
+.mid { font-weight: 600; letter-spacing: -.02em; }
+.k { font-size: 12px; color: var(--dim); font-weight: 500; letter-spacing: .02em; }
+
+/* Today's P&L chart (Lightweight Charts) */
+.chart.lw { height: 260px; position: relative; }
+.chart.lw iframe { border: 0; width: 100%; height: 100%; display: block; }
+
+/* order ticket: TradingView-style sell / buy */
+.tkbig { gap: 8px; }
+.tkbig button { font: 650 15px var(--text); letter-spacing: .01em; border-radius: 8px; min-height: 46px; color: #fff; box-shadow: inset 0 1px 0 rgba(255,255,255,.12); }
+button.sell { background: #ef5350; color: #fff; } button.buy { background: #26a69a; color: #fff; }
+button.sell:hover { background: #f2625f; filter: none; } button.buy:hover { background: #2db5a8; filter: none; }
+.tkbig button:disabled { opacity: 1; color: rgba(255,255,255,.55); }
+button.sell:disabled { background: rgba(239,83,80,.28); } button.buy:disabled { background: rgba(38,166,154,.28); }

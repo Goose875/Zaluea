@@ -5,7 +5,7 @@ const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls)
 const NAMES = { projectx: 'TopstepX', rithmic: 'Rithmic', cqg: 'CQG', tradovate: 'Tradovate', ninjatrader: 'NinjaTrader' };
 const nm = v => NAMES[v] || v;
 const STATUS = { ready: '', beta: ' (beta)', 'needs-approval': ' (needs approval)' };
-const TITLES = { journal: 'Journal', ai: 'Claude', rank: 'Compare mixes', dash: 'Today', chart: 'Chart', acct: 'Progress', accts: 'Accounts', k: 'Strategies', kval: 'Validate the K system', strat: 'Custom strategies', test: 'Backtest', conn: 'Logins', risk: 'Risk limits', alerts: 'TradingView alerts' };
+const TITLES = { journal: 'Journal', ai: 'Claude', rank: 'Compare mixes', dash: 'Today', chart: 'Chart', acct: 'Progress', accts: 'Accounts', k: 'Strategies', kval: 'Validate the K system', strat: 'Custom strategies', conn: 'Connections', risk: 'Risk limits', alerts: 'TradingView alerts' };
 // Mixes you picked from Compare mixes: always offered in the mix lists (Strategies page and each account).
 const PINNED_MIXES = ['K8 + K9 + K1 + K3 + K4 + K6 + K7', 'K8 + K9 + K3 + K4 + K5 + K6 + K7'];
 const STAGE = { evaluation: ['Evaluation', 'Profit target'], funded: ['Funded', 'Payout target'], live: ['Live', 'Payout target'], practice: ['Practice', 'Practice goal'] };
@@ -34,7 +34,7 @@ const selAcct = () => store.accounts.find(a => a.id === store.selected) || null;
 // ---------- navigation ----------
 let view = 'dash';
 function go(v) {
-  view = v; if (v === 'chart') { requestAnimationFrame(() => requestAnimationFrame(drawLive)); void tkRender(); } if (v === 'test') fillBtStrats(); if (v === 'k') kLoad(); if (v === 'accts') loadAcctDefaults().then(renderAccounts); if (v === 'rank') rkLoad(); if (v === 'ai') aiLoad(); if (v === 'conn') dcLoad(); if (v === 'journal') void jLoad();
+  view = v; if (v === 'chart') { requestAnimationFrame(() => requestAnimationFrame(drawLive)); void tkRender(); } if (v === 'k') kLoad(); if (v === 'accts') loadAcctDefaults().then(renderAccounts); if (v === 'rank') rkLoad(); if (v === 'ai') aiLoad(); if (v === 'conn') dcLoad(); if (v === 'journal') void jLoad();
   for (const k of Object.keys(TITLES)) $('v-' + k).hidden = k !== v;
   document.querySelectorAll('#nav button').forEach(b => { if (b.dataset.go === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   $('title').textContent = v === 'dash' ? greeting() : TITLES[v];
@@ -82,19 +82,49 @@ function sayToday(s, n) {
   return line;
 }
 
+// Today's P&L: a real chart (Lightweight Charts, in its own frame like the Chart page) - green above zero, red below.
+let pnlFrame = null, pnlReady = false, pnlChart = null, pnlSeries = null, pnlLines = [], pnlLimit = null, pnlLast = null;
 function drawChart(hist, limit) {
-  const box = $('chart'); box.replaceChildren();
-  if (!hist || hist.length < 2) { box.append(el('p', 'empty', 'Once the bot is running, your day will draw itself here.')); return; }
-  const W = 640, H = 200, L = 8, R = 8, T = 14, B = 22, vals = hist.map(p => p[1]);
-  const lo = Math.min(Math.min(...vals), -Math.abs(limit)) * 1.08, hi = Math.max(Math.max(...vals), Math.abs(limit) * 0.2) * 1.08;
-  const t0 = hist[0][0], t1 = hist[hist.length - 1][0] || t0 + 1;
-  const x = t => L + ((t - t0) / Math.max(1, t1 - t0)) * (W - L - R), y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
-  const NS = 'http://www.w3.org/2000/svg', mk = (n, a) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); return e; };
-  const svg = mk('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Profit and loss today compared with your daily loss limit' });
-  svg.append(mk('line', { class: 'zero', x1: L, x2: W - R, y1: y(0), y2: y(0) }), mk('line', { class: 'lim', x1: L, x2: W - R, y1: y(-limit), y2: y(-limit) }));
-  const lt = mk('text', { x: L + 2, y: y(-limit) - 5 }); lt.textContent = `Daily loss limit (${money(-limit)})`; svg.append(lt);
-  svg.append(mk('polyline', { class: 'line', points: hist.map(p => `${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(' ') }));
-  box.append(svg);
+  const box = $('chart');
+  if (!hist || hist.length < 2) {
+    if (pnlFrame) { pnlFrame = null; pnlReady = false; pnlChart = null; pnlSeries = null; pnlLimit = null; }
+    box.classList.remove('lw'); box.replaceChildren(el('p', 'empty', 'Once the bot is running, your day will draw itself here.')); return;
+  }
+  pnlLast = [hist, limit];
+  if (!pnlFrame) {
+    box.classList.add('lw');
+    pnlFrame = document.createElement('iframe'); pnlFrame.title = "Today's profit and loss";
+    pnlFrame.srcdoc = '<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;overflow:hidden;background:transparent}#c{position:absolute;inset:0}</style>'
+      + '<script src="vendor/lightweight-charts.js"><\/script></head><body><div id="c"></div></body></html>';
+    pnlFrame.onload = () => { pnlReady = true; if (pnlLast) drawChart(pnlLast[0], pnlLast[1]); };
+    box.replaceChildren(pnlFrame); return;
+  }
+  if (!pnlReady) return;
+  const W = pnlFrame.contentWindow, LC = W && W.LightweightCharts; if (!LC) return;
+  const usdFmt = v => (v < 0 ? '-' : '') + '$' + Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  if (!pnlChart) {
+    pnlChart = LC.createChart(W.document.getElementById('c'), {
+      autoSize: true, layout: { background: { type: 'solid', color: 'rgba(0,0,0,0)' }, textColor: '#7d8a90', fontSize: 11, fontFamily: getComputedStyle(document.body).fontFamily },
+      grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(255,255,255,0.045)' } },
+      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.12, bottom: 0.08 } }, timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, fixLeftEdge: true, fixRightEdge: true },
+      crosshair: { mode: LC.CrosshairMode.Magnet, vertLine: { color: 'rgba(151,164,170,0.35)', style: LC.LineStyle.Dashed, labelBackgroundColor: '#1a252b' }, horzLine: { color: 'rgba(151,164,170,0.35)', style: LC.LineStyle.Dashed, labelBackgroundColor: '#1a252b' } },
+      handleScroll: false, handleScale: false, localization: { priceFormatter: usdFmt }
+    });
+    pnlSeries = pnlChart.addSeries(LC.BaselineSeries, { baseValue: { type: 'price', price: 0 }, lineWidth: 2,
+      topLineColor: '#4cc6a4', topFillColor1: 'rgba(76,198,164,0.30)', topFillColor2: 'rgba(76,198,164,0.02)',
+      bottomLineColor: '#f0675d', bottomFillColor1: 'rgba(240,103,93,0.02)', bottomFillColor2: 'rgba(240,103,93,0.30)',
+      priceLineVisible: false, lastValueVisible: true, priceFormat: { type: 'custom', formatter: usdFmt, minMove: 1 } });
+  }
+  // one point per second, in New York wall-clock time (the axis reads New York time, like the Chart page)
+  const pts = []; for (const [t, v] of hist) { const s = nySec(t); if (pts.length && s <= pts[pts.length - 1].time) pts[pts.length - 1].value = v; else pts.push({ time: s, value: v }); }
+  pnlSeries.setData(pts);
+  if (pnlLimit !== limit) {
+    for (const l of pnlLines) pnlSeries.removePriceLine(l);
+    pnlLines = [pnlSeries.createPriceLine({ price: 0, color: 'rgba(151,164,170,0.35)', lineWidth: 1, lineStyle: LC.LineStyle.Solid, axisLabelVisible: false, title: '' }),
+      pnlSeries.createPriceLine({ price: -Math.abs(limit), color: 'rgba(240,103,93,0.7)', lineWidth: 1, lineStyle: LC.LineStyle.Dashed, axisLabelVisible: true, title: 'Loss limit' })];
+    pnlLimit = limit;
+  }
+  pnlChart.timeScale().fitContent();
 }
 
 /** The runway: today's P&L between your daily loss limit (left) and your daily goal (right). */
@@ -502,7 +532,6 @@ function readForm(x) {
 function tvMessage(x) { return JSON.stringify({ secret: last ? last.webhookSecret : '', strategy: x.id, side: '{{strategy.order.action}}' }); }
 
 function renderStrats() {
-  fillBtStrats();
   const box = $('myStrats'); box.replaceChildren();
   if (!strats.length) { box.append(el('p', 'empty', 'No strategies yet. Add one below.')); return; }
   for (const x of strats) {
@@ -625,16 +654,17 @@ function lwEnsure() {
   }
   const W = lwReady ? lwFrame.contentWindow : null, LC = W && W.LightweightCharts;
   if (!LC) return;
-  const hair = { color: 'rgba(147,167,166,0.55)', width: 1, style: LC.LineStyle.Dashed, labelBackgroundColor: '#26393f' };
+  const hair = { color: 'rgba(151,164,170,0.45)', width: 1, style: LC.LineStyle.Dashed, labelBackgroundColor: '#1c272d' };
   lw = LC.createChart(W.document.getElementById('c'), {
-    autoSize: true, layout: { background: { type: 'solid', color: '#0e181b' }, textColor: '#8fa3a6', fontSize: 11, fontFamily: getComputedStyle(document.body).fontFamily },
-    grid: { vertLines: { color: 'rgba(120,150,155,0.06)' }, horzLines: { color: 'rgba(120,150,155,0.06)' } },
-    rightPriceScale: { borderColor: '#22333a', minimumWidth: 72 }, timeScale: { borderColor: '#22333a', timeVisible: true, secondsVisible: false, rightOffset: 8, minBarSpacing: 1.5 },
+    autoSize: true, localization: { priceFormatter: v => v.toLocaleString('en-US', { minimumFractionDigits: /GC/.test(chartSym) ? 1 : 2, maximumFractionDigits: /GC/.test(chartSym) ? 1 : 2 }) },
+    layout: { background: { type: 'solid', color: '#0b1114' }, textColor: '#7f8c92', fontSize: 11, fontFamily: getComputedStyle(document.body).fontFamily },
+    grid: { vertLines: { color: 'rgba(255,255,255,0.035)' }, horzLines: { color: 'rgba(255,255,255,0.035)' } },
+    rightPriceScale: { borderColor: 'rgba(255,255,255,0.07)', minimumWidth: 78 }, timeScale: { borderColor: 'rgba(255,255,255,0.07)', timeVisible: true, secondsVisible: false, rightOffset: 8, minBarSpacing: 1.5 },
     crosshair: { mode: LC.CrosshairMode.Normal, vertLine: hair, horzLine: hair }, handleScroll: true, handleScale: true
   });
   lw.applyOptions({ layout: { panes: { separatorColor: '#1d2c31', separatorHoverColor: 'rgba(240,164,58,0.25)', enableResize: true } } });
   lwLC = LC;
-  lwSeries = lw.addSeries(LC.CandlestickSeries, { upColor: '#3fbf9f', downColor: '#ef5f56', borderUpColor: '#3fbf9f', borderDownColor: '#ef5f56', wickUpColor: '#3fbf9f', wickDownColor: '#ef5f56' });
+  lwSeries = lw.addSeries(LC.CandlestickSeries, { upColor: '#26a69a', downColor: '#ef5350', borderUpColor: '#26a69a', borderDownColor: '#ef5350', wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
   lwMk = LC.createSeriesMarkers(lwSeries, []);
   lwWm = LC.createTextWatermark(lw.panes()[0], { horzAlign: 'center', vertAlign: 'center', lines: [{ text: '', color: 'rgba(147,167,166,0.06)', fontSize: 56 }] });
   lw.subscribeCrosshairMove(p => { const i = p && p.time !== undefined ? lwIdx.get(p.time) : undefined; const n = i === undefined ? null : i; if (n !== ohlcAt) { ohlcAt = n; ohlcRender(); } });
@@ -698,12 +728,12 @@ function lwMarkers(closed, lines) {
   const mk = [];
   const entry = (t, dir, text) => { const time = snap(t); if (time !== null) mk.push({ time, position: dir === 'long' ? 'belowBar' : 'aboveBar', color: dir === 'long' ? '#6fd3b8' : '#ff7b70', shape: dir === 'long' ? 'arrowUp' : 'arrowDown', text }); };
   for (const t of closed) {
-    entry(t.openedAt, t.dir, `${t.id === 'MANUAL' ? 'Chart' : t.id} ${t.dir === 'long' ? 'B' : 'S'}${t.qty}`);
+    entry(t.openedAt, t.dir, `${t.id === 'MANUAL' ? '' : t.id + ' '}${t.dir === 'long' ? 'B' : 'S'}${t.qty}`);
     const time = snap(t.closedAt);
     if (time !== null) mk.push({ time, position: t.dir === 'long' ? 'aboveBar' : 'belowBar', color: t.pnl === null ? '#93a7a6' : t.pnl >= 0 ? '#6fd3b8' : '#ff7b70', shape: 'circle',
       text: t.pnl === null ? 'exit' : `${t.pnl >= 0 ? '+' : '−'}$${Math.abs(Math.round(t.pnl))}` });
   }
-  for (const l of lines) if (l.opened) entry(l.opened, l.side === 'buy' ? 'long' : 'short', `${l.name} ${l.side === 'buy' ? 'B' : 'S'}${l.qty}`);
+  for (const l of lines) if (l.opened) entry(l.opened, l.side === 'buy' ? 'long' : 'short', `${l.name === 'Chart' ? '' : l.name + ' '}${l.side === 'buy' ? 'B' : 'S'}${l.qty}`);
   mk.sort((a, b) => a.time - b.time); lwMk.setMarkers(mk);
 }
 function lwPriceLines(lines) {
@@ -715,12 +745,12 @@ function lwPriceLines(lines) {
     const line = lwSeries.createPriceLine({ price, color, lineWidth: drag ? 2 : 1, lineStyle: style, axisLabelVisible: true, title }); lwLines.push(line);
     lwMeta.push({ line, ref: t.ref, which, price, title, name: t.name, accounts: t.accounts || [], drag });
   };
-  for (const t of lines) { add(t, 'entry', t.entry, '#f0a43a', `${t.name} ${t.working ? 'limit' : 'in'}`, t.working ? 1 : 0); add(t, 'target', t.tp, '#6fd3b8', `${t.name} target`, 2); add(t, 'stop', t.sl, '#ff7b70', `${t.name} stop`, 2); }
+  for (const t of lines) { const nm = t.name === 'Chart' ? '' : t.name + ' '; add(t, 'entry', t.entry, '#e8a33d', `${nm}${t.working ? 'Limit' : 'Entry'}`, t.working ? 1 : 0); add(t, 'target', t.tp, '#26a69a', `${nm}Target`, 2); add(t, 'stop', t.sl, '#ef5350', `${nm}Stop`, 2); }
   const leg = $('cLegend'); leg.replaceChildren();
   for (const t of lines) {
     const row = el('div', 'row2'); row.append(el('strong', '', `${t.side === 'buy' ? 'Long' : 'Short'} ${t.qty} · ${t.name}${t.working ? ' (limit working)' : ''}${t.accounts && t.accounts.length ? ' · ' + t.accounts.join(', ') : ''}`));
     if (t.ref && t.ref.startsWith('K|')) row.title = 'K1-K7 stops are trailed by the strategy, so their lines cannot be dragged.';
-    const part = (cls, label, v) => { const sp = el('span'); sp.append(el('span', 'dot ' + cls), document.createTextNode(`${label} ${typeof v === 'number' ? v.toFixed(2) : 'none'}`)); return sp; };
+    const part = (cls, label, v) => { const sp = el('span'); sp.append(el('span', 'dot ' + cls), document.createTextNode(`${label} ${typeof v === 'number' ? v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : 'none'}`)); return sp; };
     row.append(part('e', 'Entry', t.entry), part('t', 'Target', t.tp), part('s', 'Stop', t.sl)); leg.append(row);
   }
   if (!lines.length) leg.append(el('p', 'empty', 'No open trades on this market. Entry, target and stop lines show on the chart when the bot opens one.'));
@@ -858,7 +888,7 @@ function indCalc(d, b) {
     case 'vwap': return [{ k: 'line', color: C, vals: chartTf === 'day' ? c.map(() => null) : vwapA(b) }];
     case 'bb': { const m = smaA(c, P[0]), sd = m.map((x, i) => { if (x === null) return null; let s = 0; for (let j = i - P[0] + 1; j <= i; j++) s += (c[j] - x) ** 2; return Math.sqrt(s / P[0]); });
       return [{ k: 'line', color: C, vals: m, name: 'basis' }, { k: 'line', color: C + '99', vals: m.map((x, i) => (x === null ? null : x + P[1] * sd[i])), name: 'upper' }, { k: 'line', color: C + '99', vals: m.map((x, i) => (x === null ? null : x - P[1] * sd[i])), name: 'lower' }]; }
-    case 'vol': return [{ k: 'vol', vals: b.map(x => x.v || 0), colors: b.map(x => (x.close >= x.open ? 'rgba(63,191,159,0.38)' : 'rgba(239,95,86,0.38)')) }];
+    case 'vol': return [{ k: 'vol', vals: b.map(x => x.v || 0), colors: b.map(x => (x.close >= x.open ? 'rgba(38,166,154,0.28)' : 'rgba(239,83,80,0.28)')) }];
     case 'rsi': return [{ k: 'line', color: C, vals: rsiA(c, P[0]) }];
     case 'atr': return [{ k: 'line', color: C, vals: atrA(b, P[0]) }];
     case 'macd': { const f = emaA(c, P[0]), s = emaA(c, P[1]), m = f.map((x, i) => (x === null || s[i] === null ? null : x - s[i])), sg = emaA(m, P[2]);
@@ -871,8 +901,8 @@ function indCalc(d, b) {
 function indLayout() {
   if (!lw) return;
   const hasVol = inds.some(d => d.t === 'vol');
-  lw.priceScale('right', 0).applyOptions({ scaleMargins: { top: 0.07, bottom: hasVol ? 0.16 : 0.05 } });
-  if (hasVol) lw.priceScale('vol', 0).applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+  lw.priceScale('right', 0).applyOptions({ scaleMargins: { top: 0.07, bottom: hasVol ? 0.15 : 0.05 } });
+  if (hasVol) lw.priceScale('vol', 0).applyOptions({ scaleMargins: { top: 0.87, bottom: 0 } });
   const panes = lw.panes(); panes.forEach((p, i) => p.setStretchFactor(i === 0 ? 1 : 0.26));
   for (let i = 1; i < panes.length; i++) lw.priceScale('right', i).applyOptions({ scaleMargins: { top: 0.12, bottom: 0.08 } });
 }
@@ -985,58 +1015,6 @@ document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !$('cInd
 document.querySelectorAll('.stepper [data-step]').forEach(b => { b.onclick = () => { const q = $('tkQty'); q.value = String(Math.max(1, Math.min(100, (Number(q.value) || 1) + Number(b.dataset.step)))); }; });
 
 { const t = store_.get('keel.chart.tf', ''); if (TF_MS[t]) { chartTf = t; tfPress(); } }   // the timeframe you last used
-// ---------- backtest ----------
-function fillBtStrats() {
-  const sel = $('btStrat'), keep = sel.value;
-  sel.replaceChildren(...strats.map(x => new Option(x.cfg.name + (x.cfg.type === 'tradingview' ? ' (alerts, not testable)' : ''), x.id)));
-  if (keep && strats.some(x => x.id === keep)) sel.value = keep;
-  $('btPretendWrap').hidden = !(cat && cat.dev);
-}
-async function runBt(useFile) {
-  const id = $('btStrat').value; if (!id) { flash($('btMsg'), 'Add a strategy first.', true); return; }
-  let csv = '';
-  if (useFile) { const f = $('btFile').files[0]; if (!f) { flash($('btMsg'), 'Choose a price file first.', true); return; } if (f.size > 30e6) { flash($('btMsg'), 'That file is too big (30 MB max).', true); return; } csv = await f.text(); }
-  $('btMsg').textContent = 'Running\u2026'; $('btRun').disabled = true;
-  const r = await window.keel.backtest(id, csv, { slippageTicks: Number($('btSlip').value), feePerSide: Number($('btFee').value) });
-  $('btRun').disabled = false;
-  if (!r.ok) { flash($('btMsg'), r.error, true); return; }
-  $('btMsg').textContent = '';
-  const rep = r.report, days = Math.max(1, Math.round((rep.to - rep.from) / 86400000));
-  $('btOut').hidden = false;
-  const warn = [...(r.pretend ? ['These are pretend prices for trying the backtester. The results say nothing about real markets.'] : []), ...rep.notes];
-  $('btWarn').hidden = !warn.length; $('btWarn').textContent = warn.join(' ');
-  sign($('btNet'), rep.net); $('btNetSub').textContent = `${rep.tradeCount} trades over ${days} day${days === 1 ? '' : 's'}`;
-  $('btWin').textContent = rep.tradeCount ? Math.round(rep.winRate) + '%' : '\u2014'; $('btWinSub').textContent = `${rep.wins} wins, ${rep.losses} losses`;
-  $('btPf').textContent = rep.profitFactor === null ? '\u2014' : rep.profitFactor.toFixed(2); $('btPfSub').textContent = rep.avgR === null ? `Avg win ${cents(rep.avgWin)}, avg loss ${cents(rep.avgLoss)}` : `Average ${rep.avgR.toFixed(2)}R per trade`;
-  $('btDd').textContent = cents(rep.maxDrawdown); $('btDdSub').textContent = `Best day ${money(rep.bestDay)}, worst ${money(rep.worstDay)}`;
-  // equity line
-  const box = $('btChart'); box.replaceChildren();
-  const pts = rep.equity; if (pts.length > 1) {
-    const W = 640, H = 200, L = 8, R = 8, T = 12, B = 14, v = pts.map(p => p[1]), lo = Math.min(0, ...v), hi = Math.max(0, ...v), sp = hi - lo || 1;
-    const x = i => L + (i / (pts.length - 1)) * (W - L - R), y = val => T + (1 - (val - lo) / sp) * (H - T - B);
-    const NS = 'http://www.w3.org/2000/svg', mk = (nme, a) => { const e2 = document.createElementNS(NS, nme); for (const k in a) e2.setAttribute(k, a[k]); return e2; };
-    const svg = mk('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Equity after each trade' });
-    svg.append(mk('line', { class: 'zero', x1: L, x2: W - R, y1: y(0), y2: y(0) }), mk('polyline', { class: 'line', points: pts.map((p, i) => `${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`).join(' ') }));
-    box.append(svg);
-  } else box.append(el('p', 'empty', 'No trades in this period.'));
-  // trades
-  const tb = $('btTrades'); tb.replaceChildren();
-  if (rep.trades.length) {
-    const t = el('table'), hr = el('tr');
-    for (const h2 of ['Opened', 'Side', 'Qty', 'Entry', 'Exit', 'Points', 'R', 'Profit and loss']) hr.append(Object.assign(el('th', ['Qty', 'Entry', 'Exit', 'Points', 'R', 'Profit and loss'].includes(h2) ? 'r' : '', h2), { scope: 'col' }));
-    t.append(hr);
-    for (const x2 of rep.trades.slice().reverse()) {
-      const r2 = el('tr'), c = el('td', 'r'); sign(c, x2.pnl);
-      r2.append(el('td', '', new Date(x2.entryT).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })), el('td', '', x2.side === 'long' ? 'Long' : 'Short'), el('td', 'r', String(x2.qty)),
-        el('td', 'r', x2.entry.toFixed(2)), el('td', 'r', x2.exit.toFixed(2)), el('td', 'r', x2.points.toFixed(2)), el('td', 'r', x2.r === null ? '\u2014' : x2.r.toFixed(2)), c);
-      t.append(r2);
-    }
-    tb.append(t);
-    if (rep.tradeCount > rep.trades.length) tb.append(el('p', 'hint', `Showing the last ${rep.trades.length} of ${rep.tradeCount} trades.`));
-  } else tb.append(el('p', 'empty', 'No trades.'));
-}
-$('btRun').onclick = () => runBt(true);
-$('btPretend').onclick = () => runBt(false);
 
 // ---------- risk limits ----------
 const riskForm = () => ({ maxDailyLoss: Number($('rLoss').value), maxQtyPerOrder: Number($('rQty').value), maxOpenPositions: Number($('rPos').value), allowedSymbols: [...symbols] });
@@ -1280,7 +1258,10 @@ async function aiLoad() {
   aiData = await window.keel.aiGet(); if (!aiData) return;
   const c = aiData.cfg;
   if (!aiFormDirty) { $('aiPre').checked = c.autoPreflight; $('aiPause').checked = c.newsPause; $('aiPauseMin').value = c.pauseMin; $('aiCheck').value = c.entryCheck;
-    $('aiNews').value = c.newsTrades; $('aiVetoErr').checked = c.vetoOnError; $('aiRev').checked = c.autoReview; }
+    $('aiNews').value = c.newsTrades; $('aiVetoErr').checked = c.vetoOnError; $('aiRev').checked = c.autoReview; $('aiMgmt').value = c.tradeMgmt || 'shadow'; }
+  { const m = aiData.mgmt; $('aiMgmtStats').textContent = !m || !m.checks ? 'No trade checks yet. Claude checks open trades while the bot runs.' :
+    `${m.checks} checks: ${m.holds} hold, ${m.breakevens} breakeven, ${m.closes} close.` + (m.closeCalls ? ` Close calls vs holding: ${m.closeBetterR >= 0 ? '+' : ''}${m.closeBetterR.toFixed(2)}R in total over ${m.closeCalls} trade${m.closeCalls > 1 ? 's' : ''}.` : '') +
+    (m.beCalls ? ` Breakeven calls would have saved ${m.beSavedR.toFixed(2)}R over ${m.beCalls} trade${m.beCalls > 1 ? 's' : ''}.` : '') + (m.moved ? ` Stops moved to breakeven: ${m.moved}.` : ''); }
   $('aiKey').placeholder = aiData.hasKey ? 'Key saved (type a new one to replace it)' : 'sk-ant-...';
   const p = aiData.preflight;
   $('aiNow').textContent = !aiData.hasKey ? 'Add your API key to start.' : aiData.newsNow ? `News pause on now: ${aiData.newsNow}.` : 'No news pause right now.';
@@ -1297,7 +1278,7 @@ async function aiLoad() {
 ['aiPre', 'aiPause', 'aiPauseMin', 'aiCheck', 'aiNews', 'aiVetoErr', 'aiRev'].forEach(id => { $(id).addEventListener('input', () => { aiFormDirty = true; }); $(id).addEventListener('change', () => { aiFormDirty = true; }); });
 $('aiSave').onclick = async () => {
   const next = { autoPreflight: $('aiPre').checked, newsPause: $('aiPause').checked, pauseMin: Number($('aiPauseMin').value), entryCheck: $('aiCheck').value,
-    newsTrades: $('aiNews').value, vetoOnError: $('aiVetoErr').checked, autoReview: $('aiRev').checked };
+    newsTrades: $('aiNews').value, vetoOnError: $('aiVetoErr').checked, autoReview: $('aiRev').checked, tradeMgmt: $('aiMgmt').value };
   const was = aiData ? aiData.cfg : {};
   if ((next.entryCheck === 'live' && was.entryCheck !== 'live') || (next.newsTrades === 'live' && was.newsTrades !== 'live')) {
     if (!confirm('Let Claude affect LIVE trading?\n\nThe entry check can block real entries and news trades place real orders. Neither was backtested. Run them in paper mode first.')) return;

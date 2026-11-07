@@ -367,6 +367,85 @@ async function healthLines() {
       f.k.status().nextCheck || null, f.k.lastError || f.x.lastError || '', f.goalHit ? 'stopped for today (daily target)' : '');
   }
 }
+// ---------- Claude trade manager: every ~100 ticks, at most every 3 minutes, per open trade ----------
+// Shadow (default): log Claude's call and score it when the trade closes. Breakeven only: may move a stop to breakeven, only after
+// the trade has been +0.5R and while price is still past the entry (the one rule that did not hurt in the backtest). Never closes.
+const ticks: Record<string, number> = {};
+const tickRoot = (s: string) => s.toUpperCase().replace(/^M(?=NQ|GC|ES)/, '').replace(/[FGHJKMNQUVXZ]\d{1,2}$/, '');
+function countTick(sym: string) { const r = tickRoot(sym); ticks[r] = (ticks[r] ?? 0) + 1; }
+type MgmtState = { label: string; id: string; dir: 'long' | 'short'; entry: number; stop0: number; best: number; ticksAt: number; lastAsk: number; lastHoldLog: number; busy: boolean; calls: { action: string; r: number; px: number; at: number; reason: string }[] };
+const mgmt = new Map<string, MgmtState>();
+const mgmtFile = () => path.join(app.getPath('userData'), 'claude-trade-manager.json');
+type MgmtStats = { checks: number; holds: number; breakevens: number; closes: number; scored: number; closeCalls: number; closeBetterR: number; beCalls: number; beSavedR: number; moved: number };
+function loadMgmt(): MgmtStats { try { return { checks: 0, holds: 0, breakevens: 0, closes: 0, scored: 0, closeCalls: 0, closeBetterR: 0, beCalls: 0, beSavedR: 0, moved: 0, ...JSON.parse(fs.readFileSync(mgmtFile(), 'utf8')) }; } catch { return { checks: 0, holds: 0, breakevens: 0, closes: 0, scored: 0, closeCalls: 0, closeBetterR: 0, beCalls: 0, beSavedR: 0, moved: 0 }; } }
+function saveMgmt(s: MgmtStats) { try { fs.writeFileSync(mgmtFile(), JSON.stringify(s)); } catch { /* best effort */ } }
+const TICK_OF: Record<string, number> = { NQ: 0.25, GC: 0.1, ES: 0.25 };
+let mgmtTimer: ReturnType<typeof setInterval> | undefined;
+function openTradesFor(): { label: string; data: any; k: KLive | null; x: XLive | null; trades: { id: string; key: string; dir: 'long' | 'short'; sym: string; orderSym: string; qty: number; entry: number; stop: number; target: number | null; opened: number; kind: 'K' | 'X' }[] }[] {
+  const out: any[] = [];
+  const list = (k: KLive | null, x: XLive | null) => [
+    ...(k?.trades ?? []).map(t => ({ id: t.id, key: t.id, dir: t.dir, sym: t.sym, orderSym: t.orderSym, qty: t.qty, entry: t.entry, stop: t.stop, target: t.target, opened: t.opened, kind: 'K' })),
+    ...(x?.trades ?? []).filter(t => t.state === 'open' && t.entry !== null && t.stop !== null).map(t => ({ id: t.id, key: t.key, dir: t.dir, sym: t.sym, orderSym: t.orderSym, qty: t.qty, entry: t.entry as number, stop: t.stop as number, target: t.target, opened: t.placed, kind: 'X' }))];
+  if (engine) out.push({ label: mainLabel(), data: runData ?? runBroker, k: kLive, x: xLive, trades: list(kLive, xLive) });
+  for (const f of followers) out.push({ label: f.acct.label, data: f.data, k: f.k, x: f.x, trades: list(f.k, f.x) });
+  return out;
+}
+async function manageTrades() {
+  if (!ai || !ai.hasKey() || ai.cfg.tradeMgmt === 'off' || !engine) return;
+  const now = Date.now(), live = new Set<string>();
+  for (const acc of openTradesFor()) for (const t of acc.trades) {
+    const key = `${acc.label}|${t.key}|${t.entry}`; live.add(key);
+    const root = tickRoot(t.sym), px = acc.data?.lastPrice?.(t.orderSym) ?? acc.data?.lastPrice?.(root);
+    let st = mgmt.get(key);
+    if (!st) { st = { label: acc.label, id: t.id, dir: t.dir, entry: t.entry, stop0: t.stop, best: t.entry, ticksAt: ticks[root] ?? 0, lastAsk: 0, lastHoldLog: 0, busy: false, calls: [] }; mgmt.set(key, st); }
+    const d = t.dir === 'long' ? 1 : -1, R = Math.abs(st.entry - st.stop0);
+    if (px !== undefined) st.best = d > 0 ? Math.max(st.best, px) : Math.min(st.best, px);
+    if (st.busy || px === undefined || !(R > 0) || (ticks[root] ?? 0) - st.ticksAt < 100 || now - st.lastAsk < 180_000) continue;
+    st.busy = true; st.lastAsk = now; st.ticksAt = ticks[root] ?? 0;
+    const rNow = ((px - st.entry) * d) / R, rBest = ((st.best - st.entry) * d) / R;
+    void (async () => {
+      try {
+        let bars5: any[] = []; try { bars5 = (await acc.data.getHistory(root, 'min5', 24)).map((b: any) => ({ t: nyStamp(b.t), o: b.o, h: b.h, l: b.l, c: b.c })); } catch { /* without bars */ }
+        const ctx = { account: acc.label, strategy: t.id, market: t.orderSym, dir: t.dir, qty: t.qty, entry: st!.entry, stopNow: t.stop, firstStop: st!.stop0, target: t.target, priceNow: px,
+          rNow: Math.round(rNow * 100) / 100, rBest: Math.round(rBest * 100) / 100, minutesInTrade: Math.round((now - t.opened) / 60_000), nowET: nyStamp(), last24FiveMinuteBars: bars5 };
+        const r = await ai!.manageTrade(ctx), s = loadMgmt(); s.checks++;
+        if (r.action === 'hold') s.holds++; else if (r.action === 'breakeven') s.breakevens++; else s.closes++;
+        st!.calls.push({ action: r.action, r: rNow, px, at: now, reason: r.reason });
+        const head = `[${acc.label}] Claude trade check ${t.id} ${t.dir} (now ${rNow >= 0 ? '+' : ''}${rNow.toFixed(2)}R, best +${Math.max(0, rBest).toFixed(2)}R): ${r.action.toUpperCase()}. ${r.reason}`;
+        if (r.action !== 'hold' || now - st!.lastHoldLog > 30 * 60_000) { jot(head); if (r.action !== 'hold') engine?.say(head); if (r.action === 'hold') st!.lastHoldLog = now; }
+        // act: breakeven only, and only under the tested guardrail
+        if (ai!.cfg.tradeMgmt === 'breakeven' && r.action !== 'hold') {
+          const be = st!.entry + d * (TICK_OF[root] ?? 0.25);
+          if (rBest >= 0.5 && (px - be) * d > 0) {
+            const why = await (t.kind === 'K' ? acc.k!.tightenStop(t.id, be, 'Claude: momentum faded after +0.5R') : acc.x!.moveBracket(t.key, 'stop', be));
+            if (!why) { s.moved++; const m = `[${acc.label}] Claude moved the ${t.id} stop to breakeven (${be.toFixed(2)}). ${r.reason}`; jot(m); engine?.say(m); ping(m); }
+            else jot(`[${acc.label}] Claude wanted ${t.id} at breakeven, not moved: ${why}.`);
+          } else jot(`[${acc.label}] Claude said ${r.action} for ${t.id}; not acted on (the guardrail needs +0.5R first and price past the entry).`);
+        }
+        saveMgmt(s);
+      } catch (err) { jot(`[${acc.label}] Claude trade check for ${t.id} failed: ${(err as Error).message}`); }
+      finally { st!.busy = false; }
+    })();
+  }
+  for (const k of [...mgmt.keys()]) if (!live.has(k) && now - (mgmt.get(k)!.lastAsk || 0) > 6 * 3600e3) mgmt.delete(k);
+}
+/** When a trade closes: how did Claude's calls compare with what really happened? */
+function mgmtScore(label: string, r: CloseReport) {
+  if (r.exit === null) return;
+  const st = [...mgmt.entries()].find(([, v]) => v.label === label && v.id === r.id && Math.abs(v.entry - r.entry) < 1e-6);
+  if (!st) return;
+  const [key, v] = st; mgmt.delete(key);
+  const d = v.dir === 'long' ? 1 : -1, R = Math.abs(v.entry - v.stop0); if (!(R > 0) || !v.calls.length) return;
+  const finalR = ((r.exit - v.entry) * d) / R, s = loadMgmt(); s.scored++;
+  const firstClose = v.calls.find(c => c.action === 'close'), firstBe = v.calls.find(c => c.action === 'breakeven');
+  const parts: string[] = [];
+  if (firstClose) { s.closeCalls++; const better = firstClose.r - finalR; s.closeBetterR += better; parts.push(`a CLOSE call at ${firstClose.r.toFixed(2)}R vs the real ${finalR.toFixed(2)}R: ${better >= 0 ? 'closing would have been better by ' + better.toFixed(2) + 'R' : 'holding was better by ' + (-better).toFixed(2) + 'R'}`); }
+  if (firstBe) { s.beCalls++; const saved = finalR < 0 ? -finalR : 0; s.beSavedR += saved; parts.push(`a BREAKEVEN call at ${firstBe.r.toFixed(2)}R: ${saved > 0 ? 'it would have saved ' + saved.toFixed(2) + 'R' : 'the trade finished at ' + finalR.toFixed(2) + 'R, so it would not have helped (and could have stopped out a winner)'}`); }
+  if (!parts.length) parts.push(`Claude said hold ${v.calls.length} time${v.calls.length > 1 ? 's' : ''}; the trade finished at ${finalR.toFixed(2)}R`);
+  jot(`[${label}] Claude trade manager score for ${r.id}: ${parts.join('; ')}.`);
+  saveMgmt(s);
+}
+
 // ---------- price-feed watchdog: a feed silent for 2+ minutes while the market is open is started again ----------
 const feedState = new Map<string, { tries: number; last: number; alarmed: boolean }>();
 let feedTimer: ReturnType<typeof setInterval> | undefined;
@@ -402,11 +481,12 @@ function startHealth() {
   stopHealth();   // clears every timer, so the watchdog starts after it
   startedAt = Date.now(); feedState.clear();
   feedTimer = setInterval(() => void feedWatch().catch(() => {}), 30_000); (feedTimer as any).unref?.();
+  clearInterval(mgmtTimer); mgmtTimer = setInterval(() => void manageTrades().catch(() => {}), 10_000); (mgmtTimer as any).unref?.();
   const run = () => { if (engine) { void healthLines().catch(() => {}); void refreshProgress().catch(() => {}); void protectionCheck().catch(() => {}); try { checkQuiet(); maybeAudit(); } catch { /* never touch trading */ } } };
   healthFirst = setTimeout(run, 20_000); (healthFirst as any).unref?.();   // the first one shortly after Start, once prices flow
   healthTimer = setInterval(run, 5 * 60_000); (healthTimer as any).unref?.();
 }
-function stopHealth() { clearTimeout(healthFirst); clearInterval(healthTimer); healthTimer = undefined; clearInterval(feedTimer); feedTimer = undefined; }
+function stopHealth() { clearTimeout(healthFirst); clearInterval(healthTimer); healthTimer = undefined; clearInterval(feedTimer); feedTimer = undefined; clearInterval(mgmtTimer); mgmtTimer = undefined; }
 
 async function stopStatus() {
   clearInterval(statusTimer); statusTimer = undefined;
@@ -462,7 +542,7 @@ async function startFollowers(list: AccountRecord[], kc: ReturnType<typeof loadK
       const data: any = await dataFor(b, tag);
       const g = loadRisk(), guard = new RiskGuard({ ...g, maxDailyLoss: a.dailyLoss > 0 ? Math.min(g.maxDailyLoss, a.dailyLoss) : g.maxDailyLoss, maxMini: a.maxMini || 0, maxMicro: a.maxMicro || 0 });
       const paper = kc.mode === 'paper' ? new PaperOrders(data) : null, seen: Record<string, number> = {};
-      data.onQuote((q: any) => { seen[q.symbol] = Date.now(); paper?.onQuote(q); });
+      data.onQuote((q: any) => { seen[q.symbol] = Date.now(); countTick(q.symbol); paper?.onQuote(q); });
       const desk: OrderDesk = paper ?? (b as OrderDesk);
       const dailyPnL = async () => (paper ? paper.realized + paper.unrealized() : b.getDailyPnL());
       let info: { equity: number; floor: number } | null = null;
@@ -597,6 +677,7 @@ const mainLabel = () => loadAccounts(conns()).accounts.find(a => a.id === active
 /** Trade journal hook for one account's trading systems. */
 const recorder = (id: string, label: () => string, mode: 'paper' | 'live') => (r: CloseReport) => {
   const t = recordTrade(r, { id, label: label() }, mode);
+  try { mgmtScore(label(), r); } catch { /* scoring is best effort */ }
   jot(`[${t.account}] Journal: ${t.id} ${t.dir} ${t.qty} ${t.orderSym} ${t.entry.toFixed(2)} -> ${t.exit !== null ? t.exit.toFixed(2) : '?'} (${t.how})${t.pnl !== null ? ` ${t.pnl >= 0 ? '+' : '-'}$${Math.abs(t.pnl).toFixed(2)}${t.approx ? ' approx.' : ''}` : ''}`);
 };
 
@@ -779,7 +860,7 @@ app.whenReady().then(async () => {
     let dataSrc: any = broker;
     if (kc.mode !== 'off' && !kErr) {
       dataSrc = await dataFor(broker, m => engine?.say(m));
-      if (dataSrc !== broker) { dataSrc.onQuote((q: any) => { mainSeen[q.symbol] = Date.now(); bars.add(q); kPaper?.onQuote(q); }); runData = dataSrc; }
+      if (dataSrc !== broker) { dataSrc.onQuote((q: any) => { mainSeen[q.symbol] = Date.now(); countTick(q.symbol); bars.add(q); kPaper?.onQuote(q); }); runData = dataSrc; }
       kPaper = kc.mode === 'paper' ? new PaperOrders(dataSrc) : null;
       const desk: OrderDesk = kPaper ?? (broker as unknown as OrderDesk);
       const e = engine;
@@ -806,7 +887,7 @@ app.whenReady().then(async () => {
       engine.onGoal = () => { kLive?.stop(); kLive?.forgetAll(); xLive?.stop(); xLive?.forgetAll(); void kPaper?.closeAll(); goalPing(mainLabel()); };
       if (kPaper) { const p = kPaper; engine.goalPnl = async () => p.realized + p.unrealized(); }
     }
-    engine.onTick = q => { if (runData) return; mainSeen[q.symbol] = Date.now(); bars.add(q); kPaper?.onQuote(q); };   // with a separate price source, that source feeds both
+    engine.onTick = q => { if (runData) return; mainSeen[q.symbol] = Date.now(); countTick(q.symbol); bars.add(q); kPaper?.onQuote(q); };   // with a separate price source, that source feeds both
     await seedBars(broker);
     await engine.start(kLive ? [...new Set([...limits.allowedSymbols, ...K_SYMBOLS])] : limits.allowedSymbols);
     if (kErr) engine.say(`K system is off: ${kErr}`);
@@ -1080,7 +1161,7 @@ app.whenReady().then(async () => {
 
   // ---------- Claude ----------
   ipcMain.handle('ai:get', e => allowed(e) && ai ? { cfg: ai.cfg, hasKey: ai.hasKey(), preflight: ai.state.preflight, review: ai.state.review, chat: ai.state.chat,
-    newsNow: ai.newsBlock(), aiTrade: xLive?.aiTrade() ?? null, journal: todayJournal().slice(-60) } : null);
+    newsNow: ai.newsBlock(), aiTrade: xLive?.aiTrade() ?? null, journal: todayJournal().slice(-60), mgmt: loadMgmt() } : null);
   ipcMain.handle('ai:set', (e, x: unknown) => { if (!allowed(e) || !ai) return { ok: false, error: 'Not allowed.' }; const c = parseAIConfig(x); ai.setConfig(c); return { ok: true, cfg: c }; });
   ipcMain.handle('ai:key', (e, key: unknown) => {
     if (!allowed(e) || !ai) return { ok: false, error: 'Not allowed.' };

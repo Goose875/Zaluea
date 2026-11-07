@@ -10,21 +10,22 @@
     <aside class="rail">
       <div class="logo"><svg width="30" height="30" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#1d3036"/><line x1="8" y1="32" x2="56" y2="32" stroke="#7fd6c4" stroke-width="2"/><path d="M9 26 C16 20 20 27 27 22 S40 14 55 12" fill="none" stroke="#f0a43a" stroke-width="3.5" stroke-linecap="round"/><path d="M22 32 L32 54 L42 32 Z" fill="#7fd6c4"/></svg><span>Keel</span></div>
       <nav id="nav" aria-label="Main">
-        <button data-go="dash">Today</button>
-        <button data-go="k">Strategies</button>
-        <button data-go="ai">Claude</button>
-        <button data-go="chart">Chart</button>
-        <button data-go="acct">Progress</button>
-        <button data-go="journal">Journal</button>
-        <button data-go="accts">Accounts</button>
-        <button data-go="rank">Compare mixes</button>
-        <button data-go="conn">Logins</button>
-        <button data-go="risk">Risk limits</button>
+        <p class="navsep">Trading</p>
+        <button data-go="dash"><svg class="ni" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h4l3-8 4 14 3-6h4"/></svg><span>Today</span></button>
+        <button data-go="chart"><svg class="ni" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16M7 7h-2v8h2M7 7h2v8H7M17 4v16M17 9h-2v5h2M17 9h2v5h-2"/></svg><span>Chart</span></button>
+        <button data-go="k"><svg class="ni" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="0.8" fill="currentColor"/></svg><span>Strategies</span></button>
+        <button data-go="ai"><svg class="ni" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg><span>Claude</span></button>
+        <p class="navsep">Accounts</p>
+        <button data-go="acct"><svg class="ni" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Progress</span></button>
+        <button data-go="journal"><svg class="ni" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h11a2 2 0 0 1 2 2v16H8a2 2 0 0 1-2-2z"/><path d="M6 19a2 2 0 0 1 2-2h11M10 8h5M10 11h5"/></svg><span>Journal</span></button>
+        <button data-go="accts"><svg class="ni" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h3"/></svg><span>Accounts</span></button>
+        <button data-go="risk"><svg class="ni" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v6c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6z"/><path d="M9.5 12l1.8 1.8L15 10"/></svg><span>Risk limits</span></button>
+        <button data-go="conn"><svg class="ni" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg><span>Connections</span></button>
         <p class="navsep">Advanced</p>
-        <button data-go="kval">Validate</button>
-        <button data-go="strat">Custom strategies</button>
-        <button data-go="test">Backtest</button>
-        <button data-go="alerts">TradingView</button>
+        <button data-go="rank"><svg class="ni" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M4 12h16M4 17h7"/></svg><span>Compare mixes</span></button>
+        <button data-go="kval"><svg class="ni" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l5 5L20 6"/></svg><span>Validate</span></button>
+        <button data-go="strat"><svg class="ni" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6"/></svg><span>Custom strategies</span></button>
+        <button data-go="alerts"><svg class="ni" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span>TradingView</span></button>
       </nav>
       <p id="version" class="ver"></p>
     </aside>
@@ -276,6 +277,8 @@
               <div class="full"><label class="check"><input id="aiPause" type="checkbox"> Pause new entries around high-impact news</label> <input id="aiPauseMin" type="number" min="1" max="30" step="1" style="width:70px" aria-label="Minutes either side"> minutes either side</div>
               <div><label for="aiCheck">Check every entry (can veto)</label><select id="aiCheck"><option value="off">Off</option><option value="paper">Paper mode only</option><option value="live">Paper and LIVE</option></select></div>
               <div><label for="aiNews">Trade high-impact news (1 a day max)</label><select id="aiNews"><option value="off">Off</option><option value="paper">Paper mode only</option><option value="live">Paper and LIVE</option></select></div>
+              <div class="full"><label for="aiMgmt">Manage open trades (checks each open trade about every 100 ticks)</label><select id="aiMgmt"><option value="off">Off</option><option value="shadow">Shadow: log what Claude would do and score it (recommended)</option><option value="breakeven">Breakeven only: may move a stop to breakeven after +0.5R (never closes)</option></select>
+                <p id="aiMgmtStats" class="hint"></p></div>
               <div class="full"><label class="check"><input id="aiVetoErr" type="checkbox"> If Claude can't be reached, skip the entry (otherwise the entry goes ahead)</label></div>
               <div class="full"><label class="check"><input id="aiRev" type="checkbox"> Daily review after the flat-by, including why each losing trade lost</label></div>
               <div class="full"><button id="aiSave" type="button">Save</button><p id="aiMsg" class="saved" role="status" aria-live="polite"></p></div>
@@ -383,30 +386,6 @@
           </div>
         </section>
 
-        <section id="v-test" class="view" hidden>
-          <div class="panel">
-            <h2>Test a strategy on past prices</h2>
-            <p class="hint">Runs the strategy through the same engine the live bot uses. Export prices from TradingView (chart menu, Export chart data) at the same or smaller bar size as the strategy.</p>
-            <div class="fgrid4">
-              <div><label for="btStrat">Strategy</label><select id="btStrat"></select></div>
-              <div><label for="btFile">Price file (CSV)</label><input id="btFile" type="file" accept=".csv,text/csv"></div>
-              <div><label for="btSlip">Slippage (ticks per fill)</label><input id="btSlip" type="number" min="0" max="20" step="1" value="1"></div>
-              <div><label for="btFee">Fees ($ per contract, each side)</label><input id="btFee" type="number" min="0" max="50" step="0.05" value="0.5"></div>
-              <div class="full"><button id="btRun" type="button">Run backtest</button><span id="btPretendWrap" hidden><button id="btPretend" type="button" class="link">Try it on pretend prices</button></span><p id="btMsg" class="hint" role="status" aria-live="polite"></p></div>
-            </div>
-          </div>
-          <div id="btOut" hidden>
-            <p id="btWarn" class="notice warnbox" hidden></p>
-            <div class="cards four">
-              <div class="stat"><p class="k">Net profit</p><p id="btNet" class="num"></p><p id="btNetSub" class="sub"></p></div>
-              <div class="stat"><p class="k">Win rate</p><p id="btWin" class="num"></p><p id="btWinSub" class="sub"></p></div>
-              <div class="stat"><p class="k">Profit factor</p><p id="btPf" class="num"></p><p id="btPfSub" class="sub"></p></div>
-              <div class="stat"><p class="k">Biggest drop</p><p id="btDd" class="num"></p><p id="btDdSub" class="sub"></p></div>
-            </div>
-            <div class="panel"><h2>Equity</h2><div id="btChart" class="chart"></div></div>
-            <div class="panel"><h2>Trades</h2><div id="btTrades" class="tscroll plainscroll"></div></div>
-          </div>
-        </section>
 
         <section id="v-conn" class="view" hidden>
           <p class="say">Save your prop firm logins here. They’re encrypted by Windows and never leave this computer.</p>

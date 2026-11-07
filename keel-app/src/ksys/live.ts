@@ -305,6 +305,14 @@ export class KLive {
     this.d.note(`Sent ${side} ${t.qty} ${orderSym} (${S.id} ${S.name}): stop ${stop.toFixed(2)}${target !== null ? `, target ${target.toFixed(2)}` : ''}.`, 'trade');
   }
 
+  /** Move a K trade's stop TIGHTER only (never wider). Returns '' when moved, else why not. */
+  async tightenStop(id: string, price: number, why: string): Promise<string> {
+    const t = this.trades.find(x => x.id === id); if (!t) return 'the trade is no longer open';
+    if (t.dir === 'long' ? price <= t.stop : price >= t.stop) return 'the stop is already at or past that price';
+    this.d.note(`K system: ${t.id} stop to ${price.toFixed(2)} (${why}).`, 'info');
+    await this.moveStop(t, price); return t.stop === price ? '' : 'the broker did not accept the move';
+  }
+
   private async moveStop(t: LiveTrade, price: number) {
     try {
       if (t.stopOrder) await this.d.desk.modifyOrder(t.stopOrder, { price });

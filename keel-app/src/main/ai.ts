@@ -20,8 +20,9 @@ const BETAS = ['server-side-fallback-2026-07-01'];
 const file = (n: string) => path.join(app.getPath('userData'), n);
 
 export type Gate = 'off' | 'paper' | 'live';
-export interface AIConfig { autoPreflight: boolean; autoReview: boolean; newsPause: boolean; pauseMin: number; entryCheck: Gate; newsTrades: Gate; vetoOnError: boolean }
-export const DEFAULT_AI: AIConfig = { autoPreflight: true, autoReview: true, newsPause: true, pauseMin: 5, entryCheck: 'paper', newsTrades: 'paper', vetoOnError: false };
+export type Mgmt = 'off' | 'shadow' | 'breakeven';
+export interface AIConfig { autoPreflight: boolean; autoReview: boolean; newsPause: boolean; pauseMin: number; entryCheck: Gate; newsTrades: Gate; vetoOnError: boolean; tradeMgmt: Mgmt }
+export const DEFAULT_AI: AIConfig = { autoPreflight: true, autoReview: true, newsPause: true, pauseMin: 5, entryCheck: 'paper', newsTrades: 'paper', vetoOnError: false, tradeMgmt: 'shadow' };
 export interface NewsEvent { time: string; name: string; impact: 'high' | 'medium' | 'low'; forecast?: string; previous?: string }
 export interface Preflight { date: string; at: number; summary: string; events: NewsEvent[] }
 interface State { preflight: Preflight | null; review: { date: string; at: number; text: string } | null; newsTradeDay: string; chat: { role: 'user' | 'assistant'; text: string }[] }
@@ -31,6 +32,7 @@ export function parseAIConfig(x: any): AIConfig {
   for (const k of ['autoPreflight', 'autoReview', 'newsPause', 'vetoOnError'] as const) if (typeof x[k] === 'boolean') c[k] = x[k];
   if (typeof x.pauseMin === 'number' && x.pauseMin >= 1 && x.pauseMin <= 30) c.pauseMin = Math.round(x.pauseMin);
   for (const k of ['entryCheck', 'newsTrades'] as const) if (['off', 'paper', 'live'].includes(x[k])) c[k] = x[k];
+  if (['off', 'shadow', 'breakeven'].includes(x.tradeMgmt)) c.tradeMgmt = x.tradeMgmt;
   return c;
 }
 const nyDate = (t = Date.now()) => new Date(wallOf(t)).toISOString().slice(0, 10);
@@ -43,6 +45,8 @@ const PREFLIGHT_SCHEMA = { type: 'object', additionalProperties: false, required
     time: { type: 'string', description: 'HH:MM, 24-hour New York time' }, name: { type: 'string' }, impact: { type: 'string', enum: ['high', 'medium', 'low'] },
     forecast: { type: 'string' }, previous: { type: 'string' } } } } } };
 const VETO_SCHEMA = { type: 'object', additionalProperties: false, required: ['allow', 'reason'], properties: { allow: { type: 'boolean' }, reason: { type: 'string' } } };
+const MGMT_SCHEMA = { type: 'object', additionalProperties: false, required: ['action', 'reason'], properties: {
+  action: { type: 'string', enum: ['hold', 'breakeven', 'close'] }, reason: { type: 'string' } } };
 const NEWS_SCHEMA = { type: 'object', additionalProperties: false, required: ['trade', 'symbol', 'direction', 'stop_points', 'target_r', 'reason'], properties: {
   trade: { type: 'boolean' }, symbol: { type: 'string', enum: ['NQ', 'GC'] }, direction: { type: 'string', enum: ['long', 'short'] },
   stop_points: { type: 'number' }, target_r: { type: 'number' }, reason: { type: 'string' } } };
@@ -120,6 +124,21 @@ Then write a 3-5 sentence summary of what matters for trading NQ and GC today an
       `A backtested strategy wants to enter now. Veto it ONLY for a concrete reason visible in the data (e.g. a high-impact release minutes away, price already far past the planned stop, a gap or spike that makes the stop meaningless, or the market being closed/illiquid). Otherwise allow it: the strategies are tested and you should not second-guess ordinary setups.
 How to read the entry: entryType "market" fills now, near lastPrice. entryType "limit" is a RESTING order at price: it fills only if the market trades back to price, and then the stop is exactly where it is listed, so the market having moved away from price is NOT a reason to veto (it only means the order may not fill). riskUsd is Keel's own risk for this trade, measured from price to stop; use it rather than working out a risk from lastPrice.
 Answer in one short sentence.\n\n${JSON.stringify(ctx)}\n\nToday's calendar: ${JSON.stringify(this.state.preflight?.date === nyDate() ? this.state.preflight.events : [])}`, VETO_SCHEMA, 'low');
+    const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('Claude took longer than 25 s')), 25_000));
+    return Promise.race([run, timeout]);
+  }
+
+  // ---------- open-trade manager ----------
+  /** Every ~100 ticks of an open trade: hold, move the stop to breakeven, or close. Keel decides what (if anything) to do with the answer. */
+  async manageTrade(ctx: object): Promise<{ action: 'hold' | 'breakeven' | 'close'; reason: string }> {
+    const run = this.json<{ action: 'hold' | 'breakeven' | 'close'; reason: string }>(
+      `You manage one OPEN trade that a backtested Keel strategy entered. Decide: hold, breakeven (move the stop to the entry price) or close.
+What Keel's own backtests found (2.4 years, every K1-K7 and K9 trade): holding to the strategy's own stop, target and time exits is the baseline and is hard to beat.
+Closing early when a trade stalls or gives back profit LOST money out of sample. Moving the stop to breakeven after the trade has been at least +0.5R and momentum then turns
+(a close back through the 20-period average) was roughly neutral. So the normal answer is HOLD. Say breakeven only when the trade has been +0.5R or more AND the bars show
+clear momentum loss against it. Say close only for something concrete and serious (a high-impact release minutes away, a sudden move that makes the stop meaningless).
+Never close or move a stop just because the trade is slightly negative: losing a little is normal. Answer in one short sentence.\n\n${JSON.stringify(ctx)}\n\n` +
+      `Today's calendar: ${JSON.stringify(this.state.preflight?.date === nyDate() ? this.state.preflight.events : [])}`, MGMT_SCHEMA, 'low');
     const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('Claude took longer than 25 s')), 25_000));
     return Promise.race([run, timeout]);
   }

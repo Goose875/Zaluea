@@ -13,3 +13,8 @@ fs.copyFileSync('node_modules/lightweight-charts/LICENSE', 'dist/renderer/vendor
 if (fs.existsSync('.secrets/update-key.json')) fs.copyFileSync('.secrets/update-key.json', 'dist/main/update-key.json');
 else if (process.env.KEEL_UPDATE_KEY) fs.writeFileSync('dist/main/update-key.json', JSON.stringify({ key: process.env.KEEL_UPDATE_KEY }));
 else console.warn('No update key (.secrets/update-key.json or KEEL_UPDATE_KEY): this build will not auto-update.');
+
+// Inter (SIL Open Font License), bundled so Keel looks the same on every PC
+fs.mkdirSync('dist/renderer/fonts', { recursive: true });
+fs.copyFileSync('node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2', 'dist/renderer/fonts/inter.woff2');
+fs.copyFileSync('node_modules/@fontsource-variable/inter/LICENSE', 'dist/renderer/fonts/inter-LICENSE.txt');
