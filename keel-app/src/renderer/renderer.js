@@ -151,7 +151,27 @@ function drawGauge(n, s) {
   box.append(svg);
 }
 
+function renderBoard(s) {
+  const rows = (s.running && s.accounts) || [], panel = $('acctPanel');
+  panel.hidden = rows.length < 2 && !(rows[0] && rows[0].state !== 'Trading' && rows[0].state !== 'Market closed');
+  if (panel.hidden) return;
+  const live = rows.filter(r => r.state === 'Trading').length;
+  $('acctHead').textContent = rows.length > 1 ? (live === rows.length ? `all ${rows.length} trading` : `${live} of ${rows.length} trading`) : '';
+  const td = (t, c) => { const x = document.createElement('td'); if (c) x.className = c; x.textContent = t; return x; };
+  const pnl = v => { const x = td(v === null || v === undefined ? '\u2014' : money(v), 'r'); if (v > 0.004) x.classList.add('pos'); else if (v < -0.004) x.classList.add('neg'); return x; };
+  $('acctRows').replaceChildren(...rows.map(r => {
+    const tr = document.createElement('tr'), name = td(r.label + (r.main ? '' : ''));
+    if (r.paper !== null && r.paper !== undefined) { const sp = document.createElement('span'); sp.className = 'hint'; sp.textContent = ` \u00b7 paper ${money(r.paper)}`; name.append(sp); }
+    const st = td('', ''), dot = document.createElement('span'); dot.className = 'dot ' + (r.state === 'Trading' ? 'ok' : r.state === 'Market closed' || r.state.startsWith('Done') ? 'idle' : 'bad');
+    st.append(dot, document.createTextNode(` ${r.state}${r.strategies ? ` \u00b7 ${r.strategies} strategies` : ''}`));
+    const ago = r.pricesAgo === null ? 'none yet' : r.pricesAgo < 60 ? `${r.pricesAgo}s ago` : `${Math.round(r.pricesAgo / 60)} min ago`;
+    tr.append(name, st, pnl(r.today), pnl(r.total), td(`${r.open}${r.working ? ` + ${r.working} working` : ''}`, 'r'), td(ago, 'r'));
+    return tr;
+  }));
+}
+
 function renderToday(s) {
+  renderBoard(s);
   const st = s.stats, n = numbers(s); running = s.running;
   const pill = $('pill');
   pill.textContent = !s.running ? 'Bot stopped' : st && st.halted ? 'Stopped: loss limit' : st && st.paused ? 'Paused: goal reached' : 'Bot running';
@@ -1240,9 +1260,9 @@ document.querySelectorAll('#kMode button').forEach(b => {
 });
 
 // ---------- Discord ----------
-async function suLoad() { const s = await window.keel.startupGet(); if (s) { $('suResume').checked = s.autoResume; $('suLogin').checked = s.openAtLogin; } }
-async function suSave() { const r = await window.keel.startupSet({ autoResume: $('suResume').checked, openAtLogin: $('suLogin').checked }); $('suMsg').textContent = r && r.ok ? 'Saved.' : 'Could not save.'; }
-$('suResume').onchange = suSave; $('suLogin').onchange = suSave;
+async function suLoad() { const s = await window.keel.startupGet(); if (s) { $('suResume').checked = s.autoResume; $('suLogin').checked = s.openAtLogin; $('suBg').checked = s.background !== false; } }
+async function suSave() { const r = await window.keel.startupSet({ autoResume: $('suResume').checked, openAtLogin: $('suLogin').checked, background: $('suBg').checked }); $('suMsg').textContent = r && r.ok ? 'Saved.' : 'Could not save.'; }
+$('suResume').onchange = suSave; $('suLogin').onchange = suSave; $('suBg').onchange = suSave;
 async function dcLoad() { void suLoad(); const r = await window.keel.discordGet(); if (r) { $('dcUrl').placeholder = r.saved ? 'Saved (paste a new one to replace it)' : 'https://discord.com/api/webhooks/...'; $('dcDel').hidden = !r.saved; $('dcEveryone').checked = r.everyone !== false; $('dlUrl').placeholder = r.logSaved ? 'Saved (paste a new one to replace it)' : 'https://discord.com/api/webhooks/...'; $('dlDel').hidden = !r.logSaved; } }
 $('dlSave').onclick = async () => { const u = $('dlUrl').value.trim(); if (!u) return; $('dlMsg').textContent = 'Sending a test message…';
   const r = await window.keel.discordLogSave(u); $('dlUrl').value = ''; $('dlMsg').textContent = r.ok ? 'Saved. Check Discord for the test message.' : r.error; dcLoad(); };

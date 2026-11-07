@@ -48,12 +48,13 @@
           <p id="dSay" class="say"></p>
           <div class="runway panel">
             <div class="rw-head">
-              <div><p class="k">Today</p><p id="sToday" class="big">$0.00</p><p id="sSub" class="sub"></p></div>
+              <div><p class="k">Today&rsquo;s P&amp;L</p><p id="sToday" class="big">$0.00</p><p id="sSub" class="sub"></p></div>
               <div class="rw-side"><div><p class="k">Total P&amp;L</p><p id="sNet" class="mid">—</p><p id="sNetSub" class="sub"></p></div>
                 <div><p class="k">Balance</p><p id="sBal" class="mid">—</p><p id="sBalSub" class="sub"></p></div></div>
             </div>
             <div id="gauge" class="gauge"></div>
           </div>
+          <div id="acctPanel" class="panel" hidden><h2>Accounts <span id="acctHead" class="hint"></span></h2><div class="tablewrap"><table class="acctb"><thead><tr><th>Account</th><th>Status</th><th class="r">Today&rsquo;s P&amp;L</th><th class="r">Total P&amp;L</th><th class="r">Open</th><th class="r">Prices</th></tr></thead><tbody id="acctRows"></tbody></table></div></div>
           <div id="radarPanel" class="panel" hidden><h2>Radar <span id="radarHead" class="hint"></span></h2><div id="radar" class="radar"></div></div>
           <div class="panel"><h2>How today has gone</h2><div id="chart" class="chart"></div></div>
           <div class="two">
@@ -401,7 +402,8 @@
             <h2>Start-up</h2>
             <p class="hint">So an update, a crash or a reboot never leaves the bot stopped without you noticing.</p>
             <label class="check"><input id="suResume" type="checkbox"> If the bot was running when Keel closed, start it again when Keel opens</label>
-            <label class="check"><input id="suLogin" type="checkbox"> Open Keel when Windows starts</label>
+            <label class="check"><input id="suBg" type="checkbox" checked> Keep running in the background when I close the window (Keel icon by the clock; right-click it to quit)</label>
+            <label class="check"><input id="suLogin" type="checkbox"> Open Keel when Windows starts (straight to the icon by the clock when the option above is on)</label>
             <p id="suMsg" class="hint" role="status" aria-live="polite"></p>
           </div>
           <div class="panel">

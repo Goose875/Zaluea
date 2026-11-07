@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, IpcMainInvokeEvent, powerSaveBlocker } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, session, IpcMainInvokeEvent, powerSaveBlocker, Tray } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import * as http from 'http';
 import * as path from 'path';
@@ -269,6 +269,33 @@ function checkQuiet() {
 
 // Combine progress (evaluation accounts) or payout status (funded / live), per account label, for the Discord card
 const progressText = new Map<string, string>();
+// ---------- account board: every running account side by side (Today's P&L, Total P&L, prices, open trades) ----------
+interface BoardRow { id: string; label: string; main: boolean; state: string; today: number | null; total: number | null; paper: number | null; open: number; working: number; pricesAgo: number | null; strategies: number }
+let board: BoardRow[] = [], boardTimer: NodeJS.Timeout | undefined;
+const enabledCount = (k: KLive | null) => k ? Object.values((k as any).cfg?.enabled ?? {}).filter(Boolean).length : 0;
+const newestTick = (seen: Record<string, number>) => { const t = Math.max(0, ...Object.values(seen)); return t ? Math.round((Date.now() - t) / 1000) : null; };
+async function refreshBoard() {
+  if (!engine) { board = []; return; }
+  const rows: BoardRow[] = [], snap: any = engine.snapshot(), closed = marketClosed(Date.now());
+  const stateOf = (halted: boolean, goal: boolean, ago: number | null, err = '') => err ? err : halted ? 'Stopped: loss limit' : goal ? 'Done for today: goal reached' : closed ? 'Market closed' : ago === null || ago > 120 ? 'No prices' : 'Trading';
+  const mainAgo = newestTick(mainSeen), xo = (x: XLive | null) => x ? x.trades.filter(t => t.state === 'open').length : 0, xw = (x: XLive | null) => x ? x.trades.filter(t => t.state === 'working').length : 0;
+  rows.push({ id: activeAccount, label: mainLabel(), main: true, state: stateOf(!!snap.halted, !!snap.paused, mainAgo), today: snap.total ?? null,
+    total: snap.progress && snap.account ? snap.progress.netProfit : null, paper: kPaper ? kPaper.realized + kPaper.unrealized() : null,
+    open: (kLive?.trades.length ?? 0) + xo(xLive), working: xw(xLive), pricesAgo: mainAgo, strategies: enabledCount(kLive) });
+  for (const f of followers) {
+    let today: number | null = null, total: number | null = null;
+    try {
+      const b = f.broker;
+      if (b?.getPnLBreakdown) { const x = await b.getPnLBreakdown(); today = x.realized + x.unrealized; } else if (b?.getDailyPnL) today = await b.getDailyPnL();
+      const info = b?.getAccount ? await b.getAccount() : null;
+      if (info && Number.isFinite(info.balance) && Number.isFinite(info.startBalance)) total = info.days?.length ? evaluate(goalsFor(f.acct), info, today ?? 0).netProfit : info.balance - info.startBalance;
+    } catch { const old = board.find(r => r.id === f.acct.id); if (old) { today = old.today; total = old.total; } }
+    const ago = newestTick(f.seen);
+    rows.push({ id: f.acct.id, label: f.acct.label, main: false, state: stateOf(false, f.goalHit, ago, f.error), today, total, paper: f.paper ? f.paper.realized + f.paper.unrealized() : null,
+      open: f.k.trades.length + xo(f.x), working: xw(f.x), pricesAgo: ago, strategies: enabledCount(f.k) });
+  }
+  board = rows;
+}
 async function refreshProgress() {
   const st = loadAccounts(conns()), list: { acct: AccountRecord | undefined; broker: any; label: string }[] = [];
   if (engine) list.push({ acct: st.accounts.find(a => a.id === activeAccount), broker: runBroker, label: mainLabel() });
@@ -481,12 +508,13 @@ function startHealth() {
   stopHealth();   // clears every timer, so the watchdog starts after it
   startedAt = Date.now(); feedState.clear();
   feedTimer = setInterval(() => void feedWatch().catch(() => {}), 30_000); (feedTimer as any).unref?.();
+  clearInterval(boardTimer); boardTimer = setInterval(() => void refreshBoard().catch(() => {}), 10_000); (boardTimer as any).unref?.(); setTimeout(() => void refreshBoard().catch(() => {}), 3000);
   clearInterval(mgmtTimer); mgmtTimer = setInterval(() => void manageTrades().catch(() => {}), 10_000); (mgmtTimer as any).unref?.();
   const run = () => { if (engine) { void healthLines().catch(() => {}); void refreshProgress().catch(() => {}); void protectionCheck().catch(() => {}); try { checkQuiet(); maybeAudit(); } catch { /* never touch trading */ } } };
   healthFirst = setTimeout(run, 20_000); (healthFirst as any).unref?.();   // the first one shortly after Start, once prices flow
   healthTimer = setInterval(run, 5 * 60_000); (healthTimer as any).unref?.();
 }
-function stopHealth() { clearTimeout(healthFirst); clearInterval(healthTimer); healthTimer = undefined; clearInterval(feedTimer); feedTimer = undefined; clearInterval(mgmtTimer); mgmtTimer = undefined; }
+function stopHealth() { clearTimeout(healthFirst); clearInterval(healthTimer); healthTimer = undefined; clearInterval(feedTimer); feedTimer = undefined; clearInterval(mgmtTimer); mgmtTimer = undefined; clearInterval(boardTimer); boardTimer = undefined; board = []; }
 
 async function stopStatus() {
   clearInterval(statusTimer); statusTimer = undefined;
@@ -515,14 +543,59 @@ async function stopTrading() {
   hook = null;
 }
 
+// ---------- running in the background: closing the window keeps Keel (and the bot) running by the clock ----------
+let update: { state: 'none' | 'downloading' | 'ready' | 'error'; version: string } = { state: 'none', version: '' };
+let mainWin: BrowserWindow | null = null, tray: Tray | null = null, quitting = false, toldTray = false;
+function showWindow() {
+  if (!mainWin || mainWin.isDestroyed()) { createWindow(); return; }
+  if (mainWin.isMinimized()) mainWin.restore();
+  mainWin.show(); mainWin.focus();
+}
+async function quitKeel() {
+  if (engine && mainWin && !mainWin.isDestroyed()) {
+    const r = await dialog.showMessageBox(mainWin.isVisible() ? mainWin : (undefined as any), { type: 'warning', buttons: ['Quit Keel', 'Cancel'], defaultId: 1, cancelId: 1, title: 'Keel',
+      message: 'The bot is running. Quit Keel anyway?', detail: 'Quitting stops trading. Stops and targets already at the broker stay there.' });
+    if (r.response !== 0) return;
+  }
+  quitting = true; app.quit();
+}
+function trayIcon() {
+  for (const f of ['tray.ico', 'tray.png']) { const p = path.join(__dirname, f); if (fs.existsSync(p)) { const i = nativeImage.createFromPath(p); if (!i.isEmpty()) return i.resize({ width: 16, height: 16 }); } }
+  return nativeImage.createEmpty();
+}
+function refreshTray() {
+  if (!loadStartup().background) { tray?.destroy(); tray = null; return; }
+  try {
+    if (!tray) { tray = new Tray(trayIcon()); tray.on('click', showWindow); tray.on('double-click', showWindow); }
+    const running = !!engine;
+    tray.setToolTip(running ? 'Keel: bot running' : 'Keel: bot stopped');
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: running ? 'Bot running' : 'Bot stopped', enabled: false },
+      { type: 'separator' },
+      { label: 'Open Keel', click: showWindow },
+      ...(running ? [{ label: 'Stop bot', click: async () => { saveStartup({ ...loadStartup(), wasRunning: false }); await stopTrading(); activeBroker = ''; activeAccount = ''; void startWatch(); refreshTray(); } }] : []),
+      ...(update.state === 'ready' ? [{ label: `Restart to update (${update.version})`, click: () => { quitting = true; autoUpdater.quitAndInstall(); } }] : []),
+      { type: 'separator' },
+      { label: 'Quit Keel', click: () => void quitKeel() }
+    ]));
+  } catch { /* no tray on this system: closing the window quits as before */ tray = null; }
+}
+
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1040, height: 700, minWidth: 420, backgroundColor: '#0c2233',
+    width: 1040, height: 700, minWidth: 420, backgroundColor: '#0a0f12', show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true
     }
   });
+  mainWin = win;
+  win.on('close', e => {
+    if (quitting || !tray || !loadStartup().background) return;
+    e.preventDefault(); win.hide();
+    if (!toldTray) { toldTray = true; try { tray.displayBalloon({ title: 'Keel is still running', content: engine ? 'The bot keeps trading. Click the Keel icon by the clock to open it, or right-click it to quit.' : 'Click the Keel icon by the clock to open it, or right-click it to quit.', iconType: 'info' }); } catch { /* balloons are Windows-only */ } }
+  });
+  win.on('closed', () => { if (mainWin === win) mainWin = null; });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', e => e.preventDefault());
   win.loadFile(path.join(__dirname, '../renderer/index.html'));
@@ -668,8 +741,8 @@ function settingsCheck(): string[] {
 }
 
 // ---------- start-up options: resume trading after a restart, open Keel at Windows login ----------
-interface Startup { autoResume: boolean; openAtLogin: boolean; wasRunning: boolean }
-function loadStartup(): Startup { try { const x = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'startup.json'), 'utf8')); return { autoResume: x.autoResume === true, openAtLogin: x.openAtLogin === true, wasRunning: x.wasRunning === true }; } catch { return { autoResume: false, openAtLogin: false, wasRunning: false }; } }
+interface Startup { autoResume: boolean; openAtLogin: boolean; wasRunning: boolean; background: boolean }
+function loadStartup(): Startup { try { const x = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'startup.json'), 'utf8')); return { autoResume: x.autoResume === true, openAtLogin: x.openAtLogin === true, wasRunning: x.wasRunning === true, background: x.background !== false }; } catch { return { autoResume: false, openAtLogin: false, wasRunning: false, background: true }; } }
 function saveStartup(s: Startup) { try { fs.writeFileSync(path.join(app.getPath('userData'), 'startup.json'), JSON.stringify(s)); } catch { /* best effort */ } }
 let startBot: () => Promise<{ ok: boolean; error?: string; warnings?: string[] }> = async () => ({ ok: false, error: 'Keel is still starting.' });
 const goalPing = (label: string) => ping(`[${label}] Daily profit target reached: closing everything and stopping this account for today.`);
@@ -725,7 +798,13 @@ async function runReview() {
   return ai!.review(todayJournal(), { NQ: await bars5('NQ', 300).catch(() => []), GC: await bars5('GC', 300).catch(() => []) }, pnl + acct);
 }
 
+// One Keel at a time: opening it again (Start menu, desktop icon) brings back the running one instead of starting a second bot.
+const primary = typeof app.requestSingleInstanceLock === 'function' ? app.requestSingleInstanceLock() : true;
+if (!primary) { quitting = true; app.quit(); }
+app.on('second-instance', () => showWindow());
+
 app.whenReady().then(async () => {
+  if (!primary) return;
   ai = new KeelAI();
   session.defaultSession.webRequest.onHeadersReceived((d, cb) => cb({
     responseHeaders: {
@@ -737,7 +816,7 @@ app.whenReady().then(async () => {
 
   // Updates: in the installed app, Keel checks updates.keeltrading.net (Cloudflare R2, key-protected) for a newer version, downloads it quietly,
   // and installs it when you close Keel (or right away if you press Restart and update while the bot is stopped).
-  let update: { state: 'none' | 'downloading' | 'ready' | 'error'; version: string } = { state: 'none', version: '' };
+  update = { state: 'none', version: '' };
   if (app.isPackaged) {
     autoUpdater.autoDownload = true; autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.requestHeaders = { 'x-keel-key': UPDATE_KEY };
@@ -758,7 +837,7 @@ app.whenReady().then(async () => {
     if (!fromOurWindow(e)) return null;
     return {
       running: !!engine, broker: activeBroker, account: activeAccount, update,
-      watch: watch ? { account: watch.id, data: watch.data, error: watch.error } : null, stats: engine ? engine.snapshot() : null, radar: engine && (kLive || xLive) ? radar() : null,
+      watch: watch ? { account: watch.id, data: watch.data, error: watch.error } : null, stats: engine ? engine.snapshot() : null, accounts: engine ? board : [], radar: engine && (kLive || xLive) ? radar() : null,
       webhookSecret: webhookSecret()
     };
   });
@@ -1233,20 +1312,23 @@ app.whenReady().then(async () => {
 
   // A small menu with no developer tools in it.
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: 'File', submenu: [{ role: 'quit' }] },
+    { label: 'File', submenu: [{ label: 'Quit Keel', accelerator: 'CmdOrCtrl+Q', click: () => void quitKeel() }] },
     { label: 'View', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
     { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'close' }] }
   ]));
   ipcMain.handle('startup:get', e => (allowed(e) ? loadStartup() : null));
   ipcMain.handle('startup:set', (e, x: any) => {
     if (!allowed(e) || !x || typeof x !== 'object') return { ok: false };
-    const s = { ...loadStartup(), autoResume: x.autoResume === true, openAtLogin: x.openAtLogin === true };
+    const s = { ...loadStartup(), autoResume: x.autoResume === true, openAtLogin: x.openAtLogin === true, background: x.background !== false };
     saveStartup(s);
-    try { if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: s.openAtLogin }); } catch { /* not supported here */ }
+    try { if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: s.openAtLogin, args: ['--hidden'] }); } catch { /* not supported here */ }
+    refreshTray();
     return { ok: true, startup: s };
   });
   void startWatch();
-  createWindow();
+  refreshTray(); setInterval(refreshTray, 15_000).unref?.();   // keeps the tray's running/stopped line and update item current
+  const hidden = process.argv.includes('--hidden') && !!tray;   // opened at Windows login: straight to the tray
+  createWindow(); if (!hidden) mainWin?.show();
   // The bot was running when Keel closed (an update, a crash, a reboot): start it again if that option is on
   const su = loadStartup();
   if (su.autoResume && su.wasRunning) setTimeout(async () => {
@@ -1258,4 +1340,5 @@ app.whenReady().then(async () => {
   }, 8000);
 });
 
-app.on('window-all-closed', () => app.quit());
+app.on('before-quit', () => { quitting = true; });
+app.on('window-all-closed', () => { if (quitting || !tray) app.quit(); });

@@ -9,6 +9,9 @@ fs.mkdirSync('dist/renderer/vendor', { recursive: true });
 fs.copyFileSync('node_modules/lightweight-charts/dist/lightweight-charts.standalone.production.js', 'dist/renderer/vendor/lightweight-charts.js');
 fs.copyFileSync('node_modules/lightweight-charts/LICENSE', 'dist/renderer/vendor/lightweight-charts-LICENSE.txt');
 
+// tray icon (Keel keeps running by the clock when the window is closed)
+fs.copyFileSync('build/icon.ico', 'dist/main/tray.ico'); fs.copyFileSync('build/icon.png', 'dist/main/tray.png');
+
 // auto-update key (git-ignored secret)
 if (fs.existsSync('.secrets/update-key.json')) fs.copyFileSync('.secrets/update-key.json', 'dist/main/update-key.json');
 else if (process.env.KEEL_UPDATE_KEY) fs.writeFileSync('dist/main/update-key.json', JSON.stringify({ key: process.env.KEEL_UPDATE_KEY }));

@@ -47,7 +47,9 @@ const clamp = (n: number) => Math.max(0, Math.min(100, n));
 /** Works out where an account stands against its goals. Pure, so it is easy to test. */
 export function evaluate(g: Goals, acct: AccountInfo | null, todayPnl: number, todayPeak = todayPnl): Progress {
   const days = acct ? acct.days : [];
-  const netProfit = days.reduce((a, d) => a + d.pnl, 0) + todayPnl;
+  // Brokers that send no past days (TopstepX, Rithmic) still give the balance: profit since the start is balance - starting balance.
+  // Without this, a running bot showed only today's P&L as the account's total (e.g. $0 instead of $800).
+  const netProfit = days.length || !acct || !Number.isFinite(acct.balance) || !Number.isFinite(acct.startBalance) ? days.reduce((a, d) => a + d.pnl, 0) + todayPnl : acct.balance - acct.startBalance;
   const bestDay = Math.max(0, todayPnl, ...days.map(d => d.pnl));
 
   const consistencyOn = g.consistencyPct > 0 && g.stage !== 'practice';
