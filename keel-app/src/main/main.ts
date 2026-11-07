@@ -27,7 +27,7 @@ import { PaperOrders } from '../ksys/paperOrders';
 import { loadKConfig, saveKConfig, kTradeStore, xTradeStore } from './kstore';
 import RANKINGS from '../ksys/rankings.json';
 import { KeelAI, parseAIConfig } from './ai';
-import { ping, checkWebhook, testPing, status as discordStatus, statusEnd as discordStatusEnd, everyoneOn, COLOR, Embed, logLine, flushLog, testLog } from './discord';
+import { ping, checkWebhook, testPing, status as discordStatus, statusEnd as discordStatusEnd, everyoneOn, COLOR, Embed, logLine, flushLog, testLog, post } from './discord';
 import { mult } from '../core/contracts';
 import { UPDATE_KEY } from './updateKey';
 import { loadJournal, recordTrade, editTrade, removeTrade, payoutRecord, allPayouts, setPayoutRules, addPayout, removePayout } from './journalStore';
@@ -37,11 +37,11 @@ import { payoutStatus } from '../core/payouts';
 import { listRithmicAccounts } from '../brokers/rithmic';
 import type { AccountRecord } from '../core/accounts';
 import { ProjectXBroker } from '../brokers/projectx';
-import type { EntryContext } from '../ksys/live';
+import type { EntryContext, Decision } from '../ksys/live';
 import { parseHourly, buildSeries, DailyClose } from '../ksys/series';
 import { simulate, VALIDATION, STRATEGIES, INSTRUMENTS } from '../ksys/sim';
 import { compare, EXPECTED, stats as kStats } from '../ksys/validate';
-import { wallOf } from '../ksys/time';
+import { wallOf, utcOf } from '../ksys/time';
 
 let engine: Engine | null = null;
 let kLive: KLive | null = null;
@@ -181,13 +181,16 @@ async function statusEmbed(): Promise<Embed> {
     { name: '💰 Today', value: total === null ? '?' : usd(total), inline: true },
     { name: '📈 Open P&L', value: openN ? `${openPnl === null ? '?' : usd(openPnl)} (${openN})` : 'Flat', inline: true },
     ...(next ? [{ name: '🕒 Next check', value: `${nyHM(next)} ET`, inline: true }] : []),
-    ...(sigs.length ? [{ name: '🔔 Last signal per strategy', value: sigs.map(s => `**${s.id}** ${s.t ? new Date(wallOf(s.t)).toISOString().slice(5, 10).replace('-', '/') + (s.dir ? ' ' + s.dir : '') : 'none yet'}`).join(' · '), inline: false }] : [])
+    ...(sigs.length ? [{ name: '📡 Radar', value: (() => { const R = radar(), icon = { open: '🟢', working: '⏳', signal: '🔔', note: '⚠️', paused: '⏸', wait: '👀' };
+      const md = (t: number | null) => t ? new Date(wallOf(t)).toISOString().slice(5, 10).replace('-', '/') : 'none yet';
+      return R.rows.map(r => `${icon[r.kind]} **${r.id}** ${r.text}${r.kind === 'wait' ? ` · last signal ${md(r.last)}` : ''}`).join('\n'); })(), inline: false }] : [])
   ];
   for (const r of rows) {
     fields.push({ name: '🏦 Account', value: shortLabel(r.label), inline: true },
       { name: '💵 Today', value: `${r.today === null ? '?' : usd(r.today)}${r.goal > 0 && r.today !== null ? ` · ${Math.max(0, Math.round(100 * r.today / r.goal))}% of $${r.goal.toLocaleString('en-US')}` : ''}`, inline: true },
       { name: '📊 Open', value: r.t.open ? (r.t.pnl === null ? '?' : usd(r.t.pnl)) : 'Flat', inline: true });
-    if (r.flag || r.t.lines.length) fields.push({ name: '​', value: [r.flag, ...r.t.lines].filter(Boolean).join('\n'), inline: false });
+    const prog = progressText.get(r.label);
+    if (prog || r.flag || r.t.lines.length) fields.push({ name: '​', value: [prog ? '🎯 ' + prog : '', r.flag, ...r.t.lines].filter(Boolean).join('\n'), inline: false });
   }
   const anyStop = rows.some(r => r.flag);
   return { title: '📊 Keel live', color: total === null ? COLOR.blue : total >= 0 ? COLOR.green : COLOR.red, fields,
@@ -216,6 +219,31 @@ function feed(data: any, seen: Record<string, number>, now: number): { text: str
 }
 /** Futures pause 17:00-18:00 ET and over the weekend: no prices then is normal. */
 function marketClosed(now: number) { const w = new Date(wallOf(now)), d = w.getUTCDay(), h = w.getUTCHours(); return h === 17 || d === 6 || (d === 0 && h < 18) || (d === 5 && h >= 17); }
+/** Live radar: each switched-on strategy on the main account and what it is doing right now. */
+type RadarRow = { id: string; kind: 'open' | 'working' | 'signal' | 'paused' | 'wait' | 'note'; text: string; last: number | null };
+function radar(): { rows: RadarRow[]; lastCheck: number | null; nextCheck: number | null } {
+  const kc = loadKConfig(), rows: RadarRow[] = [], st = kLive?.status();
+  const enabled = acctCfg(kc, loadAccounts(conns()).accounts.find(a => a.id === activeAccount)).enabled;
+  for (const s of st?.strategies ?? []) {
+    if (!enabled[s.id]) continue;
+    const last = s.lastSignal ?? null;
+    if (s.live) rows.push({ id: s.id, kind: 'open', text: `in a trade: ${s.live.dir} ${s.live.qty} ${s.live.orderSym} @ ${s.live.entry.toFixed(2)}, stop ${s.live.stop.toFixed(2)}`, last });
+    else if (s.paused) rows.push({ id: s.id, kind: 'paused', text: 'paused: its last 30 trades averaged below -0.2R', last });
+    else if (s.pending) rows.push({ id: s.id, kind: 'signal', text: s.pending.kind === 'confirm' ? `signal ${s.pending.dir}: waiting for a confirming close` : `signal ${s.pending.dir}: entry at the next open`, last });
+    else rows.push({ id: s.id, kind: 'wait', text: 'watching for a setup', last });
+  }
+  for (const s of xLive?.view() ?? []) {
+    if (!enabled[s.id] || (s.paperOnly && kc.mode === 'live')) continue;
+    const last = s.lastScan ? s.lastSignal ?? null : null, t = s.trade;
+    if (t && t.state === 'open') rows.push({ id: s.id, kind: 'open', text: `in a trade: ${t.dir} ${t.qty} ${t.orderSym} @ ${(t.entry ?? 0).toFixed(2)}`, last });
+    else if (t) rows.push({ id: s.id, kind: 'working', text: `limit ${t.dir} ${t.qty} ${t.orderSym} @ ${(t.limitPx ?? 0).toFixed(2)} until ${nyHM(t.liveUntil)} ET`, last });
+    else if (s.note) rows.push({ id: s.id, kind: 'note', text: s.note, last });
+    else rows.push({ id: s.id, kind: 'wait', text: s.lastScan ? 'watching for a setup' : 'first scan after the next bar closes', last });
+  }
+  const order = { open: 0, working: 1, signal: 2, note: 3, paused: 4, wait: 5 };
+  rows.sort((a, b) => order[a.kind] - order[b.kind] || (b.last ?? 0) - (a.last ?? 0));
+  return { rows, lastCheck: st?.lastRun || null, nextCheck: st?.nextCheck || null };
+}
 /** The main account's switched-on strategies with their newest signal (newest first). */
 function lastSignals(): { id: string; t: number | null; dir: string | null }[] {
   const kc = loadKConfig(), out: { id: string; t: number | null; dir: string | null }[] = [];
@@ -239,10 +267,88 @@ function checkQuiet() {
   jot(m); engine?.say(m); ping(m);
 }
 
+// Combine progress (evaluation accounts) or payout status (funded / live), per account label, for the Discord card
+const progressText = new Map<string, string>();
+async function refreshProgress() {
+  const st = loadAccounts(conns()), list: { acct: AccountRecord | undefined; broker: any; label: string }[] = [];
+  if (engine) list.push({ acct: st.accounts.find(a => a.id === activeAccount), broker: runBroker, label: mainLabel() });
+  for (const f of followers) list.push({ acct: st.accounts.find(a => a.id === f.acct.id) ?? f.acct, broker: f.broker, label: f.acct.label });
+  const money0 = (v: number) => `${v < 0 ? '-' : ''}$${Math.round(Math.abs(v)).toLocaleString('en-US')}`;
+  for (const x of list) {
+    if (!x.acct || !x.broker?.getAccount) continue;
+    try {
+      const info = await x.broker.getAccount(); if (!info) continue;
+      const today = await x.broker.getDailyPnL().catch(() => 0), net = info.balance - info.startBalance;
+      if (x.acct.stage === 'evaluation') {
+        const p = evaluate(goalsFor(x.acct), info, today);
+        progressText.set(x.label, p.profitTarget > 0 ? `Combine ${money0(p.netProfit)} of ${money0(p.profitTarget)} (${Math.round(p.targetPct)}%)${p.consistencyOn && p.consistencyLimit > 0 ? ` · best day ${money0(p.bestDay)}, keep days under ${money0(p.consistencyLimit)}` : ''}${p.targetMet ? ' · ✅ target met' : ''}` : '');
+      } else if (x.acct.stage === 'funded' || x.acct.stage === 'live') {
+        const s = payoutStatus(payoutRecord(x.acct.id), info.days ?? [], today, nyDate(Date.now()), net, x.acct.cost || 0);
+        progressText.set(x.label, s.eligible ? `💸 Payout ready: request ${money0(s.request)} (${money0(s.net)} to you)` : `Payout: ${s.winDays}/${s.winDaysNeeded} days of $150+, ${s.tradedDays} trading days · ${s.needFor2k > 0 ? money0(s.needFor2k) + ' more for a $2,000 request' : 'enough for a $2,000 request'}`);
+      }
+    } catch { /* keep the last text */ }
+  }
+}
+const healthSeen = new Map<string, { key: string; at: number; bad: number }>();
+// ---------- daily signal audit: every signal of the trading day and what happened to it (16:15 ET, weekdays) ----------
+type Rec = Decision & { account: string; at: number };
+const auditFile = (day: string) => path.join(app.getPath('userData'), `signals_${day}.jsonl`);
+const tradingDay = (t = Date.now()) => new Date(wallOf(t) + 6 * 3600e3).toISOString().slice(0, 10);   // 18:00 ET starts the next trading day
+function recordDecision(account: string, d: Decision) {
+  const r: Rec = { ...d, account, at: Date.now() };
+  try { fs.appendFileSync(auditFile(tradingDay()), JSON.stringify(r) + '\n'); } catch { /* best effort */ }
+}
+const OUT_ICON: Record<string, string> = { entered: '✅', filled: '✅', working: '⏳', 'not filled': '➖', skipped: '⏭', blocked: '⛔', vetoed: '🤖', late: '⌛', failed: '❗', missed: '❌' };
+/** One account's audit lines for a trading day: its decisions (latest outcome per signal) plus simulator signals with no decision. */
+function auditFor(account: string, recs: Rec[], k: KLive | null, enabled: Record<string, boolean>, from: number, to: number): string[] {
+  const last = new Map<string, Rec>();
+  for (const r of recs.filter(x => x.account === account)) last.set(`${r.id}|${r.signalUtc}`, r);
+  const rows: { t: number; line: string }[] = [...last.values()].map(r => ({ t: r.signalUtc, line: `${OUT_ICON[r.outcome] ?? '•'} **${r.id}** ${r.dir} ${nyHM(r.signalUtc)}: ${r.outcome}${r.why ? ' (' + r.why + ')' : ''}` }));
+  // K1-K7 signals the simulator took during the day with no decision at all = missed (Keel stopped, asleep, or never acted)
+  const sim: any = k ? (k as any).sim : null;
+  for (const s of sim ? [...sim.trades, ...sim.open] : []) {
+    if (!enabled[s.id] || !(s.entryUtc >= from && s.entryUtc <= to) || last.has(`${s.id}|${s.signalUtc}`)) continue;
+    rows.push({ t: s.signalUtc, line: `${OUT_ICON.missed} **${s.id}** ${s.dir} ${nyHM(s.signalUtc)}: missed (the strategy signalled but Keel has no record of acting on it)` });
+  }
+  return rows.sort((a, b) => a.t - b.t).map(r => r.line);
+}
+let auditDone = '';
+function maybeAudit(force = false) {
+  const now = Date.now(), w = new Date(wallOf(now)), mins = w.getUTCHours() * 60 + w.getUTCMinutes(), wd = w.getUTCDay(), day = nyDate(now);
+  if (!force && (wd === 0 || wd === 6 || mins < 16 * 60 + 15 || mins >= 18 * 60 || auditDone === day)) return null;
+  auditDone = day;
+  const to = now, from = utcOf(Date.parse(day + 'T18:00:00Z') - 86_400_000, 'America/New_York');
+  let recs: Rec[] = [];
+  try { recs = fs.readFileSync(auditFile(tradingDay(now - 3 * 3600e3)), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { /* none today */ }
+  const kc = loadKConfig(), st = loadAccounts(conns()), main = st.accounts.find(a => a.id === activeAccount);
+  const accts: { label: string; k: KLive | null; enabled: Record<string, boolean> }[] = [];
+  if (engine) accts.push({ label: mainLabel(), k: kLive, enabled: acctCfg(kc, main).enabled });
+  for (const f of followers) accts.push({ label: f.acct.label, k: f.k, enabled: acctCfg(kc, f.acct).enabled });
+  const fields: NonNullable<Embed['fields']> = [];
+  let total = 0, missed = 0;
+  for (const a of accts) {
+    const lines = auditFor(a.label, recs, a.k, a.enabled, from, to); total += lines.length; missed += lines.filter(l => l.startsWith(OUT_ICON.missed)).length;
+    jot(`Signal audit [${a.label}]: ${lines.length ? lines.length + ' signal' + (lines.length > 1 ? 's' : '') : 'no signals today'}`);
+    for (const l of lines) jot(`  [${a.label}] ${l.replace(/\*\*/g, '')}`);
+    fields.push({ name: `🏦 ${shortLabel(a.label)}`, value: lines.length ? lines.join('\n') : 'No signals today: the strategies had no setup.', inline: false });
+  }
+  const summary = !total ? 'No strategy signalled today. Keel checked every hour and found no setups.' : missed ? `${missed} missed signal${missed > 1 ? 's' : ''}: check that Keel was running.` : 'Every signal was acted on (entered, or passed with a reason).';
+  engine?.say(`Signal audit: ${summary}`);
+  post({ title: `📋 Daily signal audit · ${new Date(wallOf(now)).toUTCString().slice(0, 11)}`, color: missed ? COLOR.red : COLOR.blue, description: summary, fields,
+    footer: { text: '✅ entered/filled · ⏳ working · ➖ not filled · ⏭ skipped · ⛔ blocked · 🤖 vetoed · ⌛ late · ❌ missed' }, timestamp: new Date(now).toISOString() });
+  return { summary, fields };
+}
+
 async function healthLines() {
   const now = Date.now(), closed = marketClosed(now), st = loadAccounts(conns()), snap = engine?.snapshot();
   const one = (label: string, f: { text: string; stale: boolean }, today: number | null, open: number, working: number, next: number | null, err: string, flag: string) => {
-    const ok = !f.stale && today !== null, state = ok ? 'connected' : closed ? 'market closed' : '⚠ CHECK CONNECTION';
+    // A single unreadable P&L or late quote is usually a broker hiccup: warn only on the second check in a row.
+    const ok = !f.stale && today !== null, prev = healthSeen.get(label) ?? { key: '', at: 0, bad: 0 }, bad = ok ? 0 : prev.bad + 1;
+    const state = ok ? 'connected' : closed ? 'market closed' : !f.stale && bad < 2 ? 'connected' : '⚠ CHECK CONNECTION';
+    // Quieter log: a line every 15 minutes, or at once when something that matters changes (state, positions, orders, flags, errors).
+    const key = [state, open, working, flag, err].join('|');
+    healthSeen.set(label, { key, at: key !== prev.key || now - prev.at >= 15 * 60_000 - 30_000 ? now : prev.at, bad });
+    if (key === prev.key && now - prev.at < 15 * 60_000 - 30_000) return;
     jot(`Health: [${label}] ${state} · ${f.text} · today ${today === null ? 'P&L unreadable' : usd(today)} · ${open ? open + ' open' : 'flat'}${working ? ' · ' + working + ' working order' + (working > 1 ? 's' : '') : ''}${next ? ' · next check ' + (next <= now + 60_000 ? 'due now' : nyHM(next) + ' ET') : ''}${flag ? ' · ' + flag : ''}${err ? ' · last error: ' + err : ''}`);
   };
   if (snap) {
@@ -263,7 +369,7 @@ async function healthLines() {
 }
 function startHealth() {
   stopHealth();
-  const run = () => { if (engine) { void healthLines().catch(() => {}); try { checkQuiet(); } catch { /* never touch trading */ } } };
+  const run = () => { if (engine) { void healthLines().catch(() => {}); void refreshProgress().catch(() => {}); void protectionCheck().catch(() => {}); try { checkQuiet(); maybeAudit(); } catch { /* never touch trading */ } } };
   healthFirst = setTimeout(run, 20_000); (healthFirst as any).unref?.();   // the first one shortly after Start, once prices flow
   healthTimer = setInterval(run, 5 * 60_000); (healthTimer as any).unref?.();
 }
@@ -332,9 +438,9 @@ async function startFollowers(list: AccountRecord[], kc: ReturnType<typeof loadK
       let x: XLive | null = null;
       const fc = acctCfg(kc, a);
       const record = recorder(a.id, () => a.label, kc.mode as 'paper' | 'live');
-      const k = new KLive(fc, { data, desk, risk: guard, store: kTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, account: () => info, note: tag, log: m => jot(`[${a.label}] ${m}`),
+      const k = new KLive(fc, { data, desk, risk: guard, store: kTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, account: () => info, note: tag, log: m => jot(`[${a.label}] ${m}`), decide: d => recordDecision(a.label, d),
         xHolds: sym => !!x?.holds(sym), gate: ctx => aiGate(ctx, kc.mode), record });
-      x = new XLive(fc, { data, desk, risk: guard, store: xTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, note: tag, log: m => jot(`[${a.label}] ${m}`),
+      x = new XLive(fc, { data, desk, risk: guard, store: xTradeStore(kc.mode as 'paper' | 'live', a.id), dailyPnL, note: tag, log: m => jot(`[${a.label}] ${m}`), decide: d => recordDecision(a.label, d),
         kHolds: sym => k.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode), record });
       k.start(); x.start();
       const f: Follower = { acct: a, broker: b, data, seen, k, x, paper, error: '', goalHit: false,
@@ -392,6 +498,67 @@ function applyConfigs() {
   const main = acctCfg(kc, find(activeAccount)); kLive?.setConfig(main); xLive?.setConfig(main);
   for (const f of followers) { const c = acctCfg(kc, find(f.acct.id) ?? f.acct); f.k.setConfig(c); f.x.setConfig(c); }
 }
+// ---------- unprotected-position alarm ----------
+const rootSym = (s: string) => s.toUpperCase().replace(/[FGHJKMNQUVXZ]\d{1,2}$/, '');   // MNQZ6 -> MNQ
+/** Open positions on this desk with no stop order (opposite side, same market) covering their size. */
+async function unprotected(desk: any): Promise<{ sym: string; qty: number }[]> {
+  if (!desk?.getPositions || !desk?.getOpenOrders) return [];
+  const pos = (await desk.getPositions()).filter((p: any) => p.qty !== 0), out: { sym: string; qty: number }[] = [];
+  if (!pos.length) return out;
+  const orders = await desk.getOpenOrders();
+  for (const p of pos) {
+    const exit = p.qty > 0 ? 'sell' : 'buy', cover = orders.filter((o: any) => rootSym(o.symbol) === rootSym(p.symbol) && o.side === exit && (o.type === 'stop' || o.type === 'other')).reduce((a: number, o: any) => a + o.qty, 0);
+    if (cover < Math.abs(p.qty)) out.push({ sym: rootSym(p.symbol), qty: p.qty });
+  }
+  return out;
+}
+const alarmed = new Set<string>();   // one alarm per unprotected position until it is flat or protected again
+async function protectionCheck() {
+  const desks: { label: string; desk: any }[] = [];
+  if (engine) desks.push({ label: mainLabel(), desk: kPaper ?? runBroker });
+  for (const f of followers) desks.push({ label: f.acct.label, desk: f.paper ?? f.broker });
+  const seen = new Set<string>();
+  for (const d of desks) {
+    let bad: { sym: string; qty: number }[] = [];
+    try { bad = await unprotected(d.desk); if (bad.length) { await new Promise(r => setTimeout(r, 20_000)); bad = await unprotected(d.desk); } } catch { continue; }   // a stop may be on its way: look again 20 s later
+    for (const b of bad) {
+      const key = `${d.label}|${b.sym}|${b.qty}`; seen.add(key);
+      if (alarmed.has(key)) continue;
+      alarmed.add(key);
+      const m = `[${d.label}] UNPROTECTED: ${b.qty > 0 ? 'long' : 'short'} ${Math.abs(b.qty)} ${b.sym} has no stop order at the broker. Check your platform now: add a stop or close it.`;
+      jot(m); engine?.say(m); ping(m);
+    }
+  }
+  for (const k of [...alarmed]) if (!seen.has(k)) alarmed.delete(k);
+}
+
+// ---------- settings check at Start: settings that would quietly block trades ----------
+/** Rough contracts a trade needs at this risk: micro NQ stops are usually 50-100 points ($100-$200 a contract), micro gold 10-20 points ($100-$200). */
+const typicalQty = (risk: number) => Math.max(1, Math.ceil(risk / 150));
+function settingsCheck(): string[] {
+  const kc = loadKConfig(); if (kc.mode === 'off') return [];
+  const g = loadRisk(), st = loadAccounts(conns()), out: string[] = [];
+  // the account at the top plus every account switched on to trade (second accounts are still connecting at this point)
+  const runs = [st.accounts.find(a => a.id === activeAccount), ...st.accounts.filter(a => a.trade !== false && a.id !== activeAccount && a.connection in ADAPTERS && a.connection !== 'paper')].filter(Boolean) as AccountRecord[];
+  for (const a of runs.length ? runs : [undefined as unknown as AccountRecord]) {
+    const c = acctCfg(kc, a), label = a?.label ?? 'Paper account', on = Object.keys(c.enabled).filter(id => c.enabled[id]);
+    const syms = new Set<string>(); for (const id of on) { const S = STRATEGIES.find(s => s.id === id) ?? XSTRATEGIES.find(s => s.id === id); if (S) syms.add(S.symbol === 'NQ' ? 'MNQ' : 'MGC'); }
+    const missing = [...syms].filter(x => !g.allowedSymbols.includes(x));
+    if (missing.length) out.push(`[${label}] ${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} not in your allowed symbols (Risk limits), so ${on.filter(id => { const S = STRATEGIES.find(s => s.id === id) ?? XSTRATEGIES.find(s => s.id === id); return S && missing.includes(S.symbol === 'NQ' ? 'MNQ' : 'MGC'); }).join(', ')} will be blocked.`);
+    const risk = c.sizing === 'cushion' ? 750 : c.riskUsd, need = typicalQty(risk);
+    if (g.maxQtyPerOrder < need) out.push(`[${label}] At $${risk} risk a trade often needs ${need}+ micro contracts, but the per-order limit (Risk limits) is ${g.maxQtyPerOrder}: bigger orders will be blocked.`);
+    const lossLimit = a && a.dailyLoss > 0 ? Math.min(g.maxDailyLoss, a.dailyLoss) : g.maxDailyLoss;
+    if (lossLimit <= risk) out.push(`[${label}] The daily loss limit ($${lossLimit}) is not more than one trade's risk ($${risk}): one loss stops trading for the day.`);
+    if (syms.size > 1 && g.maxOpenPositions < 2) out.push(`[${label}] Max open positions is ${g.maxOpenPositions}, so an NQ trade and a gold trade can't be open together.`);
+  }
+  return out;
+}
+
+// ---------- start-up options: resume trading after a restart, open Keel at Windows login ----------
+interface Startup { autoResume: boolean; openAtLogin: boolean; wasRunning: boolean }
+function loadStartup(): Startup { try { const x = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'startup.json'), 'utf8')); return { autoResume: x.autoResume === true, openAtLogin: x.openAtLogin === true, wasRunning: x.wasRunning === true }; } catch { return { autoResume: false, openAtLogin: false, wasRunning: false }; } }
+function saveStartup(s: Startup) { try { fs.writeFileSync(path.join(app.getPath('userData'), 'startup.json'), JSON.stringify(s)); } catch { /* best effort */ } }
+let startBot: () => Promise<{ ok: boolean; error?: string; warnings?: string[] }> = async () => ({ ok: false, error: 'Keel is still starting.' });
 const goalPing = (label: string) => ping(`[${label}] Daily profit target reached: closing everything and stopping this account for today.`);
 const mainLabel = () => loadAccounts(conns()).accounts.find(a => a.id === activeAccount)?.label ?? 'Paper account';
 /** Trade journal hook for one account's trading systems. */
@@ -477,7 +644,7 @@ app.whenReady().then(async () => {
     if (!fromOurWindow(e)) return null;
     return {
       running: !!engine, broker: activeBroker, account: activeAccount, update,
-      watch: watch ? { account: watch.id, data: watch.data, error: watch.error } : null, stats: engine ? engine.snapshot() : null,
+      watch: watch ? { account: watch.id, data: watch.data, error: watch.error } : null, stats: engine ? engine.snapshot() : null, radar: engine && (kLive || xLive) ? radar() : null,
       webhookSecret: webhookSecret()
     };
   });
@@ -540,6 +707,9 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('engine:start', async e => {
     if (!allowed(e)) return { ok: false, error: 'Not allowed.' };
+    const r = await startBot(); if (r.ok) saveStartup({ ...loadStartup(), wasRunning: true }); return r;
+  });
+  startBot = async (): Promise<{ ok: boolean; error?: string; warnings?: string[] }> => {
     if (engine) return { ok: false, error: 'The bot is already running.' };
     stopWatch();   // one connection at a time
     const st = loadAccounts(conns());
@@ -584,14 +754,14 @@ app.whenReady().then(async () => {
       kLive = new KLive(pc, {
         data: dataSrc, desk, risk: guard, store: kTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
-        account: () => kAcct, note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, log: jot, xHolds: sym => !!xLive?.holds(sym), gate: ctx => aiGate(ctx, kc.mode),
+        account: () => kAcct, note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, log: jot, decide: d => recordDecision(mainLabel(), d), xHolds: sym => !!xLive?.holds(sym), gate: ctx => aiGate(ctx, kc.mode),
         record: recorder(acct?.id ?? 'main', mainLabel, kc.mode as 'paper' | 'live')
       });
       // K8, K9, P1-P3: same order desk, same risk limits, one position per market shared with K1-K7.
       xLive = new XLive(pc, {
         data: dataSrc, desk, risk: guard, store: xTradeStore(kc.mode),
         dailyPnL: async () => (kPaper ? kPaper.realized + kPaper.unrealized() : broker.getDailyPnL()),
-        note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, log: jot, kHolds: sym => !!kLive?.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode),
+        note: (m, k) => { jot(m); e.say(m); if (k === 'trade') ping(`[${mainLabel()}] ${m}`); }, log: jot, decide: d => recordDecision(mainLabel(), d), kHolds: sym => !!kLive?.trades.some(t => t.sym === sym), gate: ctx => aiGate(ctx, kc.mode),
         record: recorder(acct?.id ?? 'main', mainLabel, kc.mode as 'paper' | 'live')
       });
       const pollAcct = async () => {
@@ -635,8 +805,10 @@ app.whenReady().then(async () => {
     startStatus();
     keepAwake(true);
     startHealth();
-    return { ok: true };
-  });
+    const warnings = settingsCheck();
+    for (const w of warnings) { jot(`Settings check: ${w}`); engine?.say(`Settings check: ${w}`); }
+    return { ok: true, warnings };
+  };
   // Strategies save as soon as they change and the running bot picks the change up right away.
   const commit = (fn: () => ReturnType<typeof loadStrategies>) => {
     try { const list = fn(); saveStrategies(list); engine?.syncStrategies(list); return { ok: true, list }; }
@@ -656,7 +828,7 @@ app.whenReady().then(async () => {
     clipboard.writeText(JSON.stringify({ secret: webhookSecret(), strategy: s.id, side: '{{strategy.order.action}}' }));
     return true;
   });
-  ipcMain.handle('engine:stop', async e => { if (allowed(e)) { await stopTrading(); activeBroker = ''; activeAccount = ''; void startWatch(); } });
+  ipcMain.handle('engine:stop', async e => { if (allowed(e)) { saveStartup({ ...loadStartup(), wasRunning: false }); await stopTrading(); activeBroker = ''; activeAccount = ''; void startWatch(); } });
   ipcMain.handle('copy:alert', e => {
     if (!allowed(e)) return false;
     clipboard.writeText(JSON.stringify({ secret: webhookSecret(), symbol: 'ES', side: 'buy', qty: 1 }));
@@ -856,6 +1028,7 @@ app.whenReady().then(async () => {
   });
 
   // ---------- Discord ----------
+  ipcMain.handle('audit:run', e => (allowed(e) ? maybeAudit(true) : null));
   ipcMain.handle('discord:get', e => (allowed(e) ? { saved: vault.has('discord'), everyone: everyoneOn(), logSaved: vault.has('discordLog') } : null));
   ipcMain.handle('discord:logSave', async (e, url: unknown) => {
     if (!allowed(e) || typeof url !== 'string') return { ok: false, error: 'Not allowed.' };
@@ -950,8 +1123,25 @@ app.whenReady().then(async () => {
     { label: 'View', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
     { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'close' }] }
   ]));
+  ipcMain.handle('startup:get', e => (allowed(e) ? loadStartup() : null));
+  ipcMain.handle('startup:set', (e, x: any) => {
+    if (!allowed(e) || !x || typeof x !== 'object') return { ok: false };
+    const s = { ...loadStartup(), autoResume: x.autoResume === true, openAtLogin: x.openAtLogin === true };
+    saveStartup(s);
+    try { if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: s.openAtLogin }); } catch { /* not supported here */ }
+    return { ok: true, startup: s };
+  });
   void startWatch();
   createWindow();
+  // The bot was running when Keel closed (an update, a crash, a reboot): start it again if that option is on
+  const su = loadStartup();
+  if (su.autoResume && su.wasRunning) setTimeout(async () => {
+    if (engine) return;
+    jot('Keel restarted while the bot was running: starting it again (Start-up option).');
+    const r = await startBot().catch(err => ({ ok: false, error: (err as Error).message }));
+    if (r.ok) { (engine as Engine | null)?.say('Trading resumed automatically after Keel restarted.'); ping('Keel restarted and resumed trading automatically.'); }
+    else { jot(`Could not resume trading: ${r.error}`); ping(`Keel restarted but could not resume trading: ${r.error} Open Keel and press Start.`); }
+  }, 8000);
 });
 
 app.on('window-all-closed', () => app.quit());

@@ -174,16 +174,17 @@ export class Engine {
   }
 
   /** Kill switch: stop everything and flatten. */
-  async halt() {
+  async halt(why: 'kill' | 'stop' = 'kill') {
     this.risk.halt();
     try { this.onHalt?.(); } catch { /* keep going: closing positions matters more */ }
     this.open.clear();
     for (const r of this.running.values()) r.s.reset?.();
+    const what = why === 'stop' ? 'Bot stopped' : 'Kill switch used';
     try {
       await this.broker.closeAll();
-      this.note('Kill switch used. All positions closed.');
+      this.note(`${what}. All positions closed.`);
     } catch {
-      this.note('Kill switch used, but closing positions failed. Check your trading platform right now.');
+      this.note(`${what}, but closing positions failed. Check your trading platform right now.`);
     }
   }
 
@@ -210,7 +211,7 @@ export class Engine {
 
   async shutdown() {
     clearInterval(this.timer);
-    await this.halt();
+    await this.halt('stop');
     await this.broker.disconnect();
   }
 
@@ -228,7 +229,9 @@ export class Engine {
 
   private record(m: string) {
     this.log.push(`${new Date().toISOString()} ${m}`); this.log = this.log.slice(-200);
-    const kind = /^Sent|closed .* at its|K system: closed/.test(m) ? 'trade' : /Blocked|Ignored|stopped:|limit|can't|Can't|failed|not available|Check your|could not|skipped .* late/i.test(m) ? 'warn' : 'info';
+    // warn only on real problems: "limit" alone (e.g. "resting limit orders") is not one, a limit being reached or blocking is
+    const kind = /^Sent|closed .* at its|K system: closed|filled (long|short)|^\[[^\]]+\] Chart order/.test(m) ? 'trade'
+      : /Blocked|blocked|Ignored|stopped:|limit reached|loss limit|can't|Can't|failed|not available|Check your|could not|skipped .* late|Settings check|UNPROTECTED|missed|vetoed/i.test(m) ? 'warn' : 'info';
     this.events.push({ t: Date.now(), msg: m, kind }); this.events = this.events.slice(-200);
   }
 }

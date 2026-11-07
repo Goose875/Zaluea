@@ -153,8 +153,22 @@ function renderToday(s) {
   const ev = st ? st.events.slice().reverse() : [];
   if (!ev.length) ul.append(el('li', 'empty', 'Nothing has happened yet today.'));
   for (const e of ev) { const li = el('li', e.kind); li.append(el('time', '', ago(e.t)), el('span', 'm', e.msg)); ul.append(li); }
+  renderRadar(s.radar);
   renderProgress(s, n);
   updateStratStates(s);
+}
+
+// ---------- radar: what each strategy is doing right now ----------
+function renderRadar(R) {
+  $('radarPanel').hidden = !R || !R.rows.length; if (!R) return;
+  $('radarHead').textContent = R.lastCheck ? `last check ${nyTime(R.lastCheck)}${R.nextCheck ? ' · next ' + nyTime(R.nextCheck).replace(/^[A-Za-z]+ \d+, /, '') : ''}` : '';
+  const box = $('radar'); box.replaceChildren();
+  const LBL = { open: 'In a trade', working: 'Order working', signal: 'Signal', note: 'Note', paused: 'Paused', wait: 'Watching' };
+  for (const r of R.rows) {
+    const c = el('div', 'rchip ' + r.kind);
+    c.append(el('b', '', r.id), el('span', 'rstate', LBL[r.kind]), el('span', 'rtext', r.kind === 'wait' ? (r.last ? 'last signal ' + nyTime(r.last) : 'no signal in the loaded history') : r.text));
+    box.append(c);
+  }
 }
 
 // ---------- progress ----------
@@ -174,7 +188,7 @@ function renderProgress(s, n) {
   $('tText').textContent = p.profitTarget > 0 ? `${money(p.netProfit)} of ${plain(p.profitTarget)}` : money(p.netProfit);
   setBar($('tBar'), p.targetPct, p.targetMet ? 'ok' : '');
   $('tSub').textContent = p.profitTarget <= 0 ? 'No target set. Add one with Edit rules.' : p.targetMet ? "You've reached it, and the consistency rule is met."
-    : p.netProfit >= p.profitTarget ? "You've reached it, but one day is too big a share. A few more steady days will even it out." : `${plain(p.profitTarget - p.netProfit)} to go.`;
+    : p.netProfit >= p.profitTarget ? "You've reached it, but one day is too big a share. A few more steady days will even it out." : `${plain(p.profitTarget - p.netProfit)} to go.${p.consistencyOn && p.consistencyLimit > 0 ? ` Keep any single day under ${plain(p.consistencyLimit)} (the consistency rule${p.bestDay > 0 ? `; best day so far ${plain(p.bestDay)}` : ''}).` : ''}`;
   if (!p.consistencyOn) { $('cText').textContent = 'Off'; setBar($('cBar'), 0); $('cSub').textContent = p.stage === 'practice' ? "Practice accounts don't use it." : 'Turn it on with Edit rules.'; }
   else {
     $('cText').textContent = `Best day ${plain(p.bestDay)} \u00b7 limit ${plain(p.consistencyLimit)}`;
@@ -220,14 +234,15 @@ async function poRefresh(a, p, force) {
   const st = r.status, R = r.rec.rules;
   if (poRulesFor !== a.id) {   // fill the rules form once per account, so typing is never overwritten
     poRulesFor = a.id;
-    [['prWinDays', R.winDays], ['prWinMin', R.winDayMin], ['prPct', R.maxPct], ['prMax', R.maxAmount], ['prMin', R.minAmount], ['prBuf', R.buffer], ['prCons', R.consistencyPct]].forEach(([id, v]) => { $(id).value = v; });
+    [['prWinDays', R.winDays], ['prWinMin', R.winDayMin], ['prPct', R.maxPct], ['prMax', R.maxAmount], ['prMin', R.minAmount], ['prBuf', R.buffer], ['prCons', R.consistencyPct], ['prAltDays', R.altDays ?? 0], ['prAltPct', R.altPct ?? 0], ['prSplit', R.split ?? 100]].forEach(([id, v]) => { $(id).value = v; });
     $('poDate').value = r.today;
   }
-  $('poHead').textContent = st.eligible ? `Eligible now: you can request up to ${cents(st.request)}` : `Not yet eligible · ${st.winDays} of ${st.winDaysNeeded} winning days`;
+  $('poHead').textContent = st.eligible ? `Eligible now (${st.route} route): request up to ${cents(st.request)}${st.net && st.net !== st.request ? `, ${cents(st.net)} to you` : ''}` : `Not yet eligible · ${st.winDays} of ${st.winDaysNeeded} winning days${R.altDays ? ` · or ${st.tradedDays} of ${R.altDays} trading days` : ''}`;
   setBar($('poBar'), st.winDaysNeeded ? (st.winDays / st.winDaysNeeded) * 100 : 100, st.eligible ? 'ok' : '');
   $('poSub').textContent = [
     `This cycle${st.cycleStart ? ' (since your ' + new Date(st.cycleStart + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' payout)' : ''}: ${money(st.cycleProfit)} over ${st.cycleDays} day${st.cycleDays === 1 ? '' : 's'}; profit still in the account ${cents(st.available)}.`,
     st.reasons.length ? 'Still needed: ' + st.reasons.join('; ') + '.' : '',
+    st.needFor2k > 0 ? `For a $2,000 request: ${cents(st.needFor2k)} more profit in the account.` : 'There is enough profit in the account for a $2,000 request.',
     `Paid out on this account: ${cents(st.totalPaid)} in ${st.payouts} payout${st.payouts === 1 ? '' : 's'}${st.cost ? `, account cost ${cents(st.cost)}, net ${money(st.netAfterCost)}` : ''}.`,
     `All accounts: ${cents(r.totals.paid)} paid out in ${r.totals.payouts}, ${cents(r.totals.cost)} spent on accounts, net ${money(r.totals.paid - r.totals.cost)}.`
   ].filter(Boolean).join(' ');
@@ -257,11 +272,15 @@ $('poAdd').onclick = async () => {
 $('prSave').onclick = async () => {
   const a = selAcct(); if (!a) return;
   const n = id => Number($(id).value);
-  const r = await window.keel.payoutRules(a.id, { winDays: n('prWinDays'), winDayMin: n('prWinMin'), maxPct: n('prPct'), maxAmount: n('prMax'), minAmount: n('prMin'), buffer: n('prBuf'), consistencyPct: n('prCons') });
+  const r = await window.keel.payoutRules(a.id, { winDays: n('prWinDays'), winDayMin: n('prWinMin'), maxPct: n('prPct'), maxAmount: n('prMax'), minAmount: n('prMin'), buffer: n('prBuf'), consistencyPct: n('prCons'), altDays: n('prAltDays'), altPct: n('prAltPct'), split: n('prSplit') });
   if (!r.ok) { flash($('poMsg'), r.error, true); return; }
   flash($('poMsg'), 'Payout rules saved.'); if (poP) void poRefresh(a, poP, true);
 };
 
+$('prPreset').onclick = () => {   // fill the form; Save rules stores it
+  [['prWinDays', 5], ['prWinMin', 150], ['prPct', 50], ['prMax', 8000], ['prMin', 125], ['prBuf', 0], ['prCons', 0], ['prAltDays', 3], ['prAltPct', 40], ['prSplit', 90]].forEach(([id, v]) => { $(id).value = v; });
+  flash($('poMsg'), 'Filled in the Topstep 50K Static payout rules (5 days of $150+, or 3 days with the best day at most 40%; 50% up to $8,000; 90% split). Check them, then Save rules.');
+};
 $('editRules').onclick = () => { const a = selAcct(); if (a) openDrawer('edit', [a.id], $('editRules')); };
 
 // ---------- accounts list ----------
@@ -1243,7 +1262,10 @@ document.querySelectorAll('#kMode button').forEach(b => {
 });
 
 // ---------- Discord ----------
-async function dcLoad() { const r = await window.keel.discordGet(); if (r) { $('dcUrl').placeholder = r.saved ? 'Saved (paste a new one to replace it)' : 'https://discord.com/api/webhooks/...'; $('dcDel').hidden = !r.saved; $('dcEveryone').checked = r.everyone !== false; $('dlUrl').placeholder = r.logSaved ? 'Saved (paste a new one to replace it)' : 'https://discord.com/api/webhooks/...'; $('dlDel').hidden = !r.logSaved; } }
+async function suLoad() { const s = await window.keel.startupGet(); if (s) { $('suResume').checked = s.autoResume; $('suLogin').checked = s.openAtLogin; } }
+async function suSave() { const r = await window.keel.startupSet({ autoResume: $('suResume').checked, openAtLogin: $('suLogin').checked }); $('suMsg').textContent = r && r.ok ? 'Saved.' : 'Could not save.'; }
+$('suResume').onchange = suSave; $('suLogin').onchange = suSave;
+async function dcLoad() { void suLoad(); const r = await window.keel.discordGet(); if (r) { $('dcUrl').placeholder = r.saved ? 'Saved (paste a new one to replace it)' : 'https://discord.com/api/webhooks/...'; $('dcDel').hidden = !r.saved; $('dcEveryone').checked = r.everyone !== false; $('dlUrl').placeholder = r.logSaved ? 'Saved (paste a new one to replace it)' : 'https://discord.com/api/webhooks/...'; $('dlDel').hidden = !r.logSaved; } }
 $('dlSave').onclick = async () => { const u = $('dlUrl').value.trim(); if (!u) return; $('dlMsg').textContent = 'Sending a test message…';
   const r = await window.keel.discordLogSave(u); $('dlUrl').value = ''; $('dlMsg').textContent = r.ok ? 'Saved. Check Discord for the test message.' : r.error; dcLoad(); };
 $('dlDel').onclick = async () => { await window.keel.discordLogRemove(); $('dlMsg').textContent = 'Bot log to Discord turned off.'; dcLoad(); };
@@ -1392,7 +1414,7 @@ async function loadCatalog() {
 $('toggle').onclick = async () => {
   $('toggle').disabled = true;
   if (running) await window.keel.stop();
-  else { const r = await window.keel.start(); notice(r.ok ? '' : r.error); }
+  else { const r = await window.keel.start(); notice(r.ok ? (r.warnings && r.warnings.length ? 'Started, but check your settings: ' + r.warnings.join(' ') : '') : r.error); }
   $('toggle').disabled = false; await refresh(); renderPicker(); renderAccounts();
 };
 $('kill').onclick = async () => { await window.keel.kill(); await refresh(); };

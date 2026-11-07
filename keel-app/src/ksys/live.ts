@@ -64,6 +64,8 @@ export interface KDeps {
   note: (msg: string, kind?: 'trade' | 'warn' | 'info') => void;
   /** Log file only (not the activity feed): one line per completed hourly check, so the log shows the check ran. */
   log?: (msg: string) => void;
+  /** Every entry decision, for the daily signal audit. */
+  decide?: (d: Decision) => void;
   now?: () => number;                                          // for tests
   xHolds?: (sym: string) => boolean;                           // a K8/K9/P1-P3 trade (or working entry) holds this market
   /** Last word before an entry is sent: news pause and the optional Claude entry check. */
@@ -71,6 +73,8 @@ export interface KDeps {
   /** Called once for every trade that closes (the trade journal). */
   record?: (t: CloseReport) => void;
 }
+/** What happened to one strategy signal (the daily signal audit). */
+export interface Decision { id: string; dir: 'long' | 'short'; signalUtc: number; outcome: 'entered' | 'skipped' | 'blocked' | 'vetoed' | 'late' | 'failed' | 'working' | 'filled' | 'not filled'; why: string }
 export interface EntryContext { system: string; id: string; name: string; symbol: string; dir: 'long' | 'short'; price: number; stop: number; target: number | null; qty: number; orderSym: string;
   /** market = fills now near lastPrice; limit = rests at `price` and fills only if the market trades back to it (stop and risk are measured from `price`). */
   entryType: 'market' | 'limit'; lastPrice: number; riskUsd: number;
@@ -197,41 +201,43 @@ export class KLive {
     // Same rule as the simulator: nothing opens from the flat-by hour until the 18:00 reopen.
     if (this.cfg.flatByHour !== null && openHour >= this.cfg.flatByHour && openHour < 18) return;
     if (now - nextOpen > ENTRY_WINDOW) {
-      if (this.staleWarned !== nextOpen) this.d.note(`K system: ${due.map(p => p.id).join(', ')} had an entry at ${new Date(nextOpen).toISOString().slice(11, 16)} UTC but Keel got there more than 10 minutes late, so it was skipped.`, 'warn');
+      if (this.staleWarned !== nextOpen) { this.d.note(`K system: ${due.map(p => p.id).join(', ')} had an entry at ${new Date(nextOpen).toISOString().slice(11, 16)} UTC but Keel got there more than 10 minutes late, so it was skipped.`, 'warn');
+        for (const p of due) if (this.cfg.enabled[p.id]) this.d.decide?.({ id: p.id, dir: p.dir, signalUtc: p.signalUtc, outcome: 'late', why: 'Keel got to the entry more than 10 minutes late' }); }
       this.staleWarned = nextOpen; return;
     }
     for (const p of due) {
       const S = STRATEGIES.find(s => s.id === p.id)!;
       if (!this.cfg.enabled[S.id] || this.trades.some(t => t.id === S.id && t.signalUtc === p.signalUtc)) continue;
-      if (this.trades.some(t => t.sym === S.symbol) || this.d.xHolds?.(S.symbol)) { this.d.note(`K system: skipped ${S.id}, another Keel trade already holds ${S.symbol}.`, 'info'); continue; }
+      if (this.trades.some(t => t.sym === S.symbol) || this.d.xHolds?.(S.symbol)) { this.d.note(`K system: skipped ${S.id}, another Keel trade already holds ${S.symbol}.`, 'info'); this.d.decide?.({ id: S.id, dir: p.dir, signalUtc: p.signalUtc, outcome: 'skipped', why: `another Keel trade already held ${S.symbol}` }); continue; }
       await this.enter(S, p.dir, p.signalUtc, risk);
     }
   }
 
   private async enter(S: KStrategy, dir: Dir, signalUtc: number, risk: number) {
     const X = this.series[S.symbol], sig = X.bars.findIndex(b => b.utc === signalUtc), I = INSTRUMENTS[S.symbol];
+    const dec = (outcome: Decision['outcome'], why: string) => this.d.decide?.({ id: S.id, dir, signalUtc, outcome, why });
     let orderSym = I.micro;
     const d = dir === 'long' ? 1 : -1, side = dir === 'long' ? 'buy' as const : 'sell' as const, exitSide = dir === 'long' ? 'sell' as const : 'buy' as const;
     const px = this.d.data.lastPrice?.(orderSym) ?? this.d.data.lastPrice?.(S.symbol);
-    if (sig < 0 || px === undefined) { this.d.note(`K system: skipped ${S.id}, no live price for ${orderSym}.`, 'warn'); return; }
+    if (sig < 0 || px === undefined) { this.d.note(`K system: skipped ${S.id}, no live price for ${orderSym}.`, 'warn'); dec('skipped', `no live price for ${orderSym}`); return; }
     const plan = planEntry(S, X, sig, dir, px + d * I.tick, risk, I.usd_per_point_micro);
-    if ('skip' in plan) { this.d.note(`K system: skipped ${S.id} ${dir}: ${plan.skip}.`, 'info'); return; }
+    if ('skip' in plan) { this.d.note(`K system: skipped ${S.id} ${dir}: ${plan.skip}.`, 'info'); dec('skipped', plan.skip); return; }
     // Minis when the budget covers at least one full contract (and minis are allowed), micros otherwise.
     const miniQty = Math.floor(risk / (plan.R * I.usd_per_point_mini));
     if (this.cfg.allowMinis && miniQty >= 1) { orderSym = S.symbol; plan.qty = miniQty; }
     const openRisk = this.trades.reduce((a, t) => a + Math.abs(t.entry - t.stop) * pointValue(t.sym, t.orderSym) * t.qty, 0);
-    if (openRisk + plan.R * pointValue(S.symbol, orderSym) * plan.qty > this.cfg.capMult * risk) { this.d.note(`K system: skipped ${S.id}, total open risk cap.`, 'info'); return; }
+    if (openRisk + plan.R * pointValue(S.symbol, orderSym) * plan.qty > this.cfg.capMult * risk) { this.d.note(`K system: skipped ${S.id}, total open risk cap.`, 'info'); dec('skipped', 'total open risk cap'); return; }
     // Keel's own risk limits (daily loss, contract caps, allowed symbols) have the last word.
     let pnl: number;
-    try { pnl = await this.d.dailyPnL(); } catch { this.d.note(`K system: blocked ${S.id}, today's P&L can't be read.`, 'warn'); return; }
+    try { pnl = await this.d.dailyPnL(); } catch { this.d.note(`K system: blocked ${S.id}, today's P&L can't be read.`, 'warn'); dec('blocked', "today's P&L couldn't be read"); return; }
     const positions = await this.d.desk.getPositions();
     const verdict = this.d.risk.check({ symbol: orderSym, side, qty: plan.qty, source: 'strategy', strategyId: S.id, from: S.id }, { dailyPnL: pnl, openPositions: positions.filter(p => p.qty !== 0).length, positions });
-    if (!verdict.ok) { this.d.note(`K system: blocked ${S.id}: ${verdict.reason}`, 'warn'); return; }
+    if (!verdict.ok) { this.d.note(`K system: blocked ${S.id}: ${verdict.reason}`, 'warn'); dec('blocked', verdict.reason ?? 'risk limits'); return; }
     if (this.d.gate) {
       const g = await this.d.gate({ system: 'K', id: S.id, name: S.name, symbol: S.symbol, dir, price: px, stop: plan.stop, target: plan.target, qty: plan.qty, orderSym,
         entryType: 'market', lastPrice: px, riskUsd: Math.round(plan.R * pointValue(S.symbol, orderSym) * plan.qty),
         bars: X.bars.slice(-36).map(b => ({ t: new Date(b.utc).toISOString(), o: b.o, h: b.h, l: b.l, c: b.c })) });
-      if (!g.ok) { this.d.note(`K system: ${S.id} not entered: ${g.reason}`, 'warn'); return; }
+      if (!g.ok) { this.d.note(`K system: ${S.id} not entered: ${g.reason}`, 'warn'); dec('vetoed', g.reason ?? 'entry check'); return; }
     }
 
     await this.d.desk.placeOrder({ symbol: orderSym, side, qty: plan.qty, type: 'market' });
@@ -246,10 +252,12 @@ export class KLive {
     } catch (e) {   // never leave a position without its stop
       await this.d.desk.placeOrder({ symbol: orderSym, side: exitSide, qty: t.qty, type: 'market' }).catch(() => {});
       this.d.note(`K system: ${S.id} was closed right away because its stop could not be placed (${(e as Error).message}). Check your platform.`, 'warn');
+      dec('failed', `its stop could not be placed (${(e as Error).message})`);
       return;
     }
     if (target !== null) { try { t.targetOrder = await this.d.desk.placeOrder({ symbol: orderSym, side: exitSide, qty: t.qty, type: 'limit', price: target }); } catch { this.d.note(`K system: ${S.id} target order failed; the stop is in place.`, 'warn'); } }
     this.trades.push(t); this.d.store.save(this.trades);
+    dec('entered', `${dir} ${t.qty} ${orderSym} @ ${fill.toFixed(2)}`);
     this.d.note(`Sent ${side} ${t.qty} ${orderSym} (${S.id} ${S.name}): stop ${stop.toFixed(2)}${target !== null ? `, target ${target.toFixed(2)}` : ''}.`, 'trade');
   }
 

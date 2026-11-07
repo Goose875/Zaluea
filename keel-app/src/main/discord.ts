@@ -108,3 +108,9 @@ export async function testLog(url: string) {
   const r = await send('POST', `${checkWebhook(url)}?wait=true`, { content: '✅ **Keel bot log connected.** Every line of Keel\'s log (checks, entries, skips, blocks, vetoes, errors) will appear here, about every 5 seconds.', username: 'Keel log', allowed_mentions: { parse: [] as string[] } });
   if (r.status < 200 || r.status >= 300) throw new Error(r.status === 0 ? "Couldn't reach Discord. Check your internet connection." : `Discord refused the message (HTTP ${r.status}). Check the webhook URL.`);
 }
+
+/** A card in the trade channel that mentions nobody (daily audit, recaps). */
+export function post(embed: Embed) {
+  const c = cfg(); if (!c) return;
+  void enqueue(() => send('POST', c.url, message(embed, false)));
+}

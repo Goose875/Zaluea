@@ -53,6 +53,7 @@
             </div>
             <div id="gauge" class="gauge"></div>
           </div>
+          <div id="radarPanel" class="panel" hidden><h2>Radar <span id="radarHead" class="hint"></span></h2><div id="radar" class="radar"></div></div>
           <div class="panel"><h2>How today has gone</h2><div id="chart" class="chart"></div></div>
           <div class="two">
             <div class="panel"><h2>Open positions</h2><div id="posBox"></div></div>
@@ -154,7 +155,10 @@
                 <div><label for="prMin">Smallest payout ($)</label><input id="prMin" type="number" min="0" step="1"></div>
                 <div><label for="prBuf">Profit that must stay in ($)</label><input id="prBuf" type="number" min="0" step="1"></div>
                 <div><label for="prCons">Best day max (% of cycle profit, 0 = off)</label><input id="prCons" type="number" min="0" max="100" step="1"></div>
-                <div class="end"><button id="prSave" type="button" class="ghost">Save rules</button></div>
+                <div><label for="prAltDays">Or: trading days (0 = off)</label><input id="prAltDays" type="number" min="0" max="60" step="1"></div>
+                <div><label for="prAltPct">...with best day max (% of profit)</label><input id="prAltPct" type="number" min="0" max="100" step="1"></div>
+                <div><label for="prSplit">Your profit split (%)</label><input id="prSplit" type="number" min="1" max="100" step="1"></div>
+                <div class="end"><button id="prPreset" type="button" class="ghost">Topstep 50K Static rules</button> <button id="prSave" type="button" class="ghost">Save rules</button></div>
               </div>
             </details>
             <p id="poMsg" class="hint" role="status" aria-live="polite"></p>
@@ -413,6 +417,13 @@
             <div class="mixrow"><input id="dcUrl" type="password" placeholder="https://discord.com/api/webhooks/..." autocomplete="off" aria-label="Discord webhook URL"><button id="dcSave" type="button">Save and test</button><button id="dcDel" type="button" class="ghost">Remove</button></div>
             <label class="check"><input id="dcEveryone" type="checkbox" checked> Mention @everyone on trade pings (the live status message never pings)</label>
             <p id="dcMsg" class="hint" role="status" aria-live="polite"></p>
+          </div>
+          <div class="panel">
+            <h2>Start-up</h2>
+            <p class="hint">So an update, a crash or a reboot never leaves the bot stopped without you noticing.</p>
+            <label class="check"><input id="suResume" type="checkbox"> If the bot was running when Keel closed, start it again when Keel opens</label>
+            <label class="check"><input id="suLogin" type="checkbox"> Open Keel when Windows starts</label>
+            <p id="suMsg" class="hint" role="status" aria-live="polite"></p>
           </div>
           <div class="panel">
             <h2>Discord bot log</h2>

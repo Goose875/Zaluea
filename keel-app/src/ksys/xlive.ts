@@ -1,6 +1,6 @@
 import { BrokerAdapter } from '../core/types';
 import { RiskGuard } from '../core/risk';
-import { OrderDesk, KConfig, EntryContext } from './live';
+import { OrderDesk, KConfig, EntryContext, Decision } from './live';
 import { XSTRATEGIES, XStrategy, XOrder, toXBars, xOrders, xSimulate, XTICK } from './extra';
 import { wallOf, utcOf, sessionKey } from './time';
 import { tick as tickOf } from '../core/contracts';
@@ -15,6 +15,7 @@ export interface XLiveTrade {
   stopPts: number; tgtPts: number; endAt: number | null;                  // brackets measured from the real fill; forced exit time
   entry: number | null; stop: number | null; target: number | null; stopOrder: string | null; targetOrder: string | null;
   placed: number;
+  sig?: number;                        // when the signal was known (the daily signal audit)
 }
 export interface XStore { load(): { trades: XLiveTrade[]; done: string[] }; save(x: { trades: XLiveTrade[]; done: string[] }): void }
 export interface XDeps {
@@ -22,6 +23,8 @@ export interface XDeps {
   store: XStore; note: (msg: string, kind?: 'trade' | 'warn' | 'info') => void;
   /** Log file only: one line per hourly/daily scan (K8, K9), so the log shows the scan ran. */
   log?: (msg: string) => void;
+  /** Every entry decision, for the daily signal audit. */
+  decide?: (d: Decision) => void;
   /** True when a K1-K7 trade holds this market (one position per market across all of Keel's systems). */
   kHolds: (sym: string) => boolean;
   gate?: (ctx: EntryContext) => Promise<{ ok: boolean; reason?: string }>;
@@ -127,7 +130,13 @@ export class XLive {
     const key = `${S.id}:${S.kind === 'fractal' ? last.day : o.grp + ':' + (o.candleStart ?? 0)}`;
     if (this.done.has(key) || this.trades.some(t => t.key === key)) return;
     this.done.add(key); this.save();                                  // decided once: never re-sent, even after a skip
-    const say = (m: string, k: 'info' | 'warn' = 'info') => this.d.note(`${S.id}: ${m}`, k);
+    const sig = X[Math.min(o.i, n) - 1].utc + ms, oDir = o.side > 0 ? 'long' as const : 'short' as const;
+    const dec = (outcome: Decision['outcome'], why: string) => this.d.decide?.({ id: S.id, dir: oDir, signalUtc: sig, outcome, why });
+    const say = (m: string, k: 'info' | 'warn' = 'info') => {
+      this.d.note(`${S.id}: ${m}`, k);
+      const r = /^(skipped|blocked|not entered)[,:]?\s*(.*?)\.?$/.exec(m);
+      if (r) dec(r[1] === 'not entered' ? 'vetoed' : r[1] as Decision['outcome'], r[2] || r[1]);
+    };
     const m = mins(now);
     if (this.cfg.flatByHour !== null && m >= this.cfg.flatByHour * 60 - 10 && m < 18 * 60) return say('skipped, too close to the flat-by time.');
     if (this.d.kHolds(S.symbol) || this.holds(S.symbol)) return say(`skipped, another Keel trade already holds ${S.symbol}.`);
@@ -157,13 +166,14 @@ export class XLive {
       endAt = utcOf(start + 4 * 3_600_000, 'America/New_York');
     }
     const t: XLiveTrade = { key, id: S.id, sym: S.symbol, orderSym, dir, qty, state: 'working', entryOrder: null, limitPx: null, liveUntil, stopPts: o.stop, tgtPts: o.tgt,
-      endAt, entry: null, stop: null, target: null, stopOrder: null, targetOrder: null, placed: now };
+      endAt, entry: null, stop: null, target: null, stopOrder: null, targetOrder: null, placed: now, sig };
     if (o.type === 1) {
       // exact level, rounded to a tick in the safe direction (never a better price than the research level)
       const px = side > 0 ? Math.floor(o.px / T + 1e-9) * T : Math.ceil(o.px / T - 1e-9) * T;
       t.limitPx = px;
       t.entryOrder = await this.d.desk.placeOrder({ symbol: orderSym, side: side > 0 ? 'buy' : 'sell', qty, type: 'limit', price: px });
       this.trades.push(t); this.save();
+      dec('working', `limit ${dir} ${qty} ${orderSym} @ ${px.toFixed(2)}`);
       say(`working ${dir} limit ${qty} ${orderSym} @ ${px.toFixed(2)} until ${new Date(wallOf(liveUntil)).toISOString().slice(11, 16)} ET (stop ${o.stop.toFixed(2)} pts${o.tgt ? `, target ${o.tgt.toFixed(2)} pts` : ''}).`);
     } else {
       if (now - (last.utc + ms) > 10 * 60_000 && S.kind !== 'fractal') return say('skipped, more than 10 minutes late for the market entry.');
@@ -297,6 +307,7 @@ export class XLive {
     }
     if (t.target !== null) { try { t.targetOrder = await this.d.desk.placeOrder({ symbol: t.orderSym, side: exit, qty: t.qty, type: 'limit', price: t.target }); } catch { this.d.note(`${t.id}: target order failed; the stop is in place.`, 'warn'); } }
     this.save();
+    if (t.sig) this.d.decide?.({ id: t.id, dir: t.dir, signalUtc: t.sig, outcome: 'filled', why: `${t.dir} ${t.qty} ${t.orderSym} @ ${t.entry.toFixed(2)}` });
     this.d.note(`${t.id} filled ${t.dir} ${t.qty} ${t.orderSym} @ ${t.entry.toFixed(2)}: ${t.stop !== null ? `stop ${t.stop.toFixed(2)}` : 'no stop'}${t.target !== null ? `, target ${t.target.toFixed(2)}` : ''}${t.endAt ? `, out by ${new Date(wallOf(t.endAt)).toISOString().slice(11, 16)} ET` : ''}.`, 'trade');
   }
 
@@ -307,7 +318,7 @@ export class XLive {
     try { if (open > 0) await this.d.desk.placeOrder({ symbol: t.orderSym, side: d > 0 ? 'sell' : 'buy', qty: open, type: 'market' }); }
     catch { this.d.note(`${t.id}: could not close ${t.orderSym}. Check your platform now.`, 'warn'); return; }
     if (open > 0 || t.state === 'open') { this.d.note(`${t.id}: closed ${t.dir} ${t.qty} ${t.orderSym} (${why}).`, 'trade'); this.journal(t, 'forced', this.px(t) ?? null, why, true); }
-    else this.d.note(`${t.id}: entry order cancelled (${why}).`, 'info');
+    else { this.d.note(`${t.id}: entry order cancelled (${why}).`, 'info'); if (t.sig) this.d.decide?.({ id: t.id, dir: t.dir, signalUtc: t.sig, outcome: 'not filled', why }); }
     this.trades = this.trades.filter(x => x !== t); this.save();
   }
 
@@ -328,6 +339,7 @@ export class XLive {
           const again = (await this.d.desk.getPositions()).find(p => p.symbol === t.orderSym);   // filled while cancelling?
           if (again && again.qty * d > 0) { await this.onFilled(t); continue; }
           this.d.note(`${t.id}: entry ${late ? 'window over' : 'order gone'}, no fill.`, 'info');
+          if (t.sig) this.d.decide?.({ id: t.id, dir: t.dir, signalUtc: t.sig, outcome: 'not filled', why: late ? 'price never reached the limit before the window closed' : 'the entry order was cancelled at the broker' });
           this.trades = this.trades.filter(x => x !== t); this.save();
         }
         continue;
