@@ -35,3 +35,11 @@ measure. At $500 it passes faster but slightly less often. Every other style mad
 Caveats: gold trended strongly through 2024–2026, which suits a trend system. GC MACD was the best of 68 trend versions
 (chosen on the tuning period only). It competes with K5–K9 for the one GC position Keel allows at a time. Paper-trade it
 before using it live.
+
+## Is GC trend-following luck? (checked against the luck benchmark used in `strategy_search_hourly.js`)
+* **Neighbouring versions agree.** 16 of the 24 GC trend versions made money in both periods: every MACD and Donchian
+  55 / 20 variant. A lucky one-off would stand alone.
+* **Coin-flip benchmark.** Same entry times, random direction, 200 runs: average +0.074R (the exit rule and gold's rise
+  help any direction), 95th percentile +0.142R, best +0.193R. Real MACD: +0.177R, beaten by 0.5% of the coin flips.
+* **t = 1.83 on the test period alone (132 trades), 2.91 over the whole period (357 trades).** That's a modest edge.
+  About +0.10R per trade is beyond what random direction gives.
