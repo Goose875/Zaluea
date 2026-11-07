@@ -1,6 +1,6 @@
 {
   "name": "keel",
-  "version": "0.7.14",
+  "version": "0.7.15",
   "description": "Keel: my personal futures trading bot.",
   "main": "dist/main/main.js",
   "scripts": {
