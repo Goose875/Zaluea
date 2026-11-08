@@ -79,7 +79,10 @@ export class XLive {
     this.busy = true;
     try {
       await this.sync();
-      for (const S of XSTRATEGIES) if (this.cfg.enabled[S.id]) await this.scan(S);
+      for (const S of XSTRATEGIES) if (this.cfg.enabled[S.id]) {
+        // The daily fractal (K8) only scans at the 18:00 reopen: look once at Start too, for the radar only (never places orders)
+        if (S.kind === 'fractal' && !this.status[S.id] && !this.due(S)) await this.scan(S, true); else await this.scan(S);
+      }
       this.lastError = '';
     } catch (e) {
       const m = (e as Error).message;
@@ -98,9 +101,9 @@ export class XLive {
     return now - barClose >= 15_000 && last < barClose;
   }
 
-  private async scan(S: XStrategy) {
-    if (!this.due(S)) return;
-    const now = this.now(); this.lastScan[S.id] = now;
+  private async scan(S: XStrategy, peek = false) {
+    if (!peek && !this.due(S)) return;
+    const now = this.now(); if (!peek) this.lastScan[S.id] = now;
     if (S.paperOnly && this.cfg.mode === 'live') {
       if (!this.warned.has('paper' + S.id)) this.d.note(`${S.id} (${S.name}) is paper only (${S.evidence}), so it does not trade in live mode.`, 'info');
       this.warned.add('paper' + S.id); return;
@@ -111,16 +114,17 @@ export class XLive {
     const X = toXBars(S.kind === 'fractal' ? raw : raw.filter(b => b.t + ms <= now));
     if (X.length < (S.kind === 'fractal' ? 120 : 200)) throw new Error(`only ${X.length} bars of ${S.symbol} history came back for ${S.id}.`);
     const last = X[X.length - 1];
-    if (S.kind === 'fractal' && last.day !== sessionKey(wallOf(now - 2 * 3_600_000))) { this.status[S.id] = { lastScan: now, working: null, note: 'yesterday\'s daily bar is not in yet' }; return; }
+    if (S.kind === 'fractal' && !peek && last.day !== sessionKey(wallOf(now - 2 * 3_600_000))) { this.status[S.id] = { lastScan: now, working: null, note: 'yesterday\'s daily bar is not in yet' }; return; }
     // Behind = the newest bar that should have closed by now is missing. A scan between bar closes (e.g. right after Start
     // at 11:59) only has the 11:00 close to look at, which is not behind. The 17:00-18:00 ET break and the weekend have no bars,
     // so at the 18:00 reopen the 16:00 bar is the newest one due (and on Sunday 18:00, Friday's 16:00 bar).
     if (S.kind !== 'fractal' && lastDueBar(now, ms) - last.utc > 10 * 60_000) { this.status[S.id] = { lastScan: now, working: null, note: 'history is behind; waiting' }; if (S.barMinutes >= 60) this.d.log?.(`${S.id}: scan skipped, price history is behind.`); return; }
     // The fractal's daily trades are independent (as in the research): today's order is simply the one due at the next bar.
-    const orders = xOrders(S, X), sim = S.kind === 'fractal' ? { working: orders.filter(o => o.i === X.length).map(order => ({ order, k: -1 })) } : xSimulate(X, S.symbol, orders);
+    const orders = xOrders(S, X), sim = S.kind === 'fractal' ? { working: peek ? [] : orders.filter(o => o.i === X.length).map(order => ({ order, k: -1 })) } : xSimulate(X, S.symbol, orders);
     const w = sim.working[sim.working.length - 1], lo = orders[orders.length - 1];
     const lastSignal = lo ? X[Math.min(lo.i, X.length) - 1].utc + ms : null, lastSignalDir = lo ? (lo.side > 0 ? 'long' as const : 'short' as const) : null;
     this.status[S.id] = { lastSignal, lastSignalDir, lastScan: now, working: w ? `${w.order.side > 0 ? 'long' : 'short'} ${w.order.type ? 'limit ' + w.order.px.toFixed(2) : 'market'}` : null, note: '' };
+    if (peek) { this.status[S.id].note = ''; this.d.log?.(`${S.id}: looked at ${X.length} days of ${S.symbol} history at Start: ${lo ? 'last signal ' + (lo.side > 0 ? 'long' : 'short') + ' for ' + X[Math.min(lo.i, X.length) - 1].day : 'no signal in it'}. Next check at the 6 PM ET reopen.`); return; }
     if (S.barMinutes >= 60) this.d.log?.(`${S.id}: ${S.kind === 'fractal' ? 'daily' : 'hourly'} scan done, ${w ? 'setup: ' + this.status[S.id].working : 'no setup'}.`);
     for (const { order } of sim.working) await this.place(S, X, order);
   }

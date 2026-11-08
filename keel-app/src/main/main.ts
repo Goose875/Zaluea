@@ -234,11 +234,11 @@ function radar(): { rows: RadarRow[]; lastCheck: number | null; nextCheck: numbe
   }
   for (const s of xLive?.view() ?? []) {
     if (!enabled[s.id] || (s.paperOnly && kc.mode === 'live')) continue;
-    const last = s.lastScan ? s.lastSignal ?? null : null, t = s.trade;
+    const last = s.lastSignal ?? null, t = s.trade;
     if (t && t.state === 'open') rows.push({ id: s.id, kind: 'open', text: `in a trade: ${t.dir} ${t.qty} ${t.orderSym} @ ${(t.entry ?? 0).toFixed(2)}`, last });
     else if (t) rows.push({ id: s.id, kind: 'working', text: `limit ${t.dir} ${t.qty} ${t.orderSym} @ ${(t.limitPx ?? 0).toFixed(2)} until ${nyHM(t.liveUntil)} ET`, last });
     else if (s.note) rows.push({ id: s.id, kind: 'note', text: s.note, last });
-    else rows.push({ id: s.id, kind: 'wait', text: s.lastScan ? 'watching for a setup' : 'first scan after the next bar closes', last });
+    else rows.push({ id: s.id, kind: 'wait', text: s.lastScan ? (last ? 'watching for a setup' : 'no signal in the loaded history') : ((XSTRATEGIES.find(x => x.id === s.id)?.barMinutes ?? 0) >= 1440 ? 'checks once a day at the 6 PM ET reopen' : 'first scan after the next bar closes'), last });
   }
   const order = { open: 0, working: 1, signal: 2, note: 3, paused: 4, wait: 5 };
   rows.sort((a, b) => order[a.kind] - order[b.kind] || (b.last ?? 0) - (a.last ?? 0));
@@ -295,6 +295,29 @@ async function refreshBoard() {
       open: f.k.trades.length + xo(f.x), working: xw(f.x), pricesAgo: ago, strategies: enabledCount(f.k) });
   }
   board = rows;
+}
+// ---------- contracts: which month each account trades, and the roll (Z -> next month) while Keel keeps running ----------
+const rollSeen = new Map<string, string>();
+function contractLine(label: string, b: any) {
+  try { const n = b?.contractNames?.(); if (!n) return; const list = Object.entries(n as Record<string, string>).sort().map(([, v]) => v);
+    if (list.length) jot(`[${label}] Trading these contracts: ${list.join(', ')}.`); } catch { /* best effort */ }
+}
+async function rollCheck() {
+  const desks: { label: string; b: any; desk: any }[] = [];   // every connection: the order one and, when separate, the price one
+  if (engine && runBroker) for (const b of new Set([runBroker, runData].filter(Boolean))) desks.push({ label: mainLabel(), b, desk: kPaper ?? runBroker });
+  for (const f of followers) for (const b of new Set([f.broker, f.data].filter(Boolean))) desks.push({ label: f.acct.label, b, desk: f.paper ?? f.broker });
+  for (const d of desks) {
+    if (!d.b?.contractNames || !d.b?.activeName || !d.b?.rollTo) continue;
+    const held = new Set<string>(); try { for (const p of await d.desk.getPositions()) if (p.qty) held.add(rootSym(p.symbol).replace(/^M/, '')); } catch { continue; }
+    for (const [sym, cur] of Object.entries(d.b.contractNames() as Record<string, string>)) {
+      let next = ''; try { next = await d.b.activeName(sym); } catch { continue; }
+      if (!next || next === cur) continue;
+      const key = `${d.label}|${sym}|${next}`;
+      if (held.has(sym.replace(/^M/, ''))) { if (!rollSeen.has(key)) { rollSeen.set(key, ''); const m = `[${d.label}] ${sym}: the front month is now ${next}, but a ${cur} position is open. Keel keeps trading ${cur} until this market is flat, then switches.`; jot(m); engine?.say(m); } continue; }
+      try { const now = await d.b.rollTo(sym); const m = `[${d.label}] ${sym}: rolled from ${cur} to ${now} (the new front month).`; jot(m); engine?.say(m); ping(m); }
+      catch (err) { jot(`[${d.label}] ${sym}: could not switch to ${next}: ${(err as Error).message}`); }
+    }
+  }
 }
 async function refreshProgress() {
   const st = loadAccounts(conns()), list: { acct: AccountRecord | undefined; broker: any; label: string }[] = [];
@@ -508,9 +531,10 @@ function startHealth() {
   stopHealth();   // clears every timer, so the watchdog starts after it
   startedAt = Date.now(); feedState.clear();
   feedTimer = setInterval(() => void feedWatch().catch(() => {}), 30_000); (feedTimer as any).unref?.();
+  setTimeout(() => { if (!engine) return; contractLine(mainLabel(), runBroker); for (const f of followers) contractLine(f.acct.label, f.broker); }, 8000);
   clearInterval(boardTimer); boardTimer = setInterval(() => void refreshBoard().catch(() => {}), 10_000); (boardTimer as any).unref?.(); setTimeout(() => void refreshBoard().catch(() => {}), 3000);
   clearInterval(mgmtTimer); mgmtTimer = setInterval(() => void manageTrades().catch(() => {}), 10_000); (mgmtTimer as any).unref?.();
-  const run = () => { if (engine) { void healthLines().catch(() => {}); void refreshProgress().catch(() => {}); void protectionCheck().catch(() => {}); try { checkQuiet(); maybeAudit(); } catch { /* never touch trading */ } } };
+  const run = () => { if (engine) { void healthLines().catch(() => {}); void refreshProgress().catch(() => {}); void protectionCheck().catch(() => {}); void rollCheck().catch(() => {}); try { checkQuiet(); maybeAudit(); } catch { /* never touch trading */ } } };
   healthFirst = setTimeout(run, 20_000); (healthFirst as any).unref?.();   // the first one shortly after Start, once prices flow
   healthTimer = setInterval(run, 5 * 60_000); (healthTimer as any).unref?.();
 }

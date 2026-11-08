@@ -216,7 +216,7 @@ function renderRadar(R) {
   const LBL = { open: 'In a trade', working: 'Order working', signal: 'Signal', note: 'Note', paused: 'Paused', wait: 'Watching' };
   for (const r of R.rows) {
     const c = el('div', 'rchip ' + r.kind);
-    c.append(el('b', '', r.id), el('span', 'rstate', LBL[r.kind]), el('span', 'rtext', r.kind === 'wait' ? (r.last ? 'last signal ' + nyTime(r.last) : 'no signal in the loaded history') : r.text));
+    c.append(el('b', '', r.id), el('span', 'rstate', LBL[r.kind]), el('span', 'rtext', r.kind === 'wait' ? (r.last ? 'last signal ' + nyTime(r.last) : r.text || 'no signal in the loaded history') : r.text));
     box.append(c);
   }
 }

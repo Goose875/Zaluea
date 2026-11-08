@@ -3,7 +3,7 @@ import type { AccountRecord } from '../core/accounts';
 import { assertSafeUrl } from '../core/net';
 import { SignalRClient } from './signalr';
 
-interface Contract { id: string; symbol: string; tickSize: number; tickValue: number }
+interface Contract { id: string; symbol: string; tickSize: number; tickValue: number; name: string }
 
 /**
  * TopstepX / ProjectX Gateway (REST).
@@ -77,11 +77,30 @@ export class ProjectXBroker implements BrokerAdapter {
   onQuote(cb: (q: Quote) => void) { this.cb = cb; }
 
   private remember(symbol: string, c: any): Contract {
-    const out: Contract = { id: String(c.id), symbol, tickSize: Number(c.tickSize), tickValue: Number(c.tickValue) };
+    const out: Contract = { id: String(c.id), symbol, tickSize: Number(c.tickSize), tickValue: Number(c.tickValue), name: String(c.name || c.id) };
     if (!(out.tickSize > 0) || !(out.tickValue > 0)) throw new Error(`ProjectX did not give tick details for ${symbol}.`);
     this.bySymbol.set(symbol, out); this.byId.set(out.id, out);
     if (this.market) this.market.invoke('SubscribeContractQuotes', [out.id]);
     return out;
+  }
+
+  /** The contract Keel trades for each market, e.g. { MNQ: 'MNQZ6' } (Topstep's active front month, looked up at Start). */
+  contractNames(): Record<string, string> { return Object.fromEntries([...this.bySymbol.entries()].map(([s, c]) => [s, c.name])); }
+  /** Topstep's active contract now, without the cache (to spot the quarterly / gold roll while Keel keeps running). */
+  async activeName(symbol: string): Promise<string> { return (await this.searchActive(symbol)).name; }
+  /** Switch a market to Topstep's new active contract (only call while flat in it): drops the old one's prices. */
+  async rollTo(symbol: string): Promise<string> {
+    const old = this.bySymbol.get(symbol), c = await this.searchActive(symbol);
+    if (old && old.id !== c.id) { try { this.market?.invoke('UnsubscribeContractQuotes', [old.id]); } catch { /* best effort */ } this.byId.delete(old.id); this.last.delete(old.id); this.bySymbol.delete(symbol); }
+    return (await this.contractFor(symbol)).name;
+  }
+  private async searchActive(symbol: string): Promise<{ id: string; name: string; raw: any }> {
+    const j = await this.call('/api/Contract/search', { searchText: symbol, live: false });
+    const all: any[] = j.contracts || [];
+    const exact = all.filter(x => new RegExp(`^${symbol}[FGHJKMNQUVXZ]\\d{1,2}$`).test(String(x.name || '')));
+    const list = exact.length ? exact : all, c = list.find(x => x.activeContract) ?? list[0];
+    if (!c || typeof c.id !== 'string') throw new Error(`ProjectX has no contract for ${symbol}.`);
+    return { id: c.id, name: String(c.name || c.id), raw: c };
   }
 
   private async contractFor(symbol: string): Promise<Contract> {

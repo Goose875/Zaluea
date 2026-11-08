@@ -221,6 +221,22 @@ export class RithmicBroker implements BrokerAdapter {
     if (!c) { const g = guessFront(sym); if (!g) throw new Error(`Rithmic has no front-month contract for ${sym}.`); c = { symbol: g, exchange }; }
     this.s!.front.set(sym, c); return c;
   }
+  /** The contract Keel trades for each market, e.g. { MNQ: 'MNQZ6' }. */
+  contractNames(): Record<string, string> { return Object.fromEntries([...(this.s?.front.entries() ?? [])].map(([s, c]) => [s, c.symbol])); }
+  /** The front month now, without the cache (Rithmic's answer, else the usual roll calendar). */
+  async activeName(sym: string): Promise<string> {
+    const exchange = EXCHANGE[sym];
+    try { const r = (await this.P.TICKER.request('RequestFrontMonthContract', { templateId: 113, symbol: sym, exchange, needUpdates: false })).slice(-1)[0];
+      const n = r && (r.tradingSymbol || r.symbol); if (n && /\d$/.test(n)) return n; } catch { /* fall back below */ }
+    return guessFront(sym) ?? this.s?.front.get(sym)?.symbol ?? sym;
+  }
+  /** Switch a market to the new front month (only call while flat in it). */
+  async rollTo(sym: string): Promise<string> {
+    const old = this.s!.front.get(sym);
+    if (old) { try { await this.P.TICKER.request('RequestMarketDataUpdate', { templateId: 100, symbol: old.symbol, exchange: old.exchange, request: 2, updateBits: 1 }); } catch { /* best effort */ } }
+    this.s!.front.delete(sym); const was = this.s!.subscribed.delete(sym);
+    if (was) await this.subscribe([sym]); return (await this.contract(sym)).symbol;
+  }
   async subscribe(symbols: string[]) {
     for (const sym of symbols) {
       if (!EXCHANGE[sym] || this.s!.subscribed.has(sym)) continue;
