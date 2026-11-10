@@ -87,11 +87,26 @@
                 <div id="cOhlc" class="ohlc" aria-live="off"></div>
               </div>
               <aside class="ticket" aria-label="Order ticket">
-                <div class="tkbig"><button id="tkSell" type="button" class="sell">Sell</button><button id="tkBuy" type="button" class="buy">Buy</button></div>
+                <label for="tkType">Order type</label>
+                <select id="tkType">
+                  <option value="std">Market / Limit</option>
+                  <option value="stoplimit">Stop-limit</option>
+                  <option value="breakout">Breakout pair (OCO)</option>
+                </select>
+                <div class="tkbig" id="tkSides"><button id="tkSell" type="button" class="sell">Sell</button><button id="tkBuy" type="button" class="buy">Buy</button></div>
+                <button id="tkPair" type="button" class="tkpair" hidden>Place breakout pair</button>
                 <label for="tkQty">Contracts</label>
                 <div class="stepper"><button type="button" class="tbtn" data-step="-1" aria-label="One fewer">−</button><input id="tkQty" type="number" min="1" max="100" step="1" value="1"><button type="button" class="tbtn" data-step="1" aria-label="One more">+</button></div>
-                <label for="tkPx">Limit price <span class="hint">(empty = market)</span></label>
-                <input id="tkPx" type="number" step="0.01" placeholder="Market · click chart to set">
+                <div id="tkRowStd"><label for="tkPx">Limit price <span class="hint">(empty = market)</span></label>
+                <input id="tkPx" type="number" step="0.01" placeholder="Market · click chart to set"></div>
+                <div id="tkRowSl" hidden><label for="tkTrig">Trigger price <span class="hint">(buy: above price · sell: below)</span></label>
+                <input id="tkTrig" type="number" step="0.01" placeholder="Click chart to set"></div>
+                <div id="tkRowBo" hidden><label for="tkOff">Distance from price (pts)</label>
+                <input id="tkOff" type="number" min="0.25" step="0.25" value="30"></div>
+                <div class="tk2" id="tkRowSlip" hidden>
+                  <div><label for="tkSlip">Max slippage (pts)</label><input id="tkSlip" type="number" min="0" step="0.25" value="5"></div>
+                  <div><label for="tkCancel">Cancel after (min)</label><input id="tkCancel" type="number" min="0" step="1" value="0" placeholder="0 = flat-by"></div>
+                </div>
                 <div class="tk2">
                   <div><label for="tkStop">Stop (pts)</label><input id="tkStop" type="number" min="0" step="0.25" value="0"></div>
                   <div><label for="tkTgt">Target (pts)</label><input id="tkTgt" type="number" min="0" step="0.25" value="0"></div>

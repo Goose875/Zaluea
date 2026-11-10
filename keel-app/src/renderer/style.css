@@ -464,3 +464,9 @@ table.acctb .pos { color: var(--sea, #4cc6a4); } table.acctb .neg { color: var(-
 table.acctb .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; vertical-align: 1px; }
 .dot.ok { background: var(--sea, #4cc6a4); box-shadow: 0 0 0 3px rgba(76,198,164,.15); } .dot.idle { background: #6b7a80; } .dot.bad { background: var(--flare, #f0675d); box-shadow: 0 0 0 3px rgba(240,103,93,.15); }
 .tablewrap { overflow-x: auto; }
+
+/* stop-limit / breakout pair (0.7.18) */
+.ticket select#tkType { min-height: 34px; margin-bottom: 6px; }
+.ticket .tkpair { min-height: 46px; border-radius: 8px; font: 650 15px var(--text); color: #fff; background: linear-gradient(90deg, #ef5350 0 50%, #26a69a 50% 100%); border: 0; }
+.ticket .tkpair:disabled { opacity: .5; }
+.ticket [hidden] { display: none !important; }

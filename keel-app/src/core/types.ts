@@ -2,12 +2,13 @@ export type Side = 'buy' | 'sell';
 
 export interface Order {
   symbol: string; side: Side; qty: number;
-  /** 'stop' = stop-market order that triggers at `price`; 'limit' rests at `price`. */
-  type: 'market' | 'limit' | 'stop'; price?: number;
+  /** 'stop' = stop-market order that triggers at `price`; 'limit' rests at `price`;
+   *  'stoplimit' = triggers at `trigger`, then works as a limit at `price` (never fills worse than `price`). */
+  type: 'market' | 'limit' | 'stop' | 'stoplimit'; price?: number; trigger?: number;
   stopLoss?: number; takeProfit?: number;
 }
 /** A working (unfilled) order at the broker. */
-export interface WorkingOrder { id: string; symbol: string; side: Side; qty: number; type: 'market' | 'limit' | 'stop' | 'other'; price: number | null }
+export interface WorkingOrder { id: string; symbol: string; side: Side; qty: number; type: 'market' | 'limit' | 'stop' | 'stoplimit' | 'other'; price: number | null; trigger?: number | null }
 export type HistUnit = 'min1' | 'min5' | 'min15' | 'hour' | 'hour4' | 'day';
 export interface HistBar { t: number; o: number; h: number; l: number; c: number; v: number }
 export interface Position { symbol: string; qty: number; avgPrice: number; pnl?: number }
@@ -44,6 +45,10 @@ export interface BrokerAdapter {
   getOpenOrders?(): Promise<WorkingOrder[]>;
   modifyOrder?(id: string, change: { price: number }): Promise<void>;
   cancelOrder?(id: string): Promise<void>;
+  /** Optional: two orders where the first fill cancels the other, held by the broker's servers (Rithmic). Returns both order ids. */
+  placeOco?(a: Order, b: Order): Promise<[string, string]>;
+  /** Optional: called as soon as the broker reports a fill (so stops go in within a fraction of a second, not at the next check). */
+  onFill?(cb: () => void): void;
   /** Optional: last traded price Keel has seen for a symbol. */
   lastPrice?(symbol: string): number | undefined;
 }

@@ -23,11 +23,13 @@ const TEMPLATE_VERSION = '5.55';
 const DEFAULT_GATEWAY = 'wss://rituz00100.rithmic.com:443', DEFAULT_SYSTEM = 'Rithmic Test';
 const EXCHANGE: Record<string, string> = { NQ: 'CME', MNQ: 'CME', ES: 'CME', MES: 'CME', RTY: 'CME', M2K: 'CME', YM: 'CBOT', MYM: 'CBOT', GC: 'COMEX', MGC: 'COMEX', SI: 'COMEX', CL: 'NYMEX', MCL: 'NYMEX' };
 const INFRA = { TICKER: 1, ORDER: 2, HISTORY: 3, PNL: 4 } as const;
+/** Rithmic price_type per Keel order type. */
+const PRICE_TYPE: Record<string, number> = { limit: 1, market: 2, stoplimit: 3, stop: 4 };
 /** Responses (matched to a request by user_msg). */
 const RESPONSE: Record<number, string> = {
   11: 'ResponseLogin', 13: 'ResponseLogout', 17: 'ResponseRithmicSystemInfo', 19: 'ResponseHeartbeat', 101: 'ResponseMarketDataUpdate', 114: 'ResponseFrontMonthContract',
   203: 'ResponseTimeBarReplay', 301: 'ResponseLoginInfo', 303: 'ResponseAccountList', 309: 'ResponseSubscribeForOrderUpdates', 311: 'ResponseTradeRoutes',
-  313: 'ResponseNewOrder', 315: 'ResponseModifyOrder', 317: 'ResponseCancelOrder', 321: 'ResponseShowOrders', 347: 'ResponseCancelAllOrders', 3505: 'ResponseExitPosition',
+  313: 'ResponseNewOrder', 315: 'ResponseModifyOrder', 317: 'ResponseCancelOrder', 329: 'ResponseOCOOrder', 321: 'ResponseShowOrders', 347: 'ResponseCancelAllOrders', 3505: 'ResponseExitPosition',
   401: 'ResponsePnLPositionUpdates', 403: 'ResponsePnLPositionSnapshot'
 };
 /** Updates the server pushes on its own. */
@@ -131,7 +133,7 @@ class Plant {
   }
 }
 
-interface ROrder { basketId: string; accountId: string; symbol: string; root: string; exchange: string; side: 'buy' | 'sell'; qty: number; type: WorkingOrder['type']; price: number | null; status: string; working: boolean }
+interface ROrder { basketId: string; accountId: string; symbol: string; root: string; exchange: string; side: 'buy' | 'sell'; qty: number; type: WorkingOrder['type']; price: number | null; trigger?: number | null; status: string; working: boolean }
 
 /** One Rithmic login = one set of 4 plants, shared by every Keel account on that login (Rithmic limits sessions per login). */
 interface Session {
@@ -274,23 +276,53 @@ export class RithmicBroker implements BrokerAdapter {
     if (!Number.isInteger(o.qty) || o.qty < 1) throw new Error('Order size must be a whole number.');
     const c = await this.contract(o.symbol), route = this.s!.routes.get(c.exchange);
     if (!route) throw new Error(`No Rithmic trade route for ${c.exchange} on this login.`);
-    const priceType = o.type === 'market' ? 2 : o.type === 'limit' ? 1 : 4;
-    if (o.type !== 'market' && !(Number.isFinite(o.price) && (o.price as number) > 0)) throw new Error(`A ${o.type} order needs a price.`);
+    this.checkOrder(o);
     const r = (await this.P.ORDER.request('RequestNewOrder', { templateId: 312, ...this.ids(), symbol: c.symbol, exchange: c.exchange, quantity_64: o.qty,
-      transactionType: o.side === 'buy' ? 1 : 2, duration: 1, priceType, tradeRoute: route, manualOrAuto: 2,
-      ...(o.type === 'limit' ? { price: o.price } : o.type === 'stop' ? { triggerPrice: o.price } : {}) })).find(m => m.basketId);
+      transactionType: o.side === 'buy' ? 1 : 2, duration: 1, priceType: PRICE_TYPE[o.type], tradeRoute: route, manualOrAuto: 2, ...this.prices(o) })).find(m => m.basketId);
     if (!r?.basketId) throw new Error('Rithmic accepted the order but returned no order id.');
-    if (!this.orders.has(r.basketId)) this.orders.set(r.basketId, { basketId: r.basketId, accountId: this.accountId, symbol: c.symbol, root: o.symbol, exchange: c.exchange, side: o.side,
-      qty: o.qty, type: o.type, price: o.type === 'market' ? null : (o.price as number), status: 'sent', working: o.type !== 'market' });
-    return r.basketId;
+    this.track(String(r.basketId), o, c);
+    return String(r.basketId);
   }
+  private checkOrder(o: Order) {
+    if (o.type !== 'market' && !(Number.isFinite(o.price) && (o.price as number) > 0)) throw new Error(`A ${o.type} order needs a price.`);
+    if (o.type === 'stoplimit' && !(Number.isFinite(o.trigger) && (o.trigger as number) > 0)) throw new Error('A stop-limit order needs a trigger price.');
+  }
+  /** Rithmic price fields per order type: limit -> price, stop -> trigger_price, stop-limit -> both. */
+  private prices(o: Order) {
+    return o.type === 'limit' ? { price: o.price } : o.type === 'stop' ? { triggerPrice: o.price } : o.type === 'stoplimit' ? { price: o.price, triggerPrice: o.trigger } : {};
+  }
+  private track(id: string, o: Order, c: { symbol: string; exchange: string }) {
+    if (!this.orders.has(id)) this.orders.set(id, { basketId: id, accountId: this.accountId, symbol: c.symbol, root: o.symbol, exchange: c.exchange, side: o.side,
+      qty: o.qty, type: o.type, price: o.type === 'market' ? null : (o.price as number), trigger: o.type === 'stoplimit' ? (o.trigger as number) : null, status: 'sent', working: o.type !== 'market' });
+  }
+  /** Two orders as one OCO held by Rithmic's servers: the first fill cancels the other at once (no round trip through Keel). */
+  async placeOco(a: Order, b: Order): Promise<[string, string]> {
+    for (const o of [a, b]) { if (!Number.isInteger(o.qty) || o.qty < 1) throw new Error('Order size must be a whole number.'); if (o.type === 'market') throw new Error('An OCO pair needs two resting orders.'); this.checkOrder(o); }
+    const ca = await this.contract(a.symbol), cb = await this.contract(b.symbol), route = this.s!.routes.get(ca.exchange);
+    if (!route || this.s!.routes.get(cb.exchange) !== route) throw new Error(`No Rithmic trade route for ${ca.exchange} on this login.`);
+    const pa = this.prices(a), pb = this.prices(b), num0 = (x: any, k: string) => (x as any)[k] ?? 0;
+    const msgs = await this.P.ORDER.request('RequestOCOOrder', { templateId: 328, ...this.ids(), symbol: [ca.symbol, cb.symbol], exchange: [ca.exchange, cb.exchange],
+      quantity_64: [a.qty, b.qty], transactionType: [a.side === 'buy' ? 1 : 2, b.side === 'buy' ? 1 : 2], duration: [1, 1], priceType: [PRICE_TYPE[a.type], PRICE_TYPE[b.type]],
+      price: [num0(pa, 'price'), num0(pb, 'price')], triggerPrice: [num0(pa, 'triggerPrice'), num0(pb, 'triggerPrice')], tradeRoute: [route, route], manualOrAuto: [2, 2] });
+    const ids = msgs.flatMap(m => (Array.isArray(m.basketId) ? m.basketId : m.basketId ? [m.basketId] : [])).map(String);
+    if (ids.length < 2) throw new Error('Rithmic accepted the OCO pair but did not return both order ids.');
+    this.track(ids[0], a, ca); this.track(ids[1], b, cb);
+    return [ids[0], ids[1]];
+  }
+  private fillCbs: (() => void)[] = [];
+  onFill(cb: () => void) { this.fillCbs.push(cb); }
+  private fired() { for (const cb of this.fillCbs) { try { cb(); } catch { /* never break the feed */ } } }
   async getOpenOrders(): Promise<WorkingOrder[]> {
-    return [...this.orders.values()].filter(o => o.working).map(o => ({ id: o.basketId, symbol: o.root, side: o.side, qty: o.qty, type: o.type, price: o.price }));
+    return [...this.orders.values()].filter(o => o.working).map(o => ({ id: o.basketId, symbol: o.root, side: o.side, qty: o.qty, type: o.type, price: o.price, trigger: o.trigger ?? null }));
   }
   async modifyOrder(id: string, change: { price: number }) {
     const o = this.orders.get(id); if (!o || !o.working) throw new Error('That order is no longer working.');
+    // a stop-limit moves as a whole: the trigger keeps its distance from the limit
+    const trig = o.type === 'stoplimit' && o.trigger != null && o.price !== null ? o.trigger + (change.price - o.price) : null;
     await this.P.ORDER.request('RequestModifyOrder', { templateId: 314, ...this.ids(), basketId: id, symbol: o.symbol, exchange: o.exchange,
-      quantity_64: o.qty, priceType: o.type === 'limit' ? 1 : 4, manualOrAuto: 2, ...(o.type === 'limit' ? { price: change.price } : { triggerPrice: change.price }) });
+      quantity_64: o.qty, priceType: PRICE_TYPE[o.type as Order['type']] ?? 4, manualOrAuto: 2,
+      ...(o.type === 'limit' ? { price: change.price } : o.type === 'stoplimit' ? { price: change.price, triggerPrice: trig } : { triggerPrice: change.price }) });
+    if (trig !== null) o.trigger = trig;
     o.price = change.price;
   }
   async cancelOrder(id: string) { await this.P.ORDER.request('RequestCancelOrder', { templateId: 316, ...this.ids(), basketId: id, manualOrAuto: 2 }); }
@@ -301,13 +333,16 @@ export class RithmicBroker implements BrokerAdapter {
   private onOrderPush(name: string, m: any) {
     if (name !== 'RithmicOrderNotification' || !m.basketId || m.accountId !== this.accountId) return;
     const status = String(m.status || '').toLowerCase(), done = m.notifyType === 15 || /complete|cancel|reject|filled/.test(status);
-    const pt = m.priceType === 1 ? 'limit' : m.priceType === 4 || m.priceType === 3 ? 'stop' : m.priceType === 2 ? 'market' : 'other';
+    const pt = m.priceType === 1 ? 'limit' : m.priceType === 4 ? 'stop' : m.priceType === 3 ? 'stoplimit' : m.priceType === 2 ? 'market' : 'other';
     const o: ROrder = this.orders.get(m.basketId) ?? { basketId: m.basketId, accountId: this.accountId, symbol: m.symbol, root: rootOf(m.symbol || ''), exchange: m.exchange,
       side: m.transactionType === 1 ? 'buy' : 'sell', qty: num(m.quantity_64 ?? m.quantity) || 0, type: pt, price: null, status, working: false };
     o.status = status || o.status;
     const px = pt === 'stop' ? num(m.triggerPrice) : num(m.price); if (Number.isFinite(px) && px > 0) o.price = px;
+    if (pt === 'stoplimit') { const tp = num(m.triggerPrice); if (Number.isFinite(tp) && tp > 0) o.trigger = tp; }
+    const wasWorking = o.working;
     o.working = !done && pt !== 'market' && (m.notifyType === 13 || m.notifyType === 14 || m.notifyType === 18 || /open|trigger|pending/.test(status));
     this.orders.set(o.basketId, o);
+    if (/fill|complete/.test(status) || (wasWorking && done && !/cancel|reject/.test(status))) this.fired();   // a fill: wake the trade manager now
     if (this.orders.size > 2000) for (const [k, v] of this.orders) { if (!v.working) this.orders.delete(k); if (this.orders.size < 1500) break; }
   }
 
@@ -315,8 +350,10 @@ export class RithmicBroker implements BrokerAdapter {
   private onPnl(name: string, m: any) {
     if (m.accountId !== this.accountId) return;
     if (name === 'InstrumentPnLPositionUpdate' && m.symbol) {
+      const before = this.positions.get(rootOf(m.symbol))?.qty ?? 0;
       this.positions.set(rootOf(m.symbol), { qty: num(m.netQuantity ?? (num(m.buyQty) - num(m.sellQty))) || 0, avg: num(m.avgOpenFillPrice),
         open: num(m.openPositionPnl) || 0, closed: num(m.closedPositionPnl) || 0 });
+      if ((this.positions.get(rootOf(m.symbol))?.qty ?? 0) !== before) this.fired();   // the position changed (a fill)
     } else if (name === 'AccountPnLPositionUpdate') {
       this.acct = { balance: num(m.accountBalance), dayPnl: num(m.dayPnl), open: num(m.openPositionPnl) || 0, closed: num(m.closedPositionPnl) || 0 };
     }

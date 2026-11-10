@@ -53,6 +53,10 @@ export interface OrderDesk {
   modifyOrder(id: string, change: { price: number }): Promise<void>;
   cancelOrder(id: string): Promise<void>;
   getPositions(): Promise<Position[]>;
+  /** Optional: a one-cancels-other pair held by the broker (Rithmic, paper). */
+  placeOco?(a: Order, b: Order): Promise<[string, string]>;
+  /** Optional: told as soon as an order fills. */
+  onFill?(cb: () => void): void;
 }
 export interface KDeps {
   data: BrokerAdapter;                                         // prices and history

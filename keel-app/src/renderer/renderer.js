@@ -690,7 +690,7 @@ function lwEnsure() {
   lw.subscribeCrosshairMove(p => { const i = p && p.time !== undefined ? lwIdx.get(p.time) : undefined; const n = i === undefined ? null : i; if (n !== ohlcAt) { ohlcAt = n; ohlcRender(); } });
   indBuild();
   lwDragSetup(W);
-  lw.subscribeClick(p => { if (!p.point || (p.paneIndex || 0) !== 0 || Date.now() - lwNoClick < 500) return; const px = lwSeries.coordinateToPrice(p.point.y); if (px === null) return; const t = /GC/.test(chartSym) ? 0.1 : 0.25; $('tkPx').value = (Math.round(px / t) * t).toFixed(/GC/.test(chartSym) ? 1 : 2); $('tkMsg').textContent = 'Limit price set from the chart. Clear it for a market order.'; });
+  lw.subscribeClick(p => { if (!p.point || (p.paneIndex || 0) !== 0 || Date.now() - lwNoClick < 500) return; const px = lwSeries.coordinateToPrice(p.point.y); if (px === null) return; const t = /GC/.test(chartSym) ? 0.1 : 0.25; const v = (Math.round(px / t) * t).toFixed(/GC/.test(chartSym) ? 1 : 2), sl = $('tkType').value === 'stoplimit'; $(sl ? 'tkTrig' : 'tkPx').value = v; $('tkMsg').textContent = sl ? 'Trigger price set from the chart.' : 'Limit price set from the chart. Clear it for a market order.'; });
 }
 // ---------- trades on the chart: drag a stop / target (or a working limit's entry) to move it at the broker ----------
 let lwMeta = [], lwDrag = null, lwNoClick = 0;
@@ -791,15 +791,41 @@ async function tkRender() {
     l.append(cb, document.createTextNode(' ' + a.label)); box.append(l);
   }
   tkCan = r.running && r.accounts.length > 0;
-  ['tkBuy', 'tkSell', 'tkFlat'].forEach(id => { $(id).disabled = !tkCan || (id !== 'tkFlat' && lwStale); });
+  ['tkBuy', 'tkSell', 'tkFlat', 'tkPair'].forEach(id => { $(id).disabled = !tkCan || (id !== 'tkFlat' && lwStale); });
 }
 const tkAccounts = () => [...document.querySelectorAll('#tkAccts input:checked')].map(x => x.value);
 const tkReport = res => { if (!res || !res.ok) { $('tkMsg').textContent = res ? res.error : 'Something went wrong.'; return; }
   $('tkMsg').textContent = res.results.map(x => `${x.account}: ${x.ok ? 'sent' : 'not sent (' + x.why + ')'}`).join(' · '); };
-async function tkSend(dir) {
+// Order type: Market / Limit (the price box), Stop-limit (a trigger and a worst price), Breakout pair (OCO at the broker).
+function tkMode() {
+  const m = $('tkType').value;
+  $('tkRowStd').hidden = m !== 'std'; $('tkRowSl').hidden = m !== 'stoplimit'; $('tkRowBo').hidden = m !== 'breakout'; $('tkRowSlip').hidden = m === 'std';
+  $('tkSides').hidden = m === 'breakout'; $('tkPair').hidden = m !== 'breakout';
+  $('tkMsg').textContent = m === 'stoplimit' ? 'Buys when price trades up to the trigger (sells when it trades down to it), but never fills more than the max slippage past it. If price jumps past that, nothing fills.'
+    : m === 'breakout' ? 'A buy stop-limit above and a sell stop-limit below the current price, held by the broker as one-cancels-other: the first fill cancels the other side instantly. Needs a Rithmic or paper account.' : '';
+}
+$('tkType').onchange = tkMode;
+$('tkPair').onclick = () => tkSend('long', true);
+async function tkSend(dir, pair = false) {
   if (lwStale) { $('tkMsg').textContent = 'The chart is not live right now (no price for 20 seconds), so chart trading is paused.'; return; }
-  const px = $('tkPx').value.trim(), qty = Number($('tkQty').value), ids = tkAccounts();
+  const px = $('tkPx').value.trim(), qty = Number($('tkQty').value), ids = tkAccounts(), mode = pair ? 'breakout' : $('tkType').value;
   if (!ids.length) { $('tkMsg').textContent = 'Tick at least one account.'; return; }
+  if (mode !== 'std') {
+    const slip = Number($('tkSlip').value) || 0, cancelMin = Number($('tkCancel').value) || 0, stopPts = Number($('tkStop').value) || 0, tgtPts = Number($('tkTgt').value) || 0;
+    const prot = (stopPts ? `, stop ${stopPts} pts` : ', NO stop') + (tgtPts ? `, target ${tgtPts} pts` : '') + (cancelMin ? `, cancel after ${cancelMin} min` : '');
+    let payload, what;
+    if (mode === 'stoplimit') {
+      const trig = Number($('tkTrig').value); if (!(trig > 0)) { $('tkMsg').textContent = 'Set a trigger price (type it or click the chart).'; return; }
+      payload = { type: 'stoplimit', trigger: trig }; what = `${dir === 'long' ? 'BUY' : 'SELL'} STOP-LIMIT ${qty} ${chartSym}: trigger ${trig}, worst fill ${dir === 'long' ? trig + slip : trig - slip}${prot}`;
+    } else {
+      const off = Number($('tkOff').value); if (!(off > 0)) { $('tkMsg').textContent = 'Set the distance in points.'; return; }
+      payload = { type: 'breakout', offsetPts: off }; what = `BREAKOUT PAIR ${qty} ${chartSym}: buy ${off} pts above and sell ${off} pts below the current price, max slippage ${slip} pts${prot}`;
+    }
+    if (!confirm(`${what}\n\non ${ids.length} account${ids.length === 1 ? '' : 's'}?`)) return;
+    $('tkMsg').textContent = 'Sending…';
+    tkReport(await window.keel.chartOrder({ orderSym: chartSym, dir, qty, ...payload, slipPts: slip, cancelMin, stopPts, tgtPts, accounts: ids }));
+    $('tkTrig').value = ''; lwLast = 0; return;
+  }
   const what = `${dir === 'long' ? 'BUY' : 'SELL'} ${qty} ${chartSym} ${px ? 'limit @ ' + px : 'at market'}${Number($('tkStop').value) ? ', stop ' + $('tkStop').value + ' pts' : ', NO stop'}${Number($('tkTgt').value) ? ', target ' + $('tkTgt').value + ' pts' : ''}`;
   if (!confirm(`${what}\n\non ${ids.length} account${ids.length === 1 ? '' : 's'}?`)) return;
   $('tkMsg').textContent = 'Sending…';
@@ -824,7 +850,7 @@ function lwLiveUpdate(tick, now) {
   const pill = $('cLive'); pill.className = 'livepill ' + (lwStale ? 'off' : 'on');
   pill.textContent = age === null ? '● NO LIVE PRICES' : lwStale ? `● STALE · last tick ${age < 120 ? Math.round(age) + 's' : Math.round(age / 60) + 'm'} ago` : `● LIVE · ${age < 1 ? 'now' : Math.round(age) + 's ago'}`;
   pill.title = lwStale ? 'No new price for 20 seconds (market closed, or the price feed stopped). Trading from the chart is paused.' : 'Prices are streaming.';
-  for (const id of ['tkBuy', 'tkSell']) { const b = $(id); b.disabled = lwStale || !tkCan; b.title = lwStale ? 'The chart is not live, so trading from it is paused.' : ''; }
+  for (const id of ['tkBuy', 'tkSell', 'tkPair']) { const b = $(id); b.disabled = lwStale || !tkCan; b.title = lwStale ? 'The chart is not live, so trading from it is paused.' : ''; }
   if (!tick || lwStale || !lwSeries) return;
   const data = lwSeries.data(); if (!data.length) return;
   const lastBar = data[data.length - 1], period = (TF_MS[chartTf] || 3e5) / 1000, tSec = nySec(tick.ts);

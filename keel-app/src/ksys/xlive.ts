@@ -16,6 +16,8 @@ export interface XLiveTrade {
   entry: number | null; stop: number | null; target: number | null; stopOrder: string | null; targetOrder: string | null;
   placed: number;
   sig?: number;                        // when the signal was known (the daily signal audit)
+  trigger?: number | null;             // stop-limit entry: the price that arms it (limitPx = the worst fill)
+  oco?: string;                        // breakout pair: both sides share this key; the first fill cancels the other
 }
 export interface XStore { load(): { trades: XLiveTrade[]; done: string[] }; save(x: { trades: XLiveTrade[]; done: string[] }): void }
 export interface XDeps {
@@ -59,7 +61,10 @@ export class XLive {
   private warned = new Set<string>(); private stopMissing = new Map<string, number>();
   status: Record<string, { lastScan: number; working: string | null; note: string; lastSignal?: number | null; lastSignalDir?: 'long' | 'short' | null }> = {};
 
-  constructor(private cfg: KConfig, private d: XDeps) { const s = d.store.load(); this.trades = s.trades; this.done = new Set(s.done); }
+  constructor(private cfg: KConfig, private d: XDeps) { const s = d.store.load(); this.trades = s.trades; this.done = new Set(s.done); d.desk.onFill?.(() => this.kick()); }
+  private again = false;
+  /** A fill was reported: check the trades now (stops go in within a fraction of a second, not at the next 5 s check). */
+  kick() { if (this.busy) { this.again = true; return; } void this.tick(); }
   setConfig(c: KConfig) { this.cfg = c; }
   private now() { return this.d.now ? this.d.now() : Date.now(); }
   private save() { this.d.store.save({ trades: this.trades, done: [...this.done].slice(-400) }); }
@@ -88,7 +93,7 @@ export class XLive {
       const m = (e as Error).message;
       if (m !== this.lastError) this.d.note(`PO3/Fractal: ${m}`, 'warn');
       this.lastError = m;
-    } finally { this.busy = false; }
+    } finally { this.busy = false; if (this.again) { this.again = false; setTimeout(() => void this.tick(), 0); } }
   }
 
   /** Is it time to look at this strategy again? Once per completed bar, ~15 s after it closes. */
@@ -210,7 +215,13 @@ export class XLive {
 
   /** A trade placed by you from the chart: market or limit entry, optional stop / target in points (placed at the broker as soon
    *  as it fills), same risk limits as every Keel entry, out at the stop / target / flat-by. Refused if a Keel trade holds the market. */
-  async manualOrder(o: { orderSym: string; dir: 'long' | 'short'; qty: number; type: 'market' | 'limit'; price?: number; stopPts: number; tgtPts: number }): Promise<string> {
+  /**
+   * A chart order. type: 'market' | 'limit' (price) | 'stoplimit' (trigger, then never worse than trigger +/- slipPts) |
+   * 'breakout' (a buy stop-limit offsetPts above `ref` and a sell stop-limit offsetPts below, one-cancels-other at the broker).
+   * cancelMin: unfilled entries are cancelled after this many minutes (default: the flat-by time).
+   */
+  async manualOrder(o: { orderSym: string; dir: 'long' | 'short'; qty: number; type: 'market' | 'limit' | 'stoplimit' | 'breakout'; price?: number; trigger?: number; slipPts?: number;
+    offsetPts?: number; ref?: number; cancelMin?: number; stopPts: number; tgtPts: number }): Promise<string> {
     const now = this.now(), m = mins(now), root = o.orderSym.replace(/^M(?=NQ|ES|GC|YM|CL)/, '');
     if (!Number.isInteger(o.qty) || o.qty < 1 || o.qty > 100) return 'quantity must be a whole number from 1 to 100';
     if (this.cfg.flatByHour !== null && m >= this.cfg.flatByHour * 60 - 5 && m < 18 * 60) return 'too close to the flat-by time';
@@ -221,11 +232,37 @@ export class XLive {
     const side = o.dir === 'long' ? 'buy' as const : 'sell' as const;
     const v = this.d.risk.check({ symbol: o.orderSym, side, qty: o.qty, source: 'strategy', strategyId: 'MANUAL', from: 'chart' }, { dailyPnL: pnl, openPositions: positions.filter(p => p.qty !== 0).length, positions });
     if (!v.ok) return v.reason ?? 'blocked by your risk limits';
+    if (o.type === 'breakout') { const v2 = this.d.risk.check({ symbol: o.orderSym, side: side === 'buy' ? 'sell' : 'buy', qty: o.qty, source: 'strategy', strategyId: 'MANUAL', from: 'chart' }, { dailyPnL: pnl, openPositions: positions.filter(p => p.qty !== 0).length, positions }); if (!v2.ok) return v2.reason ?? 'blocked by your risk limits'; }
     const T = tickOf(o.orderSym), flat = this.cfg.flatByHour !== null ? this.cfg.flatByHour : 17;
     const w = new Date(wallOf(now)), cutWall = Date.UTC(w.getUTCFullYear(), w.getUTCMonth(), w.getUTCDate(), flat, 0) - 5 * 60_000;
-    const liveUntil = m < 18 * 60 ? utcOf(cutWall, 'America/New_York') : utcOf(cutWall + 86_400_000, 'America/New_York');
+    let liveUntil = m < 18 * 60 ? utcOf(cutWall, 'America/New_York') : utcOf(cutWall + 86_400_000, 'America/New_York');
+    if (Number.isFinite(o.cancelMin) && (o.cancelMin as number) > 0) liveUntil = Math.min(liveUntil, now + (o.cancelMin as number) * 60_000);
+    const ref = Number.isFinite(o.ref) && (o.ref as number) > 0 ? (o.ref as number) : this.d.data.lastPrice?.(o.orderSym) ?? this.d.data.lastPrice?.(root);
+    const slip = Math.max(0, Number(o.slipPts) || 0), snap = (x: number) => Math.round(x / T) * T;
     const t: XLiveTrade = { key: `MAN:${now}:${o.orderSym}`, id: 'MANUAL', sym: root, orderSym: o.orderSym, dir: o.dir, qty: o.qty, state: 'working', entryOrder: null, limitPx: null,
       liveUntil, stopPts: Math.max(0, o.stopPts || 0), tgtPts: Math.max(0, o.tgtPts || 0), endAt: null, entry: null, stop: null, target: null, stopOrder: null, targetOrder: null, placed: now };
+    if (o.type === 'stoplimit') {
+      if (!(Number.isFinite(o.trigger) && (o.trigger as number) > 0)) return 'a stop-limit order needs a trigger price';
+      if (ref === undefined) return 'no live price yet, so the trigger cannot be checked';
+      const trig = snap(o.trigger as number), dd = o.dir === 'long' ? 1 : -1;
+      if (dd > 0 ? trig <= ref : trig >= ref) return `a ${o.dir === 'long' ? 'buy' : 'sell'} stop-limit trigger must be ${o.dir === 'long' ? 'above' : 'below'} the current price (${ref.toFixed(2)}); for an entry on the other side use a limit order`;
+      t.trigger = trig; t.limitPx = snap(trig + dd * slip);
+      t.entryOrder = await this.d.desk.placeOrder({ symbol: o.orderSym, side, qty: o.qty, type: 'stoplimit', trigger: t.trigger, price: t.limitPx });
+      this.trades.push(t); this.save(); this.d.note(`Chart order: ${o.dir} stop-limit ${o.qty} ${o.orderSym}, trigger ${trig.toFixed(2)}, never worse than ${t.limitPx.toFixed(2)}, working.`, 'trade');
+      return '';
+    }
+    if (o.type === 'breakout') {
+      if (!this.d.desk.placeOco) return 'breakout pairs need a Rithmic or paper account (this connection has no one-cancels-other orders held by the broker)';
+      const off = Number(o.offsetPts) || 0; if (!(off > 0)) return 'set how many points above and below the price to place the pair';
+      if (ref === undefined) return 'no live price yet';
+      const up = snap(ref + off), dn = snap(ref - off), key = `OCO:${now}:${o.orderSym}`;
+      const L: XLiveTrade = { ...t, key: key + ':L', dir: 'long', trigger: up, limitPx: snap(up + slip), oco: key }, S: XLiveTrade = { ...t, key: key + ':S', dir: 'short', trigger: dn, limitPx: snap(dn - slip), oco: key };
+      const [a, b] = await this.d.desk.placeOco({ symbol: o.orderSym, side: 'buy', qty: o.qty, type: 'stoplimit', trigger: up, price: L.limitPx as number },
+        { symbol: o.orderSym, side: 'sell', qty: o.qty, type: 'stoplimit', trigger: dn, price: S.limitPx as number });
+      L.entryOrder = a; S.entryOrder = b; this.trades.push(L, S); this.save();
+      this.d.note(`Chart breakout pair ${o.qty} ${o.orderSym} around ${ref.toFixed(2)}: buy above ${up.toFixed(2)} (max ${(L.limitPx as number).toFixed(2)}), sell below ${dn.toFixed(2)} (min ${(S.limitPx as number).toFixed(2)}). The first fill cancels the other at the broker.`, 'trade');
+      return '';
+    }
     if (o.type === 'limit') {
       if (!(Number.isFinite(o.price) && (o.price as number) > 0)) return 'a limit order needs a price';
       t.limitPx = Math.round((o.price as number) / T) * T;
@@ -296,6 +333,11 @@ export class XLive {
   private async onFilled(t: XLiveTrade) {
     const d = t.dir === 'long' ? 1 : -1, T = XTICK[t.sym] ?? tickOf(t.orderSym), exit = d > 0 ? 'sell' as const : 'buy' as const;
     if (t.entryOrder) { await this.d.desk.cancelOrder(t.entryOrder).catch(() => {}); t.entryOrder = null; }   // a partial fill keeps what filled
+    if (t.oco) {   // breakout pair: the broker already cancelled the other side; make sure, and forget it
+      for (const x of this.trades.filter(x => x !== t && x.oco === t.oco)) { if (x.entryOrder) await this.d.desk.cancelOrder(x.entryOrder).catch(() => {}); }
+      this.trades = this.trades.filter(x => x === t || x.oco !== t.oco); this.save();
+      this.d.note(`Breakout pair: the ${t.dir} side filled, the other side is cancelled.`, 'trade');
+    }
     // Some brokers (Rithmic) report the new position a moment after the fill: keep looking for up to ~15 s before giving up.
     let pos = (await this.d.desk.getPositions()).find(p => p.symbol === t.orderSym && Math.sign(p.qty) === d);
     for (let i = 0; !pos && i < 30; i++) { await new Promise(r => setTimeout(r, 500)); pos = (await this.d.desk.getPositions()).find(p => p.symbol === t.orderSym && Math.sign(p.qty) === d); }
@@ -335,8 +377,10 @@ export class XLive {
     const flatCut = this.cfg.flatByHour !== null ? this.cfg.flatByHour * 60 : 17 * 60;
     for (const t of [...this.trades]) {
       const d = t.dir === 'long' ? 1 : -1, pos = positions.find(p => p.symbol === t.orderSym), held = pos ? pos.qty * d : 0;
+      if (!this.trades.includes(t)) continue;   // removed earlier in this pass (the other side of a breakout pair)
       if (t.state === 'working') {
         if (held > 0) { await this.onFilled(t); continue; }
+        if (t.oco && held < 0) continue;          // the other side of this pair filled: it removes this one
         const late = now >= t.liveUntil || (m >= 15 * 60 + 55 && m < 18 * 60) || (m >= flatCut - 10 && m < 18 * 60);
         if (late || (t.entryOrder && !ids.has(t.entryOrder) && now - t.placed > SETTLE_MS)) {
           if (t.entryOrder) await this.d.desk.cancelOrder(t.entryOrder).catch(() => {});

@@ -147,11 +147,12 @@ export class ProjectXBroker implements BrokerAdapter {
     if (!Number.isInteger(o.qty) || o.qty < 1) throw new Error('Order size must be a whole number.');
     const c = await this.contractFor(o.symbol);
     // ProjectX order types: 1 = limit, 2 = market, 4 = stop. Side 0 = buy (bid), 1 = sell (ask).
-    const type = o.type === 'limit' ? 1 : o.type === 'stop' ? 4 : 2;
+    const type = o.type === 'limit' ? 1 : o.type === 'stop' ? 4 : o.type === 'stoplimit' ? 3 : 2;
+    if (o.type === 'stoplimit' && !(Number.isFinite(o.trigger) && (o.trigger as number) > 0)) throw new Error('A stop-limit order needs a trigger price.');
     if (type !== 2 && !(Number.isFinite(o.price) && (o.price as number) > 0)) throw new Error(`A ${o.type} order needs a price.`);
     const px = type === 2 ? undefined : Math.round((o.price as number) / c.tickSize) * c.tickSize;
     const j = await this.call('/api/Order/place', { accountId: this.accountId, contractId: c.id, type, side: o.side === 'buy' ? 0 : 1, size: o.qty,
-      ...(type === 1 ? { limitPrice: px } : type === 4 ? { stopPrice: px } : {}) });
+      ...(type === 1 ? { limitPrice: px } : type === 4 ? { stopPrice: px } : type === 3 ? { limitPrice: px, stopPrice: Math.round((o.trigger as number) / c.tickSize) * c.tickSize } : {}) });
     return String(j.orderId);
   }
 

@@ -1060,15 +1060,17 @@ app.whenReady().then(async () => {
   ipcMain.handle('chart:order', async (e, o: any) => {
     if (!allowed(e) || !o || typeof o !== 'object') return { ok: false, error: 'Not allowed.' };
     if (!engine) return { ok: false, error: 'Start the bot first: chart orders go through the running accounts.' };
-    if (typeof o.orderSym !== 'string' || !/^[A-Z0-9]{1,6}$/.test(o.orderSym) || !['long', 'short'].includes(o.dir) || !['market', 'limit'].includes(o.type)) return { ok: false, error: 'That order is not valid.' };
+    if (typeof o.orderSym !== 'string' || !/^[A-Z0-9]{1,6}$/.test(o.orderSym) || !['long', 'short'].includes(o.dir) || !['market', 'limit', 'stoplimit', 'breakout'].includes(o.type)) return { ok: false, error: 'That order is not valid.' };
     const ids: string[] = Array.isArray(o.accounts) ? o.accounts : [], targets = runners().filter(r => ids.includes(r.id));
     if (!targets.length) return { ok: false, error: 'Tick at least one account.' };
     const results = await Promise.all(targets.map(async r => {
-      try { const why = await r.x.manualOrder({ orderSym: o.orderSym, dir: o.dir, qty: Number(o.qty), type: o.type, price: Number(o.price), stopPts: Number(o.stopPts) || 0, tgtPts: Number(o.tgtPts) || 0 });
+      const tk = liveTick(o.orderSym);   // one price for every account, so a breakout pair sits at the same levels everywhere
+      try { const why = await r.x.manualOrder({ orderSym: o.orderSym, dir: o.dir, qty: Number(o.qty), type: o.type, price: Number(o.price), trigger: Number(o.trigger), slipPts: Number(o.slipPts) || 0,
+          offsetPts: Number(o.offsetPts) || 0, cancelMin: Number(o.cancelMin) || 0, ref: tk ? tk.price : undefined, stopPts: Number(o.stopPts) || 0, tgtPts: Number(o.tgtPts) || 0 });
         return { account: r.label, ok: !why, why }; }
       catch (err) { return { account: r.label, ok: false, why: (err as Error).message }; }
     }));
-    for (const x of results) { const line = `Chart ${o.dir} ${o.type} ${o.qty} ${o.orderSym} on ${x.account}: ${x.ok ? 'sent' : 'not sent, ' + x.why}`; jot(line); }   // each account's runner pings its own "sent" / "filled" (no duplicate here)
+    for (const x of results) { const line = `Chart ${o.type === 'breakout' ? 'breakout pair' : o.dir + ' ' + o.type} ${o.qty} ${o.orderSym} on ${x.account}: ${x.ok ? 'sent' : 'not sent, ' + x.why}`; jot(line); }   // each account's runner pings its own "sent" / "filled" (no duplicate here)
     return { ok: true, results };
   });
   ipcMain.handle('chart:flatten', async (e, root: unknown, accounts: unknown) => {
@@ -1097,10 +1099,10 @@ app.whenReady().then(async () => {
     for (const r of runners()) {
       for (const t of r.k?.trades ?? []) if (same(t.sym)) add({ ref: `K|${t.id}|${t.sym}|${t.dir}`, name: t.id, side: t.dir === 'long' ? 'buy' : 'sell', qty: t.qty, entry: t.entry, tp: t.target, sl: t.stop, drag: false, working: false, opened: t.opened, accounts: [r.label] });
       for (const t of r.x.trades) if (same(t.sym)) {
-        const d = t.dir === 'long' ? 1 : -1, w = t.state === 'working', e = t.entry ?? t.limitPx;
+        const d = t.dir === 'long' ? 1 : -1, w = t.state === 'working', e = t.entry ?? t.trigger ?? t.limitPx;
         const sl = w ? (e !== null && t.stopPts > 0 ? e - d * t.stopPts : null) : t.stop, tp = w ? (e !== null && t.tgtPts > 0 ? e + d * t.tgtPts : null) : t.target;
         add({ ref: `X|${t.id}|${t.sym}|${t.dir}|${t.state}`, name: t.id === 'MANUAL' ? 'Chart' : t.id, side: t.dir === 'long' ? 'buy' : 'sell', qty: t.qty, entry: e, tp, sl,
-          drag: !w || t.limitPx !== null, working: w, opened: w ? null : t.placed, accounts: [r.label] });
+          drag: !w || (t.limitPx !== null && !t.trigger), working: w, opened: w ? null : t.placed, accounts: [r.label] });
       }
     }
     const res = [...out.values()];
