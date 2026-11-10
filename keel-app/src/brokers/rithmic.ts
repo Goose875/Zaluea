@@ -17,7 +17,8 @@ import * as protobuf from 'protobufjs';
 import { AccountInfo, BrokerAdapter, HistBar, HistUnit, Order, Position, Quote, WorkingOrder } from '../core/types';
 import type { AccountRecord } from '../core/accounts';
 
-const APP = { name: 'Keel', version: '0.7.1' };
+// Rithmic conformance: the app name Rithmic approved is "alsm:Keel" (their prefix + our name). Never change it.
+const APP = { name: 'alsm:Keel', version: (() => { try { return String(require('../../package.json').version); } catch { return '0'; } })() };
 const TEMPLATE_VERSION = '5.55';
 const DEFAULT_GATEWAY = 'wss://rituz00100.rithmic.com:443', DEFAULT_SYSTEM = 'Rithmic Test';
 const EXCHANGE: Record<string, string> = { NQ: 'CME', MNQ: 'CME', ES: 'CME', MES: 'CME', RTY: 'CME', M2K: 'CME', YM: 'CBOT', MYM: 'CBOT', GC: 'COMEX', MGC: 'COMEX', SI: 'COMEX', CL: 'NYMEX', MCL: 'NYMEX' };
