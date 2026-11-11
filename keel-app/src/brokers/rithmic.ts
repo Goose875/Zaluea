@@ -20,7 +20,38 @@ import type { AccountRecord } from '../core/accounts';
 // Rithmic conformance: the app name Rithmic approved is "alsm:Keel" (their prefix + our name). Never change it.
 const APP = { name: 'alsm:Keel', version: (() => { try { return String(require('../../package.json').version); } catch { return '0'; } })() };
 const TEMPLATE_VERSION = '5.55';
-const DEFAULT_GATEWAY = 'wss://rituz00100.rithmic.com:443', DEFAULT_SYSTEM = 'Rithmic Test';
+const TEST_GATEWAY = 'wss://rituz00100.rithmic.com:443', PROD_GATEWAY = 'wss://rprotocol.rithmic.com:443', DEFAULT_SYSTEM = 'Rithmic Test';
+/** The connect points Rithmic gave Keel with its conformance approval (November 2026), and the practice gateway.
+ *  Left out: Colo75 (rprotocol-colo75), which is only reachable from inside Rithmic's co-location network. */
+export const RITHMIC_GATEWAYS: { name: string; url: string }[] = [
+  { name: 'Chicago (main)', url: PROD_GATEWAY },
+  { name: 'New York', url: 'wss://rprotocol-nyc.rithmic.com:443' },
+  { name: 'Frankfurt', url: 'wss://rprotocol-de.rithmic.com:443' },
+  { name: 'Ireland', url: 'wss://rprotocol-ie.rithmic.com:443' },
+  { name: 'Sao Paulo', url: 'wss://rprotocol-br.rithmic.com:443' },
+  { name: 'Sydney', url: 'wss://rprotocol-au.rithmic.com:443' },
+  { name: 'Hong Kong', url: 'wss://rprotocol-hk.rithmic.com:443' },
+  { name: 'Singapore', url: 'wss://rprotocol-sg.rithmic.com:443' },
+  { name: 'Tokyo', url: 'wss://rprotocol-jp.rithmic.com:443' },
+  { name: 'Seoul', url: 'wss://rprotocol-kr.rithmic.com:443' },
+  { name: 'Mumbai', url: 'wss://rprotocol-in.rithmic.com:443' },
+  { name: 'Cape Town', url: 'wss://rprotocol-za.rithmic.com:443' },
+  { name: 'Rithmic Test (practice, fake prices)', url: TEST_GATEWAY }
+];
+/** A gateway as typed or saved (rprotocol.rithmic.com:443, https://..., wss://...) -> wss://host:port ('' when empty).
+ *  Only rithmic.com addresses: the password goes to this server, so a mistyped address must never be used. */
+export function normalizeGateway(g: string): string {
+  let s = (g || '').trim(); if (!s) return '';
+  s = s.replace(/^(wss|ws|https|http):\/\//i, '').replace(/\/+$/, '').toLowerCase();
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)*\.rithmic\.com(:\d{1,5})?$/.test(s)) throw new Error('The Rithmic server must be a rithmic.com address, like rprotocol.rithmic.com:443.');
+  return 'wss://' + (/:\d+$/.test(s) ? s : s + ':443');
+}
+/** Where a saved login connects: no system = Rithmic Test; no gateway = the practice gateway for Rithmic Test, Chicago for every live system. */
+export function rithmicTarget(creds: Record<string, string>): { gateway: string; system: string } {
+  const system = (creds.system || '').trim() || DEFAULT_SYSTEM;
+  return { gateway: normalizeGateway(creds.gateway || '') || (system === DEFAULT_SYSTEM ? TEST_GATEWAY : PROD_GATEWAY), system };
+}
+const keyOf = (gateway: string, system: string, user: string) => `${gateway}|${system}|${user}`;
 const EXCHANGE: Record<string, string> = { NQ: 'CME', MNQ: 'CME', ES: 'CME', MES: 'CME', RTY: 'CME', M2K: 'CME', YM: 'CBOT', MYM: 'CBOT', GC: 'COMEX', MGC: 'COMEX', SI: 'COMEX', CL: 'NYMEX', MCL: 'NYMEX' };
 const INFRA = { TICKER: 1, ORDER: 2, HISTORY: 3, PNL: 4 } as const;
 /** Rithmic price_type per Keel order type. */
@@ -91,8 +122,15 @@ class Plant {
     await new Promise<void>((res, rej) => { this.ws!.once('open', () => res()); this.ws!.once('error', e => rej(new Error(`Could not reach Rithmic (${e.message}).`))); });
     this.ws.on('message', (d: Buffer) => this.receive(d));
     this.ws.on('close', (_c, reason) => { clearInterval(this.hb); for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error('Rithmic connection closed.')); } this.pending.clear(); this.onClose(reason?.toString() || 'closed'); });
-    const r = (await this.request('RequestLogin', { templateId: 10, templateVersion: TEMPLATE_VERSION, user: creds.user, password: creds.password,
-      appName: APP.name, appVersion: APP.version, systemName: creds.system, infraType: this.infra }))[0];
+    let r: any;
+    try {
+      r = (await this.request('RequestLogin', { templateId: 10, templateVersion: TEMPLATE_VERSION, user: creds.user, password: creds.password,
+        appName: APP.name, appVersion: APP.version, systemName: creds.system, infraType: this.infra }))[0];
+    } catch (e) {
+      try { this.ws.close(); } catch { /* already closed */ }
+      const m = (e as Error).message, live = creds.system !== DEFAULT_SYSTEM;
+      throw new Error(live ? `${m} Check the username, password and system (${creds.system}). If they are right, ask your firm to allow Rithmic API apps on your login (Keel's app name is "${APP.name}").` : m);
+    }
     this.login = r;
     const every = Math.max(5, Math.min(60, num(r.heartbeatInterval) || 30)) * 1000 * 0.8;
     this.hb = setInterval(() => this.send('RequestHeartbeat', { templateId: 18 }), every); (this.hb as any).unref?.();
@@ -189,9 +227,8 @@ export class RithmicBroker implements BrokerAdapter {
   async connect(creds: Record<string, string>) {
     const user = (creds.user || '').trim(), password = creds.password || '';
     if (!user || !password) throw new Error('Enter your Rithmic username and password under Logins.');
-    const gateway = (creds.gateway || '').trim() || DEFAULT_GATEWAY, system = (creds.system || '').trim() || DEFAULT_SYSTEM;
-    if (!/^wss:\/\/[a-z0-9.-]+(:\d+)?\/?$/i.test(gateway)) throw new Error('The Rithmic gateway must look like wss://name.rithmic.com:443');
-    this.key = `${gateway}|${system}|${user}`; this.isTest = /test/i.test(system);
+    const { gateway, system } = rithmicTarget(creds);
+    this.key = keyOf(gateway, system, user); this.isTest = /test/i.test(system);
     let p = SESSIONS.get(this.key);
     if (!p) { p = openSession({ user, password, system }, gateway); SESSIONS.set(this.key, p); p.catch(() => SESSIONS.delete(this.key)); }
     const s = await p; s.refs++; this.s = s;
@@ -278,7 +315,7 @@ export class RithmicBroker implements BrokerAdapter {
     if (!route) throw new Error(`No Rithmic trade route for ${c.exchange} on this login.`);
     this.checkOrder(o);
     const r = (await this.P.ORDER.request('RequestNewOrder', { templateId: 312, ...this.ids(), symbol: c.symbol, exchange: c.exchange, quantity_64: o.qty,
-      transactionType: o.side === 'buy' ? 1 : 2, duration: 1, priceType: PRICE_TYPE[o.type], tradeRoute: route, manualOrAuto: 2, ...this.prices(o) })).find(m => m.basketId);
+      transactionType: o.side === 'buy' ? 1 : 2, duration: 1, priceType: PRICE_TYPE[o.type], tradeRoute: route, manualOrAuto: o.manual ? 1 : 2, ...this.prices(o) })).find(m => m.basketId);
     if (!r?.basketId) throw new Error('Rithmic accepted the order but returned no order id.');
     this.track(String(r.basketId), o, c);
     return String(r.basketId);
@@ -303,7 +340,7 @@ export class RithmicBroker implements BrokerAdapter {
     const pa = this.prices(a), pb = this.prices(b), num0 = (x: any, k: string) => (x as any)[k] ?? 0;
     const msgs = await this.P.ORDER.request('RequestOCOOrder', { templateId: 328, ...this.ids(), symbol: [ca.symbol, cb.symbol], exchange: [ca.exchange, cb.exchange],
       quantity_64: [a.qty, b.qty], transactionType: [a.side === 'buy' ? 1 : 2, b.side === 'buy' ? 1 : 2], duration: [1, 1], priceType: [PRICE_TYPE[a.type], PRICE_TYPE[b.type]],
-      price: [num0(pa, 'price'), num0(pb, 'price')], triggerPrice: [num0(pa, 'triggerPrice'), num0(pb, 'triggerPrice')], tradeRoute: [route, route], manualOrAuto: [2, 2] });
+      price: [num0(pa, 'price'), num0(pb, 'price')], triggerPrice: [num0(pa, 'triggerPrice'), num0(pb, 'triggerPrice')], tradeRoute: [route, route], manualOrAuto: [a.manual ? 1 : 2, b.manual ? 1 : 2] });
     const ids = msgs.flatMap(m => (Array.isArray(m.basketId) ? m.basketId : m.basketId ? [m.basketId] : [])).map(String);
     if (ids.length < 2) throw new Error('Rithmic accepted the OCO pair but did not return both order ids.');
     this.track(ids[0], a, ca); this.track(ids[1], b, cb);
@@ -376,17 +413,19 @@ export class RithmicBroker implements BrokerAdapter {
 
 /** Every account a Rithmic login can trade (for the Accounts list). Connects the order plant only. */
 export async function listRithmicAccounts(creds: Record<string, string>): Promise<{ id: string; name: string }[]> {
-  const gateway = (creds.gateway || '').trim() || DEFAULT_GATEWAY, system = (creds.system || '').trim() || DEFAULT_SYSTEM;
+  const { gateway, system } = rithmicTarget(creds), user = (creds.user || '').trim();
+  const open = SESSIONS.get(keyOf(gateway, system, user));
+  if (open) { try { return (await open).accounts; } catch { /* that login failed: try a fresh one below */ } }
   const p = new Plant(INFRA.ORDER, gateway);
   try {
-    await p.open({ user: creds.user, password: creds.password, system });
+    await p.open({ user, password: creds.password, system });
     const rows = await p.request('RequestAccountList', { templateId: 302, fcmId: p.login.fcmId, ibId: p.login.ibId, userType: 3 });
     return rows.filter(r => r.accountId).map(r => ({ id: r.accountId, name: r.accountName || r.accountId }));
   } finally { await p.close(); }
 }
 /** The systems a gateway offers (no login needed). */
-export async function listRithmicSystems(gateway = DEFAULT_GATEWAY): Promise<string[]> {
-  const ws = new WebSocket(gateway, { agent: proxyAgent(), handshakeTimeout: 15_000 });
+export async function listRithmicSystems(gateway = TEST_GATEWAY): Promise<string[]> {
+  const ws = new WebSocket(normalizeGateway(gateway) || PROD_GATEWAY, { agent: proxyAgent(), handshakeTimeout: 15_000 });
   await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', e => rej(e)); });
   const t = T('RequestRithmicSystemInfo'); ws.send(t.encode(t.create({ templateId: 16, userMsg: ['keel'] })).finish());
   const d: Buffer = await new Promise((res, rej) => { ws.once('message', res); setTimeout(() => rej(new Error('Rithmic did not answer.')), 15_000); });

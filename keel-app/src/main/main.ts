@@ -34,7 +34,7 @@ import { loadJournal, recordTrade, editTrade, removeTrade, payoutRecord, allPayo
 import { stats as journalStats, filter as journalFilter, toCsv, nyDay } from '../core/journal';
 import type { CloseReport, JournalFilter } from '../core/journal';
 import { payoutStatus } from '../core/payouts';
-import { listRithmicAccounts } from '../brokers/rithmic';
+import { listRithmicAccounts, listRithmicSystems, normalizeGateway, rithmicTarget, RITHMIC_GATEWAYS } from '../brokers/rithmic';
 import type { AccountRecord } from '../core/accounts';
 import { ProjectXBroker } from '../brokers/projectx';
 import type { EntryContext, Decision } from '../ksys/live';
@@ -882,9 +882,29 @@ app.whenReady().then(async () => {
       if (typeof v !== 'string' || !v.trim() || v.length > 200) return { ok: false, error: `Fill in ${f.label}.` };
       clean[f.key] = v.trim();
     }
+    if (brokerId === 'rithmic' && clean.gateway) { try { clean.gateway = normalizeGateway(clean.gateway); } catch (err) { return { ok: false, error: (err as Error).message }; } }
     vault.set(`broker:${brokerId}`, clean);
     void startWatch();
     return { ok: true };
+  });
+  // Rithmic: the servers Keel may use, the saved server and system (never the username or password), and the systems a server offers.
+  ipcMain.handle('rithmic:info', e => {
+    if (!allowed(e)) return null;
+    const c = vault.get('broker:rithmic'); let saved: { gateway: string; system: string } | null = null;
+    if (c) { try { saved = rithmicTarget(c); } catch { saved = null; } }
+    return { gateways: RITHMIC_GATEWAYS, saved };
+  });
+  ipcMain.handle('rithmic:systems', async (e, gateway: unknown) => {
+    if (!allowed(e) || typeof gateway !== 'string') return { ok: false, error: 'Not allowed.' };
+    try { return { ok: true, systems: await listRithmicSystems(gateway) }; } catch (err) { return { ok: false, error: (err as Error).message }; }
+  });
+  /** Try the saved Rithmic login once and say what came back (the accounts on it, or why it was refused). */
+  ipcMain.handle('rithmic:check', async e => {
+    if (!allowed(e)) return { ok: false, error: 'Not allowed.' };
+    const c = vault.get('broker:rithmic'); if (!c) return { ok: false, error: 'Save your Rithmic login first.' };
+    await new Promise(r => setTimeout(r, 1500));   // the account readout may be logging in right now: wait, then share its login
+    try { const a = await listRithmicAccounts(c); return { ok: true, system: rithmicTarget(c).system, accounts: a.map(x => x.name || x.id) }; }
+    catch (err) { return { ok: false, error: (err as Error).message }; }
   });
   ipcMain.handle('creds:remove', (e, brokerId: string) => {
     if (allowed(e) && BROKERS.some(b => b.id === brokerId)) vault.remove(`broker:${brokerId}`);

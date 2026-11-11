@@ -9,9 +9,9 @@ export const BROKERS: BrokerDef[] = [
   { id: 'topstep-test', name: 'Pretend account (dev)', status: 'ready', dev: true, note: 'A pretend prop account with past days and moving prices, for testing rules and progress. Only in the dev version. No real money.', fields: [] },
   { id: 'projectx', name: 'TopstepX (ProjectX)', status: 'beta', note: 'For your Topstep accounts. Needs a ProjectX API subscription and key from Topstep. Try it on a practice account first.',
     fields: [{ key: 'userName', label: 'TopstepX username', secret: false }, { key: 'apiKey', label: 'API key', secret: true }] },
-  { id: 'rithmic', name: 'Rithmic', status: 'beta', note: "For your Lucid accounts (R | Protocol API). Leave System and Gateway empty to use Rithmic's test system (Rithmic Test). Trading Lucid accounts with live data needs Rithmic's conformance approval first; then use the system and gateway Rithmic/Lucid give you.",
-    fields: [{ key: 'user', label: 'Rithmic username (your sign-up email)', secret: false }, { key: 'password', label: 'Rithmic password', secret: true },
-      { key: 'system', label: 'System name (leave empty for Rithmic Test)', secret: false, optional: true }, { key: 'gateway', label: 'Gateway (leave empty for the Rithmic test gateway)', secret: false, optional: true }] }
+  { id: 'rithmic', name: 'Rithmic', status: 'beta', note: "For your Lucid accounts. Rithmic has approved Keel for its live systems. Pick the Chicago server and your firm's system (Lucid: LucidTrading), then enter the Rithmic username and password your firm gave you. Your firm must allow Rithmic API logins on your account. To practise with fake prices, pick the Rithmic Test server.",
+    fields: [{ key: 'gateway', label: 'Server', secret: false, optional: true }, { key: 'system', label: "System (your firm's)", secret: false, optional: true },
+      { key: 'user', label: 'Rithmic username', secret: false }, { key: 'password', label: 'Rithmic password', secret: true }] }
 ];
 
 // From public reports in 2026. Platforms and bot rules change often, so always confirm with the firm.

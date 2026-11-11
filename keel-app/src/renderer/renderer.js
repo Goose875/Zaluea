@@ -1118,6 +1118,10 @@ function renderLogins() {
     card.append(head, el('p', 'hint', def.note));
     const inputs = {};
     for (const f of def.fields) {
+      if (def.id === 'rithmic' && (f.key === 'gateway' || f.key === 'system')) {   // picked from lists, not typed
+        const l = el('label', '', f.label), s = el('select'); s.id = `lg_${def.id}_${f.key}`; l.htmlFor = s.id; s.append(new Option('Loading…', ''));
+        inputs[f.key] = s; card.append(l, s); continue;
+      }
       const l = el('label', '', f.label), i = el('input'); i.id = `lg_${def.id}_${f.key}`; l.htmlFor = i.id;
       i.type = f.secret ? 'password' : 'text'; i.autocomplete = 'off'; i.spellcheck = false;
       if (saved) i.placeholder = f.secret ? 'Saved (hidden)' : 'Saved'; else if (f.optional) i.placeholder = 'Optional: leave empty';
@@ -1128,15 +1132,46 @@ function renderLogins() {
     rm.hidden = !saved;
     save.onclick = async () => {
       const creds = Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value]));
+      if (def.id === 'rithmic' && !creds.system) { flash(msg, "Pick your firm's system first (the list loads from the server you chose).", true); return; }
       const r = await window.keel.saveCreds(def.id, creds);
-      if (r.ok) { if (!cat.saved.includes(def.id)) cat.saved.push(def.id); renderLogins(); notice('Login saved on this computer.', true); } else flash(msg, r.error, true);
+      if (r.ok) { if (!cat.saved.includes(def.id)) cat.saved.push(def.id); renderLogins(); notice('Login saved on this computer.', true); if (def.id === 'rithmic') void rithmicCheck(); } else flash(msg, r.error, true);
     };
     rm.onclick = async () => { await window.keel.removeCreds(def.id); cat.saved = cat.saved.filter(x => x !== def.id); renderLogins(); notice('Login removed.', true); };
     const row = el('div', 'btns0'); row.append(save, rm); card.append(row, msg);
     box.append(card);
+    if (def.id === 'rithmic') void rithmicPickers(inputs, msg);
   }
 }
 
+// Rithmic: the server comes from Keel's approved list; the systems come live from the chosen server (Lucid's is LucidTrading).
+async function rithmicPickers(inputs, msg) {
+  const gw = inputs.gateway, sys = inputs.system, info = await window.keel.rithmicInfo().catch(() => null);
+  if (!info || !gw.isConnected) return;
+  gw.replaceChildren(...info.gateways.map(g => new Option(g.name, g.url)));
+  gw.value = info.saved && info.gateways.some(g => g.url === info.saved.gateway) ? info.saved.gateway : info.gateways[0].url;
+  let want = info.saved ? info.saved.system : '';
+  const load = async () => {
+    sys.replaceChildren(new Option('Loading the systems on this server…', '')); sys.disabled = true;
+    const r = await window.keel.rithmicSystems(gw.value).catch(() => null);
+    if (!sys.isConnected) return;
+    sys.disabled = false;
+    if (!r || !r.ok || !r.systems.length) {
+      sys.replaceChildren(...(want ? [new Option(want, want)] : [new Option('No list: pick the server again', '')]));
+      flash(msg, `Could not get the list of systems from this server${r && r.error ? ' (' + r.error + ')' : ''}. Check your internet, then pick the server again.`, true); return;
+    }
+    const list = [...r.systems].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+    sys.replaceChildren(...list.map(s => new Option(s, s)));
+    sys.value = list.includes(want) ? want : list.includes('LucidTrading') ? 'LucidTrading' : list[0];
+  };
+  gw.onchange = () => { want = ''; void load(); };
+  await load();
+}
+async function rithmicCheck() {
+  notice('Login saved. Checking it with Rithmic…', true);
+  const r = await window.keel.rithmicCheck().catch(() => null);
+  if (r && r.ok) notice(`Rithmic login works on ${r.system}: ${r.accounts.length} account${r.accounts.length === 1 ? '' : 's'} found (${r.accounts.slice(0, 4).join(', ')}${r.accounts.length > 4 ? ', …' : ''}). Add them under Accounts with Find my accounts.`, true);
+  else notice(`Rithmic did not accept the login. ${r ? r.error : 'No answer.'}`);
+}
 
 // ---------- K system ----------
 let kData = null, kDraft = null, kBusy = false;

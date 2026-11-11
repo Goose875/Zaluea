@@ -247,7 +247,7 @@ export class XLive {
       const trig = snap(o.trigger as number), dd = o.dir === 'long' ? 1 : -1;
       if (dd > 0 ? trig <= ref : trig >= ref) return `a ${o.dir === 'long' ? 'buy' : 'sell'} stop-limit trigger must be ${o.dir === 'long' ? 'above' : 'below'} the current price (${ref.toFixed(2)}); for an entry on the other side use a limit order`;
       t.trigger = trig; t.limitPx = snap(trig + dd * slip);
-      t.entryOrder = await this.d.desk.placeOrder({ symbol: o.orderSym, side, qty: o.qty, type: 'stoplimit', trigger: t.trigger, price: t.limitPx });
+      t.entryOrder = await this.d.desk.placeOrder({ symbol: o.orderSym, side, qty: o.qty, type: 'stoplimit', trigger: t.trigger, price: t.limitPx, manual: true });
       this.trades.push(t); this.save(); this.d.note(`Chart order: ${o.dir} stop-limit ${o.qty} ${o.orderSym}, trigger ${trig.toFixed(2)}, never worse than ${t.limitPx.toFixed(2)}, working.`, 'trade');
       return '';
     }
@@ -257,8 +257,8 @@ export class XLive {
       if (ref === undefined) return 'no live price yet';
       const up = snap(ref + off), dn = snap(ref - off), key = `OCO:${now}:${o.orderSym}`;
       const L: XLiveTrade = { ...t, key: key + ':L', dir: 'long', trigger: up, limitPx: snap(up + slip), oco: key }, S: XLiveTrade = { ...t, key: key + ':S', dir: 'short', trigger: dn, limitPx: snap(dn - slip), oco: key };
-      const [a, b] = await this.d.desk.placeOco({ symbol: o.orderSym, side: 'buy', qty: o.qty, type: 'stoplimit', trigger: up, price: L.limitPx as number },
-        { symbol: o.orderSym, side: 'sell', qty: o.qty, type: 'stoplimit', trigger: dn, price: S.limitPx as number });
+      const [a, b] = await this.d.desk.placeOco({ symbol: o.orderSym, side: 'buy', qty: o.qty, type: 'stoplimit', trigger: up, price: L.limitPx as number, manual: true },
+        { symbol: o.orderSym, side: 'sell', qty: o.qty, type: 'stoplimit', trigger: dn, price: S.limitPx as number, manual: true });
       L.entryOrder = a; S.entryOrder = b; this.trades.push(L, S); this.save();
       this.d.note(`Chart breakout pair ${o.qty} ${o.orderSym} around ${ref.toFixed(2)}: buy above ${up.toFixed(2)} (max ${(L.limitPx as number).toFixed(2)}), sell below ${dn.toFixed(2)} (min ${(S.limitPx as number).toFixed(2)}). The first fill cancels the other at the broker.`, 'trade');
       return '';
@@ -266,11 +266,11 @@ export class XLive {
     if (o.type === 'limit') {
       if (!(Number.isFinite(o.price) && (o.price as number) > 0)) return 'a limit order needs a price';
       t.limitPx = Math.round((o.price as number) / T) * T;
-      t.entryOrder = await this.d.desk.placeOrder({ symbol: o.orderSym, side, qty: o.qty, type: 'limit', price: t.limitPx });
+      t.entryOrder = await this.d.desk.placeOrder({ symbol: o.orderSym, side, qty: o.qty, type: 'limit', price: t.limitPx, manual: true });
       this.trades.push(t); this.save(); this.d.note(`Chart order: ${o.dir} limit ${o.qty} ${o.orderSym} @ ${t.limitPx.toFixed(2)} working.`, 'trade');
       return '';
     }
-    await this.d.desk.placeOrder({ symbol: o.orderSym, side, qty: o.qty, type: 'market' });
+    await this.d.desk.placeOrder({ symbol: o.orderSym, side, qty: o.qty, type: 'market', manual: true });
     this.trades.push(t); this.save(); this.d.note(`Chart order: ${o.dir} market ${o.qty} ${o.orderSym} sent.`, 'trade');
     await this.onFilled(t); return '';
   }
@@ -280,7 +280,7 @@ export class XLive {
     for (const o of (await this.d.desk.getOpenOrders()).filter(o => same(o.symbol))) await this.d.desk.cancelOrder(o.id).catch(() => {});
     let closed = '';
     for (const p of (await this.d.desk.getPositions()).filter(p => same(p.symbol) && p.qty !== 0)) {
-      await this.d.desk.placeOrder({ symbol: p.symbol, side: p.qty > 0 ? 'sell' : 'buy', qty: Math.abs(p.qty), type: 'market' }); closed += ` ${p.qty > 0 ? 'sold' : 'bought'} ${Math.abs(p.qty)} ${p.symbol}`;
+      await this.d.desk.placeOrder({ symbol: p.symbol, side: p.qty > 0 ? 'sell' : 'buy', qty: Math.abs(p.qty), type: 'market', manual: true }); closed += ` ${p.qty > 0 ? 'sold' : 'bought'} ${Math.abs(p.qty)} ${p.symbol}`;
     }
     for (const t of this.trades) if (same(t.sym) && t.state === 'open') this.journal(t, 'flatten', this.px(t) ?? null, 'flattened from the chart', true);
     this.trades = this.trades.filter(t => !same(t.sym)); this.save();

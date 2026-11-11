@@ -6,6 +6,8 @@ export interface Order {
    *  'stoplimit' = triggers at `trigger`, then works as a limit at `price` (never fills worse than `price`). */
   type: 'market' | 'limit' | 'stop' | 'stoplimit'; price?: number; trigger?: number;
   stopLoss?: number; takeProfit?: number;
+  /** True when a person placed this order by hand (the exchange's manual / automated order tag). Default: automated. */
+  manual?: boolean;
 }
 /** A working (unfilled) order at the broker. */
 export interface WorkingOrder { id: string; symbol: string; side: Side; qty: number; type: 'market' | 'limit' | 'stop' | 'stoplimit' | 'other'; price: number | null; trigger?: number | null }
