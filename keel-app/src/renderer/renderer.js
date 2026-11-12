@@ -345,82 +345,131 @@ async function loadAcctDefaults() {
     acctDefaults = { risk: k.cfg.riskUsd, mixes };
   } catch { /* keep defaults */ }
 }
+// ---------- accounts page: one card per account ----------
+/** An account's rules in one line ('' when the size or max loss is missing). */
+const ruleLine = a => {
+  if (!(a.size > 0 && a.maxLoss > 0)) return '';
+  const parts = [`${k$(a.size)} account`, `${plain(a.maxLoss)} max loss (${DD[a.drawdown].toLowerCase()})`];
+  if (a.dailyLoss) parts.push(`${plain(a.dailyLoss)} daily loss`);
+  if (a.profitTarget) parts.push(`${plain(a.profitTarget)} target`);
+  if (a.consistencyPct) parts.push(`${a.consistencyPct}% consistency`);
+  if (a.maxMini || a.maxMicro) parts.push(`up to ${a.maxMini || 0} mini / ${a.maxMicro || 0} micro`);
+  return parts.join(' \u00b7 ');
+};
+let acctNew = new Set();   // accounts just added: highlighted until they are switched on or the page is redrawn by a later add
+function acctCard(a) {
+  const conn = cat.brokers.find(b => b.id === a.connection), main = a.id === store.selected, on = a.trade !== false, rules = ruleLine(a);
+  const card = el('article', 'acard' + (on ? ' on' : '') + (acctNew.has(a.id) ? ' new' : '')); card.dataset.id = a.id;
+  // top row: the trade switch, the name, what it is, and the two actions
+  const head = el('div', 'ac-head'), sw = el('div', 'ac-sw'), lab = el('label', 'switch'), cb = el('input'); cb.type = 'checkbox'; cb.checked = on;
+  cb.setAttribute('aria-label', `Keel may trade ${a.label}`); cb.disabled = running; cb.title = running ? 'Stop the bot to change which accounts trade.' : '';
+  cb.onchange = async () => { const res = await window.keel.updateAccounts([a.id], { trade: cb.checked }); if (res.ok) { store = res.store; acctNew.delete(a.id); renderAccounts(); } else { notice(res.error); cb.checked = !cb.checked; } };
+  lab.append(cb, el('span')); sw.append(lab, el('span', 'ac-onoff', on ? 'Trading on' : 'Off'));
+  const title = el('div', 'ac-title'), nm = el('div', 'aname2'); nm.append(document.createTextNode(a.label));
+  if (main) nm.append(el('span', 'tag sel', 'Main'));
+  title.append(nm, el('div', 'asub', `${STAGE[a.stage][0]} \u00b7 ${a.firm} \u00b7 ${conn ? conn.name : a.connection}`));
+  const acts = el('div', 'ac-acts');
+  const e = el('button', 'small', 'Edit'); e.onclick = () => openDrawer('edit', [a.id], e); acts.append(e);
+  if (!main) {
+    const u = el('button', 'link', 'Make main'); u.disabled = running;
+    u.title = running ? 'Stop the bot to change the main account.' : 'The main account is the one shown on the Today page. Every switched-on account trades.';
+    u.onclick = async () => { const res = await window.keel.selectAccount(a.id); if (res.ok) { store = res.store; renderAccounts(); renderPicker(); } else notice(res.error); };
+    acts.append(u);
+  }
+  head.append(sw, title, acts);
+  // the rules in one line
+  const rl = el('div', 'ac-rules');
+  if (rules) rl.append(el('span', 'ac-k', 'Rules'), el('span', 'ac-v', (a.plan ? a.plan + ': ' : '') + rules));
+  else { rl.classList.add('need'); const b = el('button', 'small', 'Pick a plan'); b.onclick = () => openDrawer('edit', [a.id], b); rl.append(el('span', 'ac-k', 'Rules'), el('span', 'ac-v', 'Not set yet. Keel needs the account size and max loss.'), b); }
+  // this account's risk per trade and strategies (empty = the Strategies page settings)
+  const set = el('div', 'ac-set'), ri = el('input'); ri.id = `ar_${a.id}`; ri.type = 'number'; ri.min = '50'; ri.max = '5000'; ri.step = '25';
+  ri.value = a.riskUsd > 0 ? String(a.riskUsd) : ''; ri.placeholder = acctDefaults.risk ? `$${acctDefaults.risk} (default)` : 'default'; ri.title = 'Empty = the risk per trade set on the Strategies page.';
+  ri.onchange = async () => { const v = ri.value.trim() === '' ? 0 : Number(ri.value); const res = await window.keel.updateAccounts([a.id], { riskUsd: v }); if (res.ok) { store = res.store; notice(`${a.label}: risk per trade ${v ? '$' + v : 'from the Strategies page'}.`, true); } else { notice(res.error); ri.value = a.riskUsd > 0 ? String(a.riskUsd) : ''; } };
+  const ms = el('select'); ms.id = `am_${a.id}`;
+  const opts = [['', 'Strategies page switches'], ...acctDefaults.mixes.map(m => [m, m])]; if (a.mix && !opts.some(o => o[0] === a.mix)) opts.push([a.mix, a.mix]);
+  for (const [v, t] of opts) { const o = el('option', '', t); o.value = v; ms.append(o); } ms.value = a.mix || '';
+  ms.onchange = async () => { const res = await window.keel.updateAccounts([a.id], { mix: ms.value }); if (res.ok) { store = res.store; notice(`${a.label}: ${ms.value || 'uses the Strategies page switches'}.`, true); } else { notice(res.error); ms.value = a.mix || ''; } };
+  set.append(field('Risk per trade ($)', ri, 'ac-risk'), field('Strategies', ms, 'ac-mix'));
+  card.append(head, rl, set);
+  return card;
+}
 function renderAccounts() {
   const q = $('acctSearch').value.trim().toLowerCase(), box = $('acctGroups'); box.replaceChildren();
+  $('acctTools').hidden = store.accounts.length < 7 && !q;
+  const on = store.accounts.filter(a => a.trade !== false).length;
+  $('acctSum').textContent = !store.accounts.length ? '' : `${store.accounts.length} account${store.accounts.length === 1 ? '' : 's'}, ${on} switched on.` + (running ? ' The bot is running: stop it to switch accounts on or off, or to change the main account.' : '');
   const list = store.accounts.filter(a => !q || [a.label, a.firm, a.plan].some(v => v.toLowerCase().includes(q)));
-  if (!store.accounts.length) { const p = el('div', 'panel'); p.append(el('h2', '', 'No accounts yet'), el('p', 'hint', 'Add your first account to track its rules and progress. Paper trading works without one.')); box.append(p); return; }
+  if (!store.accounts.length) { const p = el('div', 'panel'); p.append(el('h2', '', 'No accounts yet'), el('p', 'hint', 'Press Find my accounts to bring them in from your saved logins. Paper trading works without one.')); box.append(p); return; }
   if (!list.length) { box.append(el('p', 'empty', 'No accounts match that search.')); return; }
   const groups = new Map(); for (const a of list) { if (!groups.has(a.firm)) groups.set(a.firm, []); groups.get(a.firm).push(a); }
   for (const firm of [...groups.keys()].sort()) {
     const accts = groups.get(firm).sort((x, y) => x.label.localeCompare(y.label));
     const need = accts.filter(a => !(a.size > 0 && a.maxLoss > 0)).length;
-    const g = el('section', 'group'), head = el('div', 'ghead');
-    head.append(el('h2', '', firm), el('span', 'count', `${accts.length} account${accts.length === 1 ? '' : 's'}`), el('span', 'tag ' + (need ? 'need' : 'ok'), need ? `${need} need rules` : 'Rules set'), el('span', 'spacer'));
+    const g = el('section', 'group agroup'), head = el('div', 'ghead');
+    head.append(el('h2', '', firm), el('span', 'count', `${accts.length} account${accts.length === 1 ? '' : 's'}`));
+    if (need) head.append(el('span', 'tag need', `${need} need${need === 1 ? 's' : ''} rules`));
+    head.append(el('span', 'spacer'));
     if (accts.length > 1) { const b = el('button', 'ghost small', 'Edit all'); b.onclick = () => openDrawer('bulk', accts.map(a => a.id), b); head.append(b); }
-    g.append(head);
-    const wrap = el('div', 'tscroll'), t = el('table'), hr = el('tr');
-    for (const h of ['Trade', 'Account', 'Risk / trade', 'Strategies', 'Type', 'Plan', 'Size', 'Drawdown', 'Max loss', 'Daily loss', 'Consistency', 'Target', 'Contracts', '']) hr.append(Object.assign(el('th', ['Size', 'Max loss', 'Daily loss', 'Consistency', 'Target', 'Contracts'].includes(h) ? 'r' : '', h), { scope: 'col' }));
-    t.append(hr);
-    for (const a of accts) {
-      const r = el('tr'), name = el('td'), conn = cat.brokers.find(b => b.id === a.connection);
-      const top = el('div', 'aname2'); top.append(document.createTextNode(a.label + ' '));
-      if (a.id === store.selected) top.append(el('span', 'tag sel', 'In use'));
-      name.append(top, el('div', 'asub', conn ? conn.name : a.connection));
-      const caps = a.maxMini || a.maxMicro ? `${a.maxMini || '\u2014'} mini / ${a.maxMicro || '\u2014'} micro` : '\u2014';
-      const tw = el('td'), lab = el('label', 'switch'), cb = el('input'); cb.type = 'checkbox'; cb.checked = a.trade !== false;
-      cb.setAttribute('aria-label', `Keel may trade ${a.label}`); cb.disabled = running; cb.title = running ? 'Stop the bot to change which accounts trade.' : '';
-      cb.onchange = async () => { const res = await window.keel.updateAccounts([a.id], { trade: cb.checked }); if (res.ok) { store = res.store; renderAccounts(); } else { notice(res.error); cb.checked = !cb.checked; } };
-      lab.append(cb, el('span')); tw.append(lab); r.append(tw);
-      // this account's risk per trade and strategy mix (empty = the Strategies page settings)
-      const rk = el('td'), ri = el('input'); ri.type = 'number'; ri.min = '50'; ri.max = '5000'; ri.step = '25'; ri.style.width = '96px';
-      ri.value = a.riskUsd > 0 ? String(a.riskUsd) : ''; ri.placeholder = acctDefaults.risk ? `$${acctDefaults.risk}` : 'default'; ri.setAttribute('aria-label', `Risk per trade for ${a.label}`);
-      ri.onchange = async () => { const v = ri.value.trim() === '' ? 0 : Number(ri.value); const res = await window.keel.updateAccounts([a.id], { riskUsd: v }); if (res.ok) { store = res.store; notice(`${a.label}: risk per trade ${v ? '$' + v : 'from the Strategies page'}.`, true); } else { notice(res.error); ri.value = a.riskUsd > 0 ? String(a.riskUsd) : ''; } };
-      rk.append(ri);
-      const mx = el('td'), ms = el('select'); ms.style.minWidth = '240px'; ms.style.maxWidth = '300px'; ms.setAttribute('aria-label', `Strategies for ${a.label}`);
-      const opts = [['', 'Strategies page switches'], ...acctDefaults.mixes.map(m => [m, m])]; if (a.mix && !opts.some(o => o[0] === a.mix)) opts.push([a.mix, a.mix]);
-      for (const [v, t] of opts) { const o = el('option', '', t); o.value = v; ms.append(o); } ms.value = a.mix || '';
-      ms.onchange = async () => { const res = await window.keel.updateAccounts([a.id], { mix: ms.value }); if (res.ok) { store = res.store; notice(`${a.label}: ${ms.value || 'uses the Strategies page switches'}.`, true); } else { notice(res.error); ms.value = a.mix || ''; } };
-      mx.append(ms);
-      r.append(name, rk, mx, el('td', '', STAGE[a.stage][0]), el('td', '', a.plan || '\u2014'), el('td', 'r', a.size ? k$(a.size) : '\u2014'), el('td', '', DD[a.drawdown]),
-        el('td', 'r', a.maxLoss ? plain(a.maxLoss) : '\u2014'), el('td', 'r', a.dailyLoss ? plain(a.dailyLoss) : '\u2014'), el('td', 'r', a.consistencyPct ? a.consistencyPct + '%' : '\u2014'),
-        el('td', 'r', a.profitTarget ? plain(a.profitTarget) : '\u2014'), el('td', 'r', caps));
-      const acts = el('td', 'acts'), wrapA = el('span', 'rowacts');
-      if (a.id !== store.selected) { const u = el('button', 'ghost small', 'Use'); u.disabled = running; u.title = running ? 'Stop the bot to switch accounts.' : ''; u.onclick = async () => { const res = await window.keel.selectAccount(a.id); if (res.ok) { store = res.store; renderAccounts(); renderPicker(); } else notice(res.error); }; wrapA.append(u); }
-      const e = el('button', 'small', 'Edit'); e.onclick = () => openDrawer('edit', [a.id], e); wrapA.append(e);
-      acts.append(wrapA); r.append(acts); t.append(r);
-    }
-    wrap.append(t); g.append(wrap); box.append(g);
+    const cards = el('div', 'acards'); for (const a of accts) cards.append(acctCard(a));
+    g.append(head, cards); box.append(g);
   }
 }
 $('acctSearch').oninput = renderAccounts;
+
+// ---------- accounts on your logins: pick the plan, press Add ----------
 let found = [];
+/** The plan to offer for an account found on a login: the one your other accounts at that firm already use, when the name fits. */
+function presetGuess(x) {
+  const mine = cat.presets.map((p, i) => ({ p, i })).filter(o => o.p.firm === x.firm); if (!mine.length) return '';
+  const funded = /xfa|express|funded|live/i.test(x.name), evaluation = /\d\s?k\s?tc|combine|eval/i.test(x.name);
+  const used = new Map(); for (const a of store.accounts) if (a.firm === x.firm && a.plan) used.set(a.plan, (used.get(a.plan) || 0) + 1);
+  const fit = mine.filter(o => used.has(o.p.plan) && !(funded && o.p.stage === 'evaluation') && !(evaluation && o.p.stage !== 'evaluation')).sort((m, n) => used.get(n.p.plan) - used.get(m.p.plan))[0];
+  return fit ? String(fit.i) : '';
+}
+function renderFound() {
+  const box = $('foundList'); box.replaceChildren(); $('foundBox').hidden = !found.length;
+  $('importAccts').hidden = found.filter(x => !x.added && x.canTrade).length < 2;
+  found.forEach((x, i) => {
+    const row = el('div', 'frow' + (x.added ? ' added' : '')), who = el('div', 'f-who');
+    who.append(el('div', 'aname2', x.name), el('div', 'asub', `${x.firm} \u00b7 ${x.login}${typeof x.balance === 'number' && isFinite(x.balance) ? ' \u00b7 balance ' + usd0(x.balance) : ''}`));
+    row.append(who);
+    if (x.added) row.append(el('span', 'tag ok', 'Added'));
+    else if (!x.canTrade) row.append(el('span', 'tag', "Can't trade (closed or blocked)"));
+    else {
+      const sel = el('select'); sel.id = `fp_${i}`; sel.setAttribute('aria-label', `Plan for ${x.name}`);
+      sel.append(new Option('Typical rules (check them after)', ''), ...cat.presets.map((p, k) => ({ p, k })).filter(o => o.p.firm === x.firm).map(o => new Option(o.p.plan, String(o.k))));
+      sel.value = presetGuess(x);
+      const b = el('button', 'small', 'Add'); b.onclick = () => importFound([i]);
+      row.append(sel, b);
+    }
+    box.append(row);
+  });
+}
+async function importFound(idx) {
+  if (!idx.length) return;
+  const items = idx.map(i => { const s = $(`fp_${i}`); return { ...found[i], preset: s && s.value !== '' ? Number(s.value) : undefined }; });
+  const before = new Set(store.accounts.map(a => a.id));
+  const r = await window.keel.importAccounts(items);
+  if (!r.ok) { $('findMsg').textContent = r.error; return; }
+  store = r.store; acctNew = new Set(store.accounts.filter(a => !before.has(a.id)).map(a => a.id));
+  for (const i of idx) found[i].added = true;
+  renderAccounts(); renderPicker(); renderFound();
+  const n = acctNew.size;
+  $('findMsg').textContent = n ? `Added ${n} account${n === 1 ? '' : 's'}, switched off. Check the rules on ${n === 1 ? 'its card' : 'their cards'} below, then switch on the ones Keel should trade.` : 'Nothing new to add.';
+  const first = document.querySelector('.acard.new'); if (first && first.scrollIntoView) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
 $('findAccts').onclick = async () => {
-  const b = $('findAccts'); b.disabled = true; b.textContent = 'Asking your logins…'; $('findMsg').textContent = '';
+  const b = $('findAccts'); b.disabled = true; b.textContent = 'Asking your logins\u2026'; $('findMsg').textContent = '';
   try {
     const r = await window.keel.discoverAccounts();
     if (!r || !r.ok) { $('findMsg').textContent = r ? r.error : 'Something went wrong.'; return; }
-    found = r.accounts; const t = $('foundTable'); t.replaceChildren();
-    $('findMsg').textContent = `${found.length} account${found.length === 1 ? '' : 's'} found.` + (r.errors.length ? ' ' + r.errors.join(' ') : '');
-    if (!found.length) { $('importAccts').hidden = true; return; }
-    const hr = el('tr'); for (const h of ['', 'Account', 'Login', 'Balance', 'Status']) hr.append(el('th', '', h)); t.append(hr);
-    found.forEach((x, i) => {
-      const row = el('tr'), c = el('td'), cb = el('input'); cb.type = 'checkbox'; cb.dataset.i = String(i); cb.disabled = !!x.added; cb.checked = !x.added && x.canTrade;
-      cb.setAttribute('aria-label', `Add ${x.name}`); c.append(cb);
-      row.append(c, el('td', '', x.name), el('td', '', x.login), el('td', '', typeof x.balance === 'number' && isFinite(x.balance) ? usd0(x.balance) : '—'),
-        el('td', x.added ? 'pos' : '', x.added ? 'Already added' : !x.canTrade ? "Can't trade (closed or blocked)" : x.simulated ? 'New (practice / evaluation)' : 'New'));
-      t.append(row);
-    });
-    $('importAccts').hidden = false;
+    found = r.accounts; renderFound();
+    const fresh = found.filter(x => !x.added && x.canTrade).length, errs = r.errors.length ? ' ' + r.errors.join(' ') : '';
+    $('findMsg').textContent = found.length ? `${found.length} account${found.length === 1 ? '' : 's'} on your logins, ${fresh ? fresh + ' not added yet. Pick the plan and press Add' : 'all added already'}.${errs}` : (errs.trim() || 'No accounts were found on your logins.');
+    if (!found.length && /Connections/.test(errs)) { const c = el('button', 'small ghost', 'Open Connections'); c.onclick = () => go('conn'); $('findMsg').append(' ', c); }
   } finally { b.disabled = false; b.textContent = 'Find my accounts'; }
 };
-$('importAccts').onclick = async () => {
-  const items = [...document.querySelectorAll('#foundTable input[type=checkbox]:checked:not(:disabled)')].map(cb => found[Number(cb.dataset.i)]);
-  if (!items.length) { $('findMsg').textContent = 'Tick at least one account.'; return; }
-  const r = await window.keel.importAccounts(items);
-  if (!r.ok) { $('findMsg').textContent = r.error; return; }
-  store = r.store; renderAccounts(); renderPicker(); $('findMsg').textContent = `Added ${items.length}. They are switched off for trading: check their rules, then switch on the ones Keel should trade.`;
-  $('findAccts').click();
-};
+$('importAccts').onclick = () => importFound(found.map((x, i) => (!x.added && x.canTrade ? i : -1)).filter(i => i >= 0));
 $('addAcct').onclick = () => openDrawer('add', [], $('addAcct'));
 $('sampleAccts').onclick = async () => { const r = await window.keel.addSampleAccounts(); if (r.ok) { store = r.store; renderAccounts(); renderPicker(); } else notice(r.error); };
 
@@ -443,7 +492,7 @@ function readField(type, id) { const e = $(id); return type === 'check' ? e.chec
 function openDrawer(mode, ids, opener) {
   D.mode = mode; D.ids = ids; D.touched = new Set(); D.opener = opener; D.confirmDelete = false;
   const firms = [...new Set(['Topstep', 'Lucid Trading', ...store.accounts.map(a => a.firm), 'Other'])];
-  $('dPreset').replaceChildren(new Option('Choose a plan\u2026', ''), ...cat.presets.map((p, i) => new Option(`${p.firm}: ${p.plan}`, String(i))));
+  $('dPreset').replaceChildren(new Option('Custom: set the rules yourself', ''), ...cat.presets.map((p, i) => new Option(`${p.firm}: ${p.plan}`, String(i))));
   $('dFirm').replaceChildren(...firms.map(f => new Option(f, f)));
   $('dConn').replaceChildren(...cat.brokers.map(b => new Option(b.name + STATUS[b.status], b.id)));
   const accts = store.accounts.filter(a => ids.includes(a.id));
@@ -460,6 +509,12 @@ function openDrawer(mode, ids, opener) {
   $('drawerNote').textContent = mode === 'bulk' ? 'Fields marked Mixed differ between accounts. Only the fields you change are saved to every account.' : mode === 'add' ? 'Fill in the rules from your prop firm. You can change them any time.' : '';
   $('drawerDelete').hidden = mode !== 'edit'; $('drawerDelete').textContent = 'Delete account';
   $('drawerMsg').textContent = '';
+  // the plan this account is on (when it matches one Keel knows), and which parts start open
+  const at = mode === 'bulk' ? -1 : cat.presets.findIndex(p => p.firm === base.firm && p.plan === base.plan);
+  $('dPreset').value = at >= 0 ? String(at) : '';
+  $('dRulesBox').open = mode === 'bulk' || !(base.size > 0 && base.maxLoss > 0) || (mode === 'add');
+  $('dConnBox').open = mode === 'add'; $('dNotesBox').open = false;
+  drawerSums();
   $('drawer').hidden = false; $('drawerBack').hidden = false;
   (mode === 'bulk' ? $('dFirm') : $('dLabel')).focus();
 }
@@ -467,13 +522,22 @@ function closeDrawer() { $('drawer').hidden = true; $('drawerBack').hidden = tru
 for (const [key, id, type] of FIELDS) $(id).addEventListener(type === 'check' || type === 'sel' ? 'change' : 'input', () => { D.touched.add(key); $(id).indeterminate = false; });
 $('dPreset').onchange = () => {
   const p = cat.presets[Number($('dPreset').value)]; if (!p) return;
-  for (const [key, id, type] of FIELDS) if (key in p) { setField(id, type, p[key], false); D.touched.add(key); }
-  $('dPreset').value = '';
+  // a plan sets the rules; the firm and connection only when adding by hand (a found account keeps its own)
+  for (const [key, id, type] of FIELDS) if (key in p && (D.mode === 'add' || (key !== 'firm' && key !== 'connection'))) { setField(id, type, p[key], false); D.touched.add(key); }
+  drawerSums();
 };
+/** The one-line summaries on the folded parts of the edit panel. */
+function drawerSums() {
+  const v = Object.fromEntries(FIELDS.map(([key, id, type]) => [key, readField(type, id)]));
+  $('dRulesSum').textContent = D.mode === 'bulk' ? '' : (ruleLine(v) || 'not set yet');
+  const c = cat.brokers.find(b => b.id === v.connection);
+  $('dConnSum').textContent = D.mode === 'bulk' ? '' : `${v.firm && v.firm !== '__mixed' ? v.firm : ''}${c ? ' \u00b7 ' + c.name : ''}${v.brokerRef ? ' \u00b7 ID ' + v.brokerRef : ''}`;
+}
+for (const [, id, type] of FIELDS) $(id).addEventListener(type === 'check' || type === 'sel' ? 'change' : 'input', () => { if (!$('drawer').hidden) drawerSums(); });
 $('dCopy').onchange = () => {
   const src = store.accounts.find(a => a.id === $('dCopy').value); if (!src) return;
   for (const [key, id, type] of FIELDS) if (RULE_KEYS.includes(key)) { setField(id, type, src[key], false); D.touched.add(key); }
-  $('drawerMsg').textContent = ''; $('dCopy').value = '';
+  $('drawerMsg').textContent = ''; $('dCopy').value = ''; drawerSums();
 };
 $('drawerSave').onclick = async () => {
   const all = Object.fromEntries(FIELDS.map(([key, id, type]) => [key, readField(type, id)]));
@@ -1146,7 +1210,7 @@ function renderLogins() {
 // Rithmic: the server comes from Keel's approved list; the systems come live from the chosen server (Lucid's is LucidTrading).
 async function rithmicPickers(inputs, msg) {
   const gw = inputs.gateway, sys = inputs.system, info = await window.keel.rithmicInfo().catch(() => null);
-  if (!info || !gw.isConnected) return;
+  if (!info || !Array.isArray(info.gateways) || !info.gateways.length || !gw.isConnected) return;
   gw.replaceChildren(...info.gateways.map(g => new Option(g.name, g.url)));
   gw.value = info.saved && info.gateways.some(g => g.url === info.saved.gateway) ? info.saved.gateway : info.gateways[0].url;
   let want = info.saved ? info.saved.system : '';

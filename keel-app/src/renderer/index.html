@@ -219,21 +219,24 @@
         </section>
 
         <section id="v-accts" class="view" hidden>
-          <div class="panel">
-            <h2>Accounts on your logins</h2>
-            <p class="hint">Keel asks your saved TopstepX and Rithmic logins for every account they hold. Tick the ones to add; they come in switched <b>off</b> for trading, so nothing trades until you turn an account on below. Check each account's rules (size, max loss, daily loss) after adding.</p>
-            <div class="mixrow"><button id="findAccts" type="button">Find my accounts</button><button id="importAccts" type="button" class="ghost" hidden>Add selected</button></div>
+          <div class="panel acct-top">
+            <div class="acct-add">
+              <div>
+                <h2>Your accounts</h2>
+                <p class="hint">Switch an account on and Keel trades it whenever the bot runs. Off means Keel never touches it. The Main account is the one the Today page shows.</p>
+              </div>
+              <div class="btns0"><button id="findAccts" type="button">Find my accounts</button><button id="addAcct" class="ghost" type="button">Add by hand</button><button id="sampleAccts" class="ghost" type="button" hidden>Add sample accounts</button></div>
+            </div>
             <p id="findMsg" class="hint" role="status" aria-live="polite"></p>
-            <div class="tscroll plainscroll"><table id="foundTable"></table></div>
+            <div id="foundBox" hidden>
+              <div class="found-head"><span>On your logins</span><button id="importAccts" type="button" class="small" hidden>Add all new</button></div>
+              <div id="foundList" class="found-list"></div>
+            </div>
           </div>
-          <div class="panel">
-            <h2>Which accounts Keel trades</h2>
-            <p class="hint"><b>Start bot</b> trades the account picked at the top <i>and</i> every account with <b>Trade</b> switched on, each with its own risk limits and trade records. Turn an account off and Keel never touches it. <b>Stop all trading</b> flattens every one of them.</p>
-          </div>
-          <div class="toolbar">
+          <div class="toolbar" id="acctTools" hidden>
             <input id="acctSearch" type="search" placeholder="Search accounts" aria-label="Search accounts" autocomplete="off">
-            <div class="btns0"><button id="sampleAccts" class="ghost" hidden>Add sample accounts</button><button id="addAcct">Add account</button></div>
           </div>
+          <p id="acctSum" class="hint acct-sum" role="status"></p>
           <div id="acctGroups"></div>
         </section>
 
@@ -480,41 +483,47 @@
       <p id="drawerNote" class="hint"></p>
       <div class="dgrid">
         <div class="full" data-single><label for="dLabel">Account name or number</label><input id="dLabel" type="text" maxlength="60" autocomplete="off"></div>
-        <div><label for="dFirm">Prop firm</label><select id="dFirm"></select></div>
-        <div><label for="dConn">Connection</label><select id="dConn"></select></div>
-        <div class="full" data-single><label for="dRef">Account ID at the broker (optional)</label><input id="dRef" type="text" maxlength="60" autocomplete="off" placeholder="Leave empty to use the first account on the login"></div>
-        <div class="full"><label for="dPreset">Start from a plan</label><select id="dPreset"></select><p class="hint2">Fills in typical rules. Check them against your firm’s current rules.</p></div>
-        <div data-single class="full"><label for="dCopy">Copy rules from</label><select id="dCopy"></select></div>
-      </div>
-      <h3 class="dsec">Type and plan</h3>
-      <div class="dgrid">
+        <div class="full"><label for="dPreset">Plan</label><select id="dPreset"></select><p class="hint2">Picking a plan fills in its rules. Check them against your firm’s current rules.</p></div>
         <div><label for="dStage">Account type</label><select id="dStage"><option value="evaluation">Evaluation</option><option value="funded">Funded</option><option value="live">Live</option><option value="practice">Practice</option></select></div>
         <div><label for="dPlan">Plan name</label><input id="dPlan" type="text" maxlength="40" placeholder="Combine $50K"></div>
       </div>
-      <h3 class="dsec">Rules</h3>
-      <div class="dgrid">
-        <div><label for="dSize">Account size</label><div class="field wide"><span aria-hidden="true">$</span><input id="dSize" type="number" min="0" step="1000"></div></div>
-        <div><label for="dDD">Drawdown type</label><select id="dDD"><option value="eod">End-of-day trailing</option><option value="intraday">Intraday trailing</option><option value="static">Static</option></select></div>
-        <div><label for="dMaxLoss">Max loss</label><div class="field wide"><span aria-hidden="true">$</span><input id="dMaxLoss" type="number" min="0" step="50"></div></div>
-        <div><label for="dDailyLoss">Daily loss (0 = none)</label><div class="field wide"><span aria-hidden="true">$</span><input id="dDailyLoss" type="number" min="0" step="50"></div></div>
-        <div><label for="dTarget">Profit target (0 = none)</label><div class="field wide"><span aria-hidden="true">$</span><input id="dTarget" type="number" min="0" step="50"></div></div>
-        <div><label for="dPct">Consistency (0 = off)</label><div class="field wide"><input id="dPct" type="number" min="0" max="100" step="1"><span aria-hidden="true">%</span></div></div>
-        <div><label for="dBasis">Consistency is measured against</label><select id="dBasis"><option value="target">Profit target</option><option value="total">Total profit</option></select></div>
-        <div><label for="dMinDays">Minimum trading days</label><input id="dMinDays" type="number" min="0" step="1"></div>
-        <div><label for="dMini">Max mini contracts (0 = no cap)</label><input id="dMini" type="number" min="0" step="1"></div>
-        <div><label for="dMicro">Max micro contracts (0 = no cap)</label><input id="dMicro" type="number" min="0" step="1"></div>
-      </div>
+      <details class="dfold" id="dRulesBox">
+        <summary><span class="dfold-t">Rules</span><span id="dRulesSum" class="dfold-s"></span></summary>
+        <div class="dgrid">
+          <div><label for="dSize">Account size</label><div class="field wide"><span aria-hidden="true">$</span><input id="dSize" type="number" min="0" step="1000"></div></div>
+          <div><label for="dDD">Drawdown type</label><select id="dDD"><option value="eod">End-of-day trailing</option><option value="intraday">Intraday trailing</option><option value="static">Static</option></select></div>
+          <div><label for="dMaxLoss">Max loss</label><div class="field wide"><span aria-hidden="true">$</span><input id="dMaxLoss" type="number" min="0" step="50"></div></div>
+          <div><label for="dDailyLoss">Daily loss (0 = none)</label><div class="field wide"><span aria-hidden="true">$</span><input id="dDailyLoss" type="number" min="0" step="50"></div></div>
+          <div><label for="dTarget">Profit target (0 = none)</label><div class="field wide"><span aria-hidden="true">$</span><input id="dTarget" type="number" min="0" step="50"></div></div>
+          <div><label for="dPct">Consistency (0 = off)</label><div class="field wide"><input id="dPct" type="number" min="0" max="100" step="1"><span aria-hidden="true">%</span></div></div>
+          <div><label for="dBasis">Consistency is measured against</label><select id="dBasis"><option value="target">Profit target</option><option value="total">Total profit</option></select></div>
+          <div><label for="dMinDays">Minimum trading days</label><input id="dMinDays" type="number" min="0" step="1"></div>
+          <div><label for="dMini">Max mini contracts (0 = no cap)</label><input id="dMini" type="number" min="0" step="1"></div>
+          <div><label for="dMicro">Max micro contracts (0 = no cap)</label><input id="dMicro" type="number" min="0" step="1"></div>
+          <div data-single class="full"><label for="dCopy">Copy rules from another account</label><select id="dCopy"></select></div>
+        </div>
+      </details>
       <h3 class="dsec">Your goals</h3>
       <div class="dgrid">
         <div><label for="dGoal">Daily goal (0 = off)</label><div class="field wide"><span aria-hidden="true">$</span><input id="dGoal" type="number" min="0" step="25"></div></div>
         <div class="checkcell"><label class="check"><input id="dPause" type="checkbox"> At the daily goal, close everything and stop trading this account for the day</label></div>
       </div>
-      <h3 class="dsec">Costs and notes</h3>
-      <div class="dgrid">
-        <div><label for="dCost">Cost</label><div class="field wide"><span aria-hidden="true">$</span><input id="dCost" type="number" min="0" step="1"></div></div>
-        <div><label for="dDate">Purchase date</label><input id="dDate" type="date"></div>
-        <div class="full"><label for="dNotes">Notes</label><textarea id="dNotes" rows="3" maxlength="500"></textarea></div>
-      </div>
+      <details class="dfold" id="dConnBox">
+        <summary><span class="dfold-t">Connection</span><span id="dConnSum" class="dfold-s"></span></summary>
+        <div class="dgrid">
+          <div><label for="dFirm">Prop firm</label><select id="dFirm"></select></div>
+          <div><label for="dConn">Connection</label><select id="dConn"></select></div>
+          <div class="full" data-single><label for="dRef">Account ID at the broker</label><input id="dRef" type="text" maxlength="60" autocomplete="off" placeholder="Find my accounts fills this in"></div>
+        </div>
+      </details>
+      <details class="dfold" id="dNotesBox">
+        <summary><span class="dfold-t">Cost and notes</span></summary>
+        <div class="dgrid">
+          <div><label for="dCost">Cost</label><div class="field wide"><span aria-hidden="true">$</span><input id="dCost" type="number" min="0" step="1"></div></div>
+          <div><label for="dDate">Purchase date</label><input id="dDate" type="date"></div>
+          <div class="full"><label for="dNotes">Notes</label><textarea id="dNotes" rows="3" maxlength="500"></textarea></div>
+        </div>
+      </details>
     </div>
     <footer class="dfoot">
       <button id="drawerDelete" class="ghost danger-text" type="button">Delete account</button>

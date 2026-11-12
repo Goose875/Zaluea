@@ -1248,7 +1248,7 @@ app.whenReady().then(async () => {
     if (px) { try { for (const a of await new ProjectXBroker().listAccounts(px)) out.push({ connection: 'projectx', login: 'TopstepX', firm: 'Topstep', ...a, added: known('projectx', a.id) }); } catch (err) { errors.push(`TopstepX: ${(err as Error).message}`); } }
     const rc = vault.get('broker:rithmic');
     if (rc) { try { for (const a of await listRithmicAccounts(rc)) out.push({ connection: 'rithmic', login: 'Rithmic', firm: 'Lucid Trading', ...a, balance: null, canTrade: true, simulated: false, added: known('rithmic', a.id) }); } catch (err) { errors.push(`Rithmic: ${(err as Error).message}`); } }
-    if (!px && !rc) errors.push('Save your TopstepX or Rithmic login under Logins first.');
+    if (!px && !rc) errors.push('Save your TopstepX or Rithmic login under Connections first.');
     return { ok: true, accounts: out, errors };
   });
   ipcMain.handle('accounts:import', (e, items: unknown) => {
@@ -1259,8 +1259,11 @@ app.whenReady().then(async () => {
         if (!it || !['projectx', 'rithmic'].includes(it.connection) || typeof it.id !== 'string') continue;
         if (st.accounts.some(a => a.connection === it.connection && a.brokerRef === it.id)) continue;
         const name = String(it.name || it.id).slice(0, 60), k = /(\d{2,3})\s?k/i.exec(name), size = k ? Number(k[1]) * 1000 : 50000;
-        st = addAccount(st, { ...BLANK, label: name, firm: it.connection === 'rithmic' ? 'Lucid Trading' : 'Topstep', connection: it.connection, brokerRef: it.id,
-          size, maxLoss: size <= 50000 ? 2000 : size <= 100000 ? 3000 : 4500, trade: false }, conns());
+        // the plan picked while adding fills in the rules (never the firm, connection or account ID: those come from the login)
+        const preset = Number.isInteger(it.preset) && it.preset >= 0 && it.preset < PRESETS.length ? PRESETS[it.preset] : null;
+        const { firm: _firm, connection: _conn, ...rules } = (preset ?? {}) as Record<string, unknown>;
+        st = addAccount(st, { ...BLANK, size, maxLoss: size <= 50000 ? 2000 : size <= 100000 ? 3000 : 4500, ...rules,
+          label: name, firm: it.connection === 'rithmic' ? 'Lucid Trading' : 'Topstep', connection: it.connection, brokerRef: it.id, trade: false }, conns());
       }
       return st;
     });

@@ -113,6 +113,8 @@ export const sizeClass = (sym: string): 'mini' | 'micro' | null => (MICRO.has(sy
 
 /** Starting values for common plans. Firms change their rules, so these are a starting point to check, not the source of truth. */
 export const PRESETS: (Partial<Omit<AccountRecord, 'id'>> & { firm: string; plan: string })[] = [
+  { firm: 'Topstep', plan: 'Labs $50K Static Combine', stage: 'evaluation', size: 50000, drawdown: 'static', maxLoss: 2000, dailyLoss: 1000, profitTarget: 4000, consistencyPct: 55, consistencyBasis: 'target', maxMini: 4, maxMicro: 40, connection: 'projectx' },
+  { firm: 'Topstep', plan: 'Labs $50K Static XFA', stage: 'funded', size: 50000, drawdown: 'static', maxLoss: 2000, dailyLoss: 1000, profitTarget: 0, consistencyPct: 40, consistencyBasis: 'total', maxMini: 4, maxMicro: 40, connection: 'projectx' },
   { firm: 'Topstep', plan: 'Combine $50K', stage: 'evaluation', size: 50000, drawdown: 'eod', maxLoss: 2000, dailyLoss: 0, profitTarget: 3000, consistencyPct: 55, consistencyBasis: 'target', maxMini: 5, maxMicro: 50, connection: 'projectx' },
   { firm: 'Topstep', plan: 'XFA $50K', stage: 'funded', size: 50000, drawdown: 'eod', maxLoss: 2000, dailyLoss: 0, profitTarget: 0, consistencyPct: 40, consistencyBasis: 'total', maxMini: 5, maxMicro: 50, connection: 'projectx' },
   { firm: 'Lucid Trading', plan: 'Pro $50K', stage: 'funded', size: 50000, drawdown: 'eod', maxLoss: 2000, dailyLoss: 0, profitTarget: 3000, consistencyPct: 40, consistencyBasis: 'total', maxMini: 4, maxMicro: 40, connection: 'rithmic' },

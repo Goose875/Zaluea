@@ -226,7 +226,7 @@ export class RithmicBroker implements BrokerAdapter {
 
   async connect(creds: Record<string, string>) {
     const user = (creds.user || '').trim(), password = creds.password || '';
-    if (!user || !password) throw new Error('Enter your Rithmic username and password under Logins.');
+    if (!user || !password) throw new Error('Enter your Rithmic username and password under Connections.');
     const { gateway, system } = rithmicTarget(creds);
     this.key = keyOf(gateway, system, user); this.isTest = /test/i.test(system);
     let p = SESSIONS.get(this.key);
