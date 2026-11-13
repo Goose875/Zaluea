@@ -196,7 +196,18 @@ export class KLive {
       if (sp.stop !== sp.stop0) {
         const T = INSTRUMENTS[t.sym].tick, long = t.dir === 'long';
         const want = Math.round((sp.stop + (t.entry - sp.entry)) / T) * T;   // same move, measured from the real fill
-        if (long ? want > t.stop + T / 2 : want < t.stop - T / 2) await this.moveStop(t, want);
+        if (long ? want > t.stop + T / 2 : want < t.stop - T / 2) {
+          // A spike that reversed inside the hour can leave the new stop on the wrong side of the price (breakeven set after a +1R
+          // spike that is already gone). The simulator closes such a trade at the next open, which is now. A broker either refuses
+          // that stop (the old, wider one would stay working) or fills it at once, so Keel closes the trade itself.
+          const px = this.d.data.lastPrice?.(t.orderSym) ?? this.d.data.lastPrice?.(t.sym);
+          if (px !== undefined && (long ? px <= want : px >= want)) {
+            this.d.note(`K system: ${t.id} stop was due to move to ${want.toFixed(2)}, but the price (${px.toFixed(2)}) is already through it, so the trade is closed now.`, 'info');
+            await this.exit(t, 'stop: the price was already through its moved stop');
+            continue;
+          }
+          await this.moveStop(t, want);
+        }
       }
     }
     // 2. entries due at the open of the bar that has just started
