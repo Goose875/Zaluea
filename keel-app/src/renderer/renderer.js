@@ -1555,7 +1555,10 @@ function render(s) {
   $('updateGo').disabled = s.running;
   $('alert').textContent = JSON.stringify({ secret: s.webhookSecret, symbol: 'ES', side: 'buy', qty: 1 });
   const wasRunning = running;
-  if (!poll) poll = setInterval(refresh, 1500);
+  if (!poll) {   // once: nothing to draw while minimised, and catch up the moment the window shows again
+    poll = setInterval(() => { if (!document.hidden) void refresh(); }, 1500);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
+  }
   if (!cat) { loadCatalog().then(() => renderToday(last)); go('dash'); return; }
   renderToday(s);
   if (view === 'chart') { drawLive(); if (Date.now() - (window._tkAt || 0) > 3000) { window._tkAt = Date.now(); void tkRender(); } }

@@ -90,7 +90,7 @@ let watchToken = 0;
 function stopWatch() { if (watch) { clearInterval(watch.timer); void watch.broker.disconnect().catch(() => {}); watch = null; } watchToken++; }
 async function startWatch() {
   stopWatch();
-  if (engine) return;
+  if (engine || !mainWin || mainWin.isDestroyed?.()) return;   // nothing to show it in: no polling
   const token = watchToken, st = loadAccounts(conns()), acct = st.accounts.find(a => a.id === st.selected);
   if (!acct || !(acct.connection in ADAPTERS)) return;
   const def = BROKERS.find(b => b.id === acct.connection)!, creds = vault.get(`broker:${acct.connection}`);
@@ -306,15 +306,39 @@ async function rollCheck() {
   const desks: { label: string; b: any; desk: any }[] = [];   // every connection: the order one and, when separate, the price one
   if (engine && runBroker) for (const b of new Set([runBroker, runData].filter(Boolean))) desks.push({ label: mainLabel(), b, desk: kPaper ?? runBroker });
   for (const f of followers) for (const b of new Set([f.broker, f.data].filter(Boolean))) desks.push({ label: f.acct.label, b, desk: f.paper ?? f.broker });
+  // Accounts on one login share their contracts (one price stream), so a market rolls only when every account on that
+  // kind of connection is flat in it. Who holds it up: root -> the account and the market it holds ('*' = positions unreadable).
+  type Holder = { label: string; sym: string };
+  const heldBy = new Map<string, Map<string, Holder>>();
+  for (const d of desks) {
+    const id = String(d.b?.id ?? ''), h = heldBy.get(id) ?? new Map<string, Holder>(); heldBy.set(id, h);
+    try { for (const p of await d.desk.getPositions()) if (p.qty) { const s = rootSym(p.symbol), r = s.replace(/^M/, ''); if (!h.has(r)) h.set(r, { label: d.label, sym: s }); } }
+    catch { if (!h.has('*')) h.set('*', { label: d.label, sym: '' }); }
+  }
+  const was = new Map(desks.map(d => [d, { ...(d.b?.contractNames?.() ?? {}) } as Record<string, string>]));   // to tell who switched along
   for (const d of desks) {
     if (!d.b?.contractNames || !d.b?.activeName || !d.b?.rollTo) continue;
-    const held = new Set<string>(); try { for (const p of await d.desk.getPositions()) if (p.qty) held.add(rootSym(p.symbol).replace(/^M/, '')); } catch { continue; }
-    for (const [sym, cur] of Object.entries(d.b.contractNames() as Record<string, string>)) {
+    const held = heldBy.get(String(d.b.id ?? '')) ?? new Map<string, Holder>(), names = d.b.contractNames() as Record<string, string>;
+    for (const [sym, cur] of Object.entries(names)) {
       let next = ''; try { next = await d.b.activeName(sym); } catch { continue; }
       if (!next || next === cur) continue;
-      const key = `${d.label}|${sym}|${next}`;
-      if (held.has(sym.replace(/^M/, ''))) { if (!rollSeen.has(key)) { rollSeen.set(key, ''); const m = `[${d.label}] ${sym}: the front month is now ${next}, but a ${cur} position is open. Keel keeps trading ${cur} until this market is flat, then switches.`; jot(m); engine?.say(m); } continue; }
-      try { const now = await d.b.rollTo(sym); const m = `[${d.label}] ${sym}: rolled from ${cur} to ${now} (the new front month).`; jot(m); engine?.say(m); ping(m); }
+      const key = `${d.label}|${sym}|${next}`, root = sym.replace(/^M/, ''), who = held.get(root) ?? held.get('*');
+      if (who) {
+        if (who.sym && !rollSeen.has(key)) {   // positions unreadable: wait quietly, check again later
+          rollSeen.set(key, '');
+          const pos = names[who.sym] ?? who.sym;
+          const m = who.label === d.label ? `[${d.label}] ${sym}: the front month is now ${next}, but a ${pos} position is open. Keel keeps trading ${cur} until this market is flat, then switches.`
+            : `[${d.label}] ${sym}: the front month is now ${next}, but ${who.label} still holds a ${pos} position, and accounts on one login share their contracts. Keel keeps trading ${cur} until every account is flat in this market, then switches.`;
+          jot(m); engine?.say(m);
+        }
+        continue;
+      }
+      try {
+        const now = await d.b.rollTo(sym);
+        const also = [...new Set(desks.filter(x => x.label !== d.label && was.get(x)?.[sym] === cur && x.b?.contractNames?.()[sym] === now).map(x => x.label))];
+        const m = `[${d.label}] ${sym}: rolled from ${cur} to ${now} (the new front month).${also.length ? ` ${also.join(' and ')} switched with it (same login).` : ''}`;
+        jot(m); engine?.say(m); ping(m);
+      }
       catch (err) { jot(`[${d.label}] ${sym}: could not switch to ${next}: ${(err as Error).message}`); }
     }
   }
@@ -431,6 +455,8 @@ function loadMgmt(): MgmtStats { try { return { checks: 0, holds: 0, breakevens:
 function saveMgmt(s: MgmtStats) { try { fs.writeFileSync(mgmtFile(), JSON.stringify(s)); } catch { /* best effort */ } }
 const TICK_OF: Record<string, number> = { NQ: 0.25, GC: 0.1, ES: 0.25 };
 let mgmtTimer: ReturnType<typeof setInterval> | undefined;
+/** One Claude check per strategy trade at a time: two accounts holding the same signal's trade share the answer (and the bars). */
+const mgmtAsk = new Map<string, { at: number; p: Promise<{ action: 'hold' | 'breakeven' | 'close'; reason: string }> }>();
 function openTradesFor(): { label: string; data: any; k: KLive | null; x: XLive | null; trades: { id: string; key: string; dir: 'long' | 'short'; sym: string; orderSym: string; qty: number; entry: number; stop: number; target: number | null; opened: number; kind: 'K' | 'X' }[] }[] {
   const out: any[] = [];
   const list = (k: KLive | null, x: XLive | null) => [
@@ -455,10 +481,18 @@ async function manageTrades() {
     const rNow = ((px - st.entry) * d) / R, rBest = ((st.best - st.entry) * d) / R;
     void (async () => {
       try {
-        let bars5: any[] = []; try { bars5 = (await acc.data.getHistory(root, 'min5', 24)).map((b: any) => ({ t: nyStamp(b.t), o: b.o, h: b.h, l: b.l, c: b.c })); } catch { /* without bars */ }
-        const ctx = { account: acc.label, strategy: t.id, market: t.orderSym, dir: t.dir, qty: t.qty, entry: st!.entry, stopNow: t.stop, firstStop: st!.stop0, target: t.target, priceNow: px,
-          rNow: Math.round(rNow * 100) / 100, rBest: Math.round(rBest * 100) / 100, minutesInTrade: Math.round((now - t.opened) / 60_000), nowET: nyStamp(), last24FiveMinuteBars: bars5 };
-        const r = await ai!.manageTrade(ctx), s = loadMgmt(); s.checks++;
+        const shareKey = `${t.id}|${t.dir}|${root}`, shared = mgmtAsk.get(shareKey);
+        let ask = shared && now - shared.at < 90_000 ? shared.p : null;
+        if (!ask) {
+          ask = (async () => {
+            let bars5: any[] = []; try { bars5 = (await acc.data.getHistory(root, 'min5', 24)).map((b: any) => ({ t: nyStamp(b.t), o: b.o, h: b.h, l: b.l, c: b.c })); } catch { /* without bars */ }
+            const ctx = { account: acc.label, strategy: t.id, market: t.orderSym, dir: t.dir, qty: t.qty, entry: st!.entry, stopNow: t.stop, firstStop: st!.stop0, target: t.target, priceNow: px,
+              rNow: Math.round(rNow * 100) / 100, rBest: Math.round(rBest * 100) / 100, minutesInTrade: Math.round((now - t.opened) / 60_000), nowET: nyStamp(), last24FiveMinuteBars: bars5 };
+            return ai!.manageTrade(ctx);
+          })();
+          mgmtAsk.set(shareKey, { at: now, p: ask }); ask.catch(() => { if (mgmtAsk.get(shareKey)?.p === ask) mgmtAsk.delete(shareKey); });
+        }
+        const r = await ask, s = loadMgmt(); s.checks++;
         if (r.action === 'hold') s.holds++; else if (r.action === 'breakeven') s.breakevens++; else s.closes++;
         st!.calls.push({ action: r.action, r: rNow, px, at: now, reason: r.reason });
         const head = `[${acc.label}] Claude trade check ${t.id} ${t.dir} (now ${rNow >= 0 ? '+' : ''}${rNow.toFixed(2)}R, best +${Math.max(0, rBest).toFixed(2)}R): ${r.action.toUpperCase()}. ${r.reason}`;
@@ -478,6 +512,7 @@ async function manageTrades() {
     })();
   }
   for (const k of [...mgmt.keys()]) if (!live.has(k) && now - (mgmt.get(k)!.lastAsk || 0) > 6 * 3600e3) mgmt.delete(k);
+  for (const [k, v] of [...mgmtAsk]) if (now - v.at > 10 * 60_000) mgmtAsk.delete(k);
 }
 /** When a trade closes: how did Claude's calls compare with what really happened? */
 function mgmtScore(label: string, r: CloseReport) {
@@ -571,14 +606,17 @@ async function stopTrading() {
 let update: { state: 'none' | 'downloading' | 'ready' | 'error'; version: string } = { state: 'none', version: '' };
 let mainWin: BrowserWindow | null = null, tray: Tray | null = null, quitting = false, toldTray = false;
 function showWindow() {
-  if (!mainWin || mainWin.isDestroyed()) { createWindow(); return; }
-  if (mainWin.isMinimized()) mainWin.restore();
-  mainWin.show(); mainWin.focus();
+  if (!mainWin || mainWin.isDestroyed()) createWindow();   // closed to the tray: build it again
+  const w = mainWin!;
+  if (w.isMinimized()) w.restore();
+  w.show(); w.focus();
 }
 async function quitKeel() {
-  if (engine && mainWin && !mainWin.isDestroyed()) {
-    const r = await dialog.showMessageBox(mainWin.isVisible() ? mainWin : (undefined as any), { type: 'warning', buttons: ['Quit Keel', 'Cancel'], defaultId: 1, cancelId: 1, title: 'Keel',
-      message: 'The bot is running. Quit Keel anyway?', detail: 'Quitting stops trading. Stops and targets already at the broker stay there.' });
+  if (engine) {
+    const parent = mainWin && !mainWin.isDestroyed() && mainWin.isVisible() ? mainWin : null;
+    const opts = { type: 'warning' as const, buttons: ['Quit Keel', 'Cancel'], defaultId: 1, cancelId: 1, title: 'Keel',
+      message: 'The bot is running. Quit Keel anyway?', detail: 'Quitting stops trading. Stops and targets already at the broker stay there.' };
+    const r = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
     if (r.response !== 0) return;
   }
   quitting = true; app.quit();
@@ -614,15 +652,22 @@ function createWindow() {
     }
   });
   mainWin = win;
-  win.on('close', e => {
+  // Closing the window keeps Keel (and the bot) running by the clock, and lets the page itself go: its memory is freed
+  // until you open Keel again from the icon (a hidden page would keep about 120 MB for nothing).
+  win.on('close', () => {
     if (quitting || !tray || !loadStartup().background) return;
-    e.preventDefault(); win.hide();
     if (!toldTray) { toldTray = true; try { tray.displayBalloon({ title: 'Keel is still running', content: engine ? 'The bot keeps trading. Click the Keel icon by the clock to open it, or right-click it to quit.' : 'Click the Keel icon by the clock to open it, or right-click it to quit.', iconType: 'info' }); } catch { /* balloons are Windows-only */ } }
   });
-  win.on('closed', () => { if (mainWin === win) mainWin = null; });
+  win.on('closed', () => {
+    if (mainWin !== win) return;
+    mainWin = null;
+    if (!engine) stopWatch();                            // the account readout is only for the window
+    if (chartData) { const d = chartData; chartData = null; chartTicks.clear(); void d.then((x: any) => x.disconnect()).catch(() => {}); }
+  });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', e => e.preventDefault());
   win.loadFile(path.join(__dirname, '../renderer/index.html'));
+  if (!engine) void startWatch();
 }
 
 /** Starts K1-K9 / P1-P3 on more accounts, each with its own connection, risk guard, paper desk and trade records. */
@@ -1376,8 +1421,8 @@ app.whenReady().then(async () => {
   });
   void startWatch();
   refreshTray(); setInterval(refreshTray, 15_000).unref?.();   // keeps the tray's running/stopped line and update item current
-  const hidden = process.argv.includes('--hidden') && !!tray;   // opened at Windows login: straight to the tray
-  createWindow(); if (!hidden) mainWin?.show();
+  const hidden = process.argv.includes('--hidden') && !!tray;   // opened at Windows login: straight to the tray, no window until you open it
+  if (!hidden) { createWindow(); mainWin?.show(); }
   // The bot was running when Keel closed (an update, a crash, a reboot): start it again if that option is on
   const su = loadStartup();
   if (su.autoResume && su.wasRunning) setTimeout(async () => {

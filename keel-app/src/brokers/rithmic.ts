@@ -16,6 +16,7 @@ import WebSocket from 'ws';
 import * as protobuf from 'protobufjs';
 import { AccountInfo, BrokerAdapter, HistBar, HistUnit, Order, Position, Quote, WorkingOrder } from '../core/types';
 import type { AccountRecord } from '../core/accounts';
+import { cachedHistory, HistEntry } from './histcache';
 
 // Rithmic conformance: the app name Rithmic approved is "alsm:Keel" (their prefix + our name). Never change it.
 const APP = { name: 'alsm:Keel', version: (() => { try { return String(require('../../package.json').version); } catch { return '0'; } })() };
@@ -179,6 +180,7 @@ interface Session {
   routes: Map<string, string>; front: Map<string, { symbol: string; exchange: string }>; last: Map<string, number>; subscribed: Set<string>;
   quoteCbs: Set<(q: Quote) => void>; orderCbs: Set<(n: string, m: any) => void>; pnlCbs: Set<(n: string, m: any) => void>;
   markerIsEnd: boolean | null; error: string;
+  hist: Map<string, HistEntry>;   // completed history bars, kept and topped up for every account on this login
 }
 const SESSIONS = new Map<string, Promise<Session>>();
 
@@ -195,7 +197,7 @@ async function openSession(c: { user: string; password: string; system: string }
   const [tick, hist, pnl] = [new Plant(INFRA.TICKER, gateway), new Plant(INFRA.HISTORY, gateway), new Plant(INFRA.PNL, gateway)];
   try { await Promise.all([tick.open(c), hist.open(c), pnl.open(c)]); } catch (e) { await Promise.all([order, tick, hist, pnl].map(p => p.close())); throw e; }
   const s: Session = { refs: 0, plants: { ORDER: order, TICKER: tick, HISTORY: hist, PNL: pnl }, fcmId, ibId, accounts, routes, front: new Map(), last: new Map(), subscribed: new Set(),
-    quoteCbs: new Set(), orderCbs: new Set(), pnlCbs: new Set(), markerIsEnd: null, error: '' };
+    quoteCbs: new Set(), orderCbs: new Set(), pnlCbs: new Set(), markerIsEnd: null, error: '', hist: new Map() };
   order.onPush = (n, m) => { if (n === 'ForcedLogout') s.error = 'Rithmic logged Keel out (this login may be in use elsewhere).'; for (const cb of s.orderCbs) cb(n, m); };
   pnl.onPush = (n, m) => { for (const cb of s.pnlCbs) cb(n, m); };
   tick.onPush = (n, m) => { if (n === 'LastTrade' && Number.isFinite(m.tradePrice)) { const r = rootOf(m.symbol); s.last.set(r, m.tradePrice); for (const cb of s.quoteCbs) cb({ symbol: r, price: m.tradePrice, ts: Date.now() }); } };
@@ -291,12 +293,21 @@ export class RithmicBroker implements BrokerAdapter {
   lastPrice(sym: string) { return this.s?.last.get(sym); }
 
   // ---------- history ----------
+  /** Completed bars are kept per login and topped up (an hourly check downloads a few new bars); the chart's request for the
+   *  bar still forming goes straight to Rithmic. */
   async getHistory(sym: string, unit: HistUnit, count: number, partial = false): Promise<HistBar[]> {
+    const c = await this.contract(sym);
+    if (partial) return this.bars(c, unit, count, true, null);
+    return cachedHistory(this.s!.hist, `${c.symbol}|${unit}`, unit, count, n => this.bars(c, unit, n, false, null), (from, n) => this.bars(c, unit, n, false, from));
+  }
+  /** The last `count` bars, or (with `from`) the bars that start at `from` or later. */
+  private async bars(c: { symbol: string; exchange: string }, unit: HistUnit, count: number, partial: boolean, from: number | null): Promise<HistBar[]> {
     const P: Record<HistUnit, [number, number, number]> = { min1: [2, 1, 60], min5: [2, 5, 300], min15: [2, 15, 900], hour: [2, 60, 3600], hour4: [2, 240, 14400], day: [3, 1, 86400] };
-    const [barType, period, sec] = P[unit], c = await this.contract(sym), now = Math.floor(Date.now() / 1000);
+    const [barType, period, sec] = P[unit], now = Math.floor(Date.now() / 1000);
     const span = unit === 'day' ? count * 1.6 * 86400 : (count / (unit === 'hour4' ? 6 : 23 * 3600 / sec)) * 86400 * 1.45 + 4 * 86400;
+    const start = from !== null ? Math.floor(from / 1000) - sec : Math.floor(now - span);   // one bar early: a bar may be stamped with its end
     const rows = await this.P.HISTORY.request('RequestTimeBarReplay', { templateId: 202, symbol: c.symbol, exchange: c.exchange, barType, barTypePeriod: period,
-      startIndex: Math.floor(now - span), finishIndex: now, userMaxCount: Math.min(10_000, count + 5), direction: 2, timeOrder: 1 }, 60_000);
+      startIndex: start, finishIndex: now, userMaxCount: Math.min(10_000, count + 5), direction: 2, timeOrder: 1 }, 60_000);
     const raw = rows.filter(r => Number.isFinite(r.marker) && r.marker > 0 && Number.isFinite(r.openPrice));
     if (this.s!.markerIsEnd === null && raw.length && unit !== 'day') {
       // Is a bar stamped with its start or its end? The newest completed bar tells us: an end stamp is on the boundary just passed.
@@ -305,7 +316,8 @@ export class RithmicBroker implements BrokerAdapter {
     const shift = unit !== 'day' && this.s!.markerIsEnd ? sec : 0;
     const bars = raw.map(r => ({ t: (r.marker - shift) * 1000, o: r.openPrice, h: r.highPrice, l: r.lowPrice, c: r.closePrice, v: Number(r.volume ?? 0) }))
       .filter(b => partial || b.t + sec * 1000 <= Date.now()).sort((a, b) => a.t - b.t);
-    return bars.filter((b, i) => i === 0 || b.t !== bars[i - 1].t).slice(-count);
+    const out = bars.filter((b, i) => i === 0 || b.t !== bars[i - 1].t);
+    return from !== null ? out.filter(b => b.t >= from) : out.slice(-count);
   }
 
   // ---------- orders ----------
