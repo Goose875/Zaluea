@@ -45,13 +45,35 @@ const message = (embed: Embed, everyone: boolean) => ({ content: everyone ? '@ev
 let queue: Promise<unknown> = Promise.resolve();
 const enqueue = (fn: () => Promise<unknown>) => { queue = queue.then(fn).catch(() => {}); return queue; };
 
+/**
+ * What a ping is about, read from Keel's own fixed wordings (the K system, the chart / PO3 runner and the main process).
+ * The order matters: a line that opens a trade also names its stop and target ("Sent buy 2 MGC (...): stop 3849.44, target
+ * 3892.10."), so the word "stop" on its own never means a trade was stopped. Anything unrecognised is a plain note.
+ */
+export function pingKind(body: string): { title: string; color: number } {
+  const t = body.replace(/^K system:\s*/i, '');
+  if (/UNPROTECTED|Check your platform|NO stop was placed|price feed is still silent|could not resume trading/i.test(t)) return { title: '⚠️ Needs your attention', color: COLOR.red };
+  if (/^Stop all trading pressed/i.test(t)) return { title: '⏹ Stop all trading', color: COLOR.red };
+  if (/^Daily profit target reached/i.test(t)) return { title: '🎯 Daily goal reached', color: COLOR.green };
+  if (/ closed at its target\.?$/i.test(t)) return { title: '🎯 Target hit', color: COLOR.green };
+  if (/ closed at its stop\.?$/i.test(t)) return { title: '🔴 Stopped out', color: COLOR.red };
+  if (/(^|: )closed (?:\S+ )?(long|short) /i.test(t) || /^Flattened /i.test(t)) return { title: '⚪ Trade closed', color: COLOR.grey };
+  if (/^Sent (buy|sell) /i.test(t) || / filled (long|short) /i.test(t) || /^AI news trade: sent /i.test(t)) return { title: '🟢 Trade opened', color: COLOR.green };
+  if (/^Chart order: .* sent\.$/i.test(t)) return { title: '🟢 Order sent', color: COLOR.green };
+  if (/ working\.$/i.test(t) || /^Chart breakout pair /i.test(t)) return { title: '⏳ Order working', color: COLOR.blue };
+  if (/ moved to \S+ from the chart\.$/i.test(t) || / moved the \S+ stop to breakeven/i.test(t)) return { title: '✏️ Stop or target moved', color: COLOR.blue };
+  return { title: 'ℹ️ Keel', color: COLOR.blue };
+}
+/** The card for a ping: "[account] message" becomes a title by kind, the message, and the account as its own field. */
+export function pingEmbed(text: string): Embed {
+  const m = /^\[([^\]]+)\]\s*(.*)$/s.exec(text), account = m ? m[1] : '', body = m ? m[2] : text, k = pingKind(body);
+  return { title: k.title, description: body, color: k.color,
+    ...(account ? { fields: [{ name: '🏦 Account', value: account, inline: true }] } : {}), footer: { text: 'Keel' }, timestamp: new Date().toISOString() };
+}
 /** Queue a trade ping (no-op when no webhook is saved). Never throws: a Discord problem must never touch trading. */
 export function ping(text: string) {
   const c = cfg(); if (!c) return;
-  const out = /closed|flatten|stop|kill|halt/i.test(text), inn = /filled|sent|working|Long|Short|buy|sell/i.test(text);
-  const m = /^\[([^\]]+)\]\s*(.*)$/s.exec(text), account = m ? m[1] : '', body = m ? m[2] : text;
-  const embed: Embed = { title: out ? '🔴 Trade closed / stopped' : inn ? '🟢 Trade' : 'ℹ️ Keel', description: body, color: out ? COLOR.red : inn ? COLOR.green : COLOR.blue,
-    ...(account ? { fields: [{ name: '🏦 Account', value: account, inline: true }] } : {}), footer: { text: 'Keel' }, timestamp: new Date().toISOString() };
+  const embed = pingEmbed(text);
   void enqueue(() => send('POST', c.url, message(embed, c.everyone)));
 }
 
